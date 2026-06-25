@@ -1,5 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dto/transaction_dto.dart';
+import 'dto/user_dto.dart';
 import 'models/models.dart';
 
 /// App-wide state — a [ChangeNotifier] shared through [AppScope] (an
@@ -59,6 +61,23 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Bridges the authenticated [ApiUser] (from the backend) into the legacy
+  /// dashboard state. Lets existing screens keep reading `AppScope.of(context)`
+  /// while features migrate to Riverpod providers one at a time.
+  void hydrateFromApi(ApiUser u) {
+    _user = HopprUser(
+      fullName: u.fullName,
+      phone: u.phone,
+      email: u.email,
+      trustScore: u.trustGrade,
+      deals: u.deals,
+      disputes: u.disputes,
+      verified: u.verified,
+      escrowBalance: u.escrowBalanceKobo / 100,
+    );
+    notifyListeners();
+  }
+
   /// Demo sign-in — accepts any identifier/PIN and loads the seeded profile.
   void signIn({required String identifier}) {
     _user = HopprUser(
@@ -95,6 +114,40 @@ class AppState extends ChangeNotifier {
     if (u != null) u.escrowBalance += tx.amount;
     notifyListeners();
   }
+
+  /// Inserts a backend-created transaction onto the demo dashboard list — a
+  /// bridge until the list screens move to the transactions provider.
+  void addFromApi(ApiTransaction t) {
+    _transactions.insert(
+      0,
+      EscrowTransaction(
+        id: t.id,
+        code: t.code,
+        merchantName: t.merchantName,
+        productName: t.productName,
+        variant: t.variant,
+        amount: t.grandTotalNaira,
+        stage: _stageFromApi(t.stage),
+        status: _statusFromApi(t.status),
+      ),
+    );
+    notifyListeners();
+  }
+
+  static TxStage _stageFromApi(ApiTxStage s) => switch (s) {
+        ApiTxStage.cooling => TxStage.cooling,
+        ApiTxStage.done => TxStage.done,
+        ApiTxStage.active => TxStage.active,
+      };
+
+  static TxStatus _statusFromApi(ApiTxStatus s) => switch (s) {
+        ApiTxStatus.outForDelivery => TxStatus.outForDelivery,
+        ApiTxStatus.inTransit => TxStatus.inTransit,
+        ApiTxStatus.delivered => TxStatus.delivered,
+        ApiTxStatus.released || ApiTxStatus.completed => TxStatus.released,
+        ApiTxStatus.disputed => TxStatus.disputed,
+        _ => TxStatus.awaitingDispatch,
+      };
 
   EscrowTransaction? findByCode(String code) {
     final normalized = code.trim().toUpperCase();

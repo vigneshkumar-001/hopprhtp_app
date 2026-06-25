@@ -32,6 +32,42 @@ class Money {
   }
 }
 
+/// Lightweight date formatting (no `intl` dependency).
+class Dates {
+  Dates._();
+
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  /// "12 May 2025".
+  static String medium(DateTime d) {
+    final l = d.toLocal();
+    return '${l.day} ${_months[l.month - 1]} ${l.year}';
+  }
+
+  /// Notification-style relative label: "2:14 PM" today, "Yesterday",
+  /// "3 days ago", else the full date.
+  static String relative(DateTime d) {
+    final l = d.toLocal();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final that = DateTime(l.year, l.month, l.day);
+    final days = today.difference(that).inDays;
+    if (days <= 0) return _time(l);
+    if (days == 1) return 'Yesterday';
+    if (days < 7) return '$days days ago';
+    return medium(l);
+  }
+
+  static String _time(DateTime l) {
+    final h = l.hour % 12 == 0 ? 12 : l.hour % 12;
+    final m = l.minute.toString().padLeft(2, '0');
+    return '$h:$m ${l.hour < 12 ? 'AM' : 'PM'}';
+  }
+}
+
 /// Input formatter that groups the integer part with thousands separators
 /// while the user types an amount.
 class ThousandsFormatter extends TextInputFormatter {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
@@ -12,10 +13,12 @@ import '../../widgets/common.dart';
 import '../../widgets/premium_card.dart';
 import '../../widgets/segmented_control.dart';
 import '../../widgets/theme_reveal.dart';
-import '../onboarding/onboarding_screen.dart';
+import '../auth/application/auth_controller.dart';
 import 'edit_profile_screen.dart';
+import 'help_support_screen.dart';
 import 'identity_verification_screen.dart';
 import 'payout_accounts_screen.dart';
+import 'security_screen.dart';
 import 'transaction_history_screen.dart';
 
 /// Profile screen (mockup 6). Works both as a pushed route and as the embedded
@@ -163,7 +166,7 @@ class ProfileScreen extends StatelessWidget {
                   icon: Icons.shield_outlined,
                   title: 'Security & PIN',
                   subtitle: 'PIN, biometrics, devices',
-                  onTap: () => _soon(context),
+                  onTap: () => AppNav.push(context, const SecurityScreen()),
                 ),
                 const _RowDivider(),
                 MenuRow(
@@ -178,7 +181,7 @@ class ProfileScreen extends StatelessWidget {
                   icon: Icons.info_outline_rounded,
                   title: 'Help & support',
                   subtitle: 'FAQs, contact us',
-                  onTap: () => _soon(context),
+                  onTap: () => AppNav.push(context, const HelpSupportScreen()),
                 ),
               ],
             ),
@@ -193,12 +196,6 @@ class ProfileScreen extends StatelessWidget {
           SizedBox(height: embedded ? 112 : AppSizes.lg),
         ],
       ),
-    );
-  }
-
-  void _soon(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Coming soon')),
     );
   }
 
@@ -226,13 +223,16 @@ class ProfileScreen extends StatelessWidget {
             Text('You\'ll need your PIN or biometrics to sign back in.',
                 style: AppText.body),
             const SizedBox(height: AppSizes.xl),
-            AppButton(
-              label: 'Log out',
-              onPressed: () {
-                AppScope.read(sheetCtx).signOut();
-                Navigator.of(sheetCtx).pop();
-                AppNav.replaceAll(context, const OnboardingScreen());
-              },
+            Consumer(
+              builder: (context, ref, _) => AppButton(
+                label: 'Log out',
+                onPressed: () {
+                  Navigator.of(sheetCtx).pop();
+                  // Clears tokens + session; AuthGate resets to onboarding and
+                  // clears the navigation stack + legacy state.
+                  ref.read(authControllerProvider.notifier).logout();
+                },
+              ),
             ),
             const SizedBox(height: AppSizes.sm),
             AppButton(

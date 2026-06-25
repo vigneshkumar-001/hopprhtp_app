@@ -1,98 +1,122 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
+import '../../core/network/error_messages.dart';
+import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
+import '../../data/dto/user_dto.dart';
+import '../../data/dto/wallet_dto.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/blur_sheet.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_loaders.dart';
+import '../../widgets/feedback/app_snackbar.dart';
+import '../../widgets/feedback/state_views.dart';
 import '../../widgets/premium_card.dart';
+import '../auth/application/auth_controller.dart';
 import '../profile/payout_accounts_screen.dart';
-import '../transaction/transaction_outcome_screen.dart';
 
-/// Wallet — balance, cooling settlement, recent ledger activity.
-class WalletScreen extends StatelessWidget {
+/// Wallet — live balance, cooling settlement, and the recent ledger activity,
+/// all from the `/wallet` API.
+class WalletScreen extends ConsumerWidget {
   const WalletScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final balanceAsync = ref.watch(walletBalanceProvider);
+
     return AppScaffold(
       title: 'Wallet',
       trailing: const AppIconButton(icon: Icons.more_horiz_rounded),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: AppSizes.sm),
-          const _WalletBalanceCard(),
-          const SizedBox(height: AppSizes.xxl),
-          Text(
-            'RECENT ACTIVITY',
-            style: AppText.caption.copyWith(
-              letterSpacing: 1.1,
-              fontWeight: FontWeight.w700,
-              color: const Color(0xFF3F4652),
+      body: balanceAsync.when(
+        loading: () => const SizedBox(
+            height: 360, child: Center(child: AppCircularLoader())),
+        error: (e, _) => SizedBox(
+          height: 360,
+          child: ErrorRetryView(
+            message: friendlyError(e),
+            onRetry: () => ref.invalidate(walletBalanceProvider),
+          ),
+        ),
+        data: (balance) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: AppSizes.sm),
+            _WalletBalanceCard(balance: balance),
+            const SizedBox(height: AppSizes.xxl),
+            Text(
+              'RECENT ACTIVITY',
+              style: AppText.caption.copyWith(
+                letterSpacing: 1.1,
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF3F4652),
+              ),
             ),
-          ),
-          const SizedBox(height: AppSizes.lg),
-          AppCard(
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppSizes.lg, vertical: AppSizes.xs),
-            child: Column(
-              children: [
-                const _ActivityRow(
-                  icon: Icons.account_balance_outlined,
-                  title: 'Seller payout received',
-                  subtitle: 'Yemi Stores · HTP-LGS-8881 · Today, 2:14 PM',
-                  amount: '+₦1,230,087.00',
-                  positive: true,
-                ),
-                const Divider(height: 1),
-                _ActivityRow(
-                  icon: Icons.shield_outlined,
-                  title: 'Buyer refund',
-                  subtitle: 'Order expired · HTP-7Q2K · Yesterday',
-                  amount: '+₦51,220.00',
-                  positive: true,
-                  onTap: () => AppNav.push(
-                      context, const TransactionOutcomeScreen()),
-                ),
-                const Divider(height: 1),
-                const _ActivityRow(
-                  icon: Icons.south_rounded,
-                  title: 'Withdrawal to GTBank',
-                  subtitle: '···· 6789 · 12 May 2025',
-                  amount: '−₦500,000.00',
-                  positive: false,
-                ),
-                const Divider(height: 1),
-                const _ActivityRow(
-                  icon: Icons.shield_outlined,
-                  title: 'Hoppr trust fee',
-                  subtitle: 'Retained · HTP-3M8X · 10 May 2025',
-                  amount: '−₦18,451.31',
-                  positive: false,
-                ),
-              ],
+            const SizedBox(height: AppSizes.lg),
+            const _LedgerSection(),
+            const SizedBox(height: AppSizes.xl),
+            Center(
+              child: Text('Wallet ledger · escrow, payouts & refunds',
+                  style: AppText.caption),
             ),
-          ),
-          const SizedBox(height: AppSizes.xl),
-          Center(
-            child: Text('Wallet ledger · escrow, payouts & refunds',
-                style: AppText.caption),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
+class _LedgerSection extends ConsumerWidget {
+  const _LedgerSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ledgerAsync = ref.watch(walletLedgerProvider);
+    return ledgerAsync.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppSizes.xxl),
+        child: Center(child: AppCircularLoader(size: 24, strokeWidth: 2.5)),
+      ),
+      error: (e, _) => ErrorRetryView(
+        message: friendlyError(e),
+        onRetry: () => ref.invalidate(walletLedgerProvider),
+      ),
+      data: (page) {
+        if (page.entries.isEmpty) {
+          return const EmptyStateView(
+            icon: Icons.account_balance_wallet_outlined,
+            title: 'No activity yet',
+            subtitle: 'Escrow funding, payouts and refunds will show up here.',
+          );
+        }
+        return AppCard(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSizes.lg, vertical: AppSizes.xs),
+          child: Column(
+            children: [
+              for (int i = 0; i < page.entries.length; i++) ...[
+                _ActivityRow(entry: page.entries[i]),
+                if (i != page.entries.length - 1) const Divider(height: 1),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _WalletBalanceCard extends StatelessWidget {
-  const _WalletBalanceCard();
+  const _WalletBalanceCard({required this.balance});
+  final WalletBalance balance;
 
   @override
   Widget build(BuildContext context) {
@@ -106,36 +130,22 @@ class _WalletBalanceCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(
-                Icons.account_balance_wallet_outlined,
-                size: 16,
-                color: muted,
-              ),
+              Icon(Icons.account_balance_wallet_outlined,
+                  size: 16, color: muted),
               const SizedBox(width: 7),
-              Text.rich(
-                TextSpan(
+              Text('Available balance',
                   style: TextStyle(
-                    fontSize: 14,
-                    height: 1,
-                    fontWeight: FontWeight.w500,
-                    color: muted,
-                  ),
-                  children: [
-                    const TextSpan(text: 'Available '),
-                    TextSpan(
-                      text: 'balance',
-                      // style: TextStyle(color: hi),
-                    ),
-                  ],
-                ),
-              ),
+                      fontSize: 14,
+                      height: 1,
+                      fontWeight: FontWeight.w500,
+                      color: muted)),
             ],
           ),
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: AnimatedMoney(
-              1212985.26,
+              balance.availableNaira,
               style: const TextStyle(
                 fontSize: 35,
                 height: 1,
@@ -153,17 +163,12 @@ class _WalletBalanceCard extends StatelessWidget {
                 child: Text.rich(
                   TextSpan(
                     style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w500,
-                      color: muted,
-                    ),
+                        fontSize: 12.5, fontWeight: FontWeight.w500, color: muted),
                     children: [
                       TextSpan(
-                        text: Money.format(1230087),
-                        style: TextStyle(
-                          color: hi,
-                          fontWeight: FontWeight.w700,
-                        ),
+                        text: Money.format(balance.coolingNaira),
+                        style:
+                            TextStyle(color: hi, fontWeight: FontWeight.w700),
                       ),
                       const TextSpan(text: ' in cooling settlement'),
                     ],
@@ -180,7 +185,7 @@ class _WalletBalanceCard extends StatelessWidget {
                   label: 'Withdraw',
                   icon: Icons.file_download_outlined,
                   filled: true,
-                  onPressed: () => _showWithdrawSheet(context),
+                  onPressed: () => _showWithdrawSheet(context, balance),
                 ),
               ),
               const SizedBox(width: AppSizes.md),
@@ -200,26 +205,28 @@ class _WalletBalanceCard extends StatelessWidget {
   }
 }
 
-/// Animated bottom sheet (blurred backdrop) to withdraw to the default bank.
-void _showWithdrawSheet(BuildContext context) {
+void _showWithdrawSheet(BuildContext context, WalletBalance balance) {
   showBlurredSheet(
     context,
-    builder: (ctx) => _WithdrawSheet(rootContext: context),
+    builder: (ctx) => _WithdrawSheet(rootContext: context, balance: balance),
   );
 }
 
-class _WithdrawSheet extends StatefulWidget {
-  const _WithdrawSheet({required this.rootContext});
+class _WithdrawSheet extends ConsumerStatefulWidget {
+  const _WithdrawSheet({required this.rootContext, required this.balance});
 
-  /// The screen context — used for the snackbar after the sheet is dismissed.
   final BuildContext rootContext;
+  final WalletBalance balance;
 
   @override
-  State<_WithdrawSheet> createState() => _WithdrawSheetState();
+  ConsumerState<_WithdrawSheet> createState() => _WithdrawSheetState();
 }
 
-class _WithdrawSheetState extends State<_WithdrawSheet> {
-  final _amount = TextEditingController(text: '500,000.00');
+class _WithdrawSheetState extends ConsumerState<_WithdrawSheet> {
+  late final TextEditingController _amount = TextEditingController(
+    text: Money.format(widget.balance.availableNaira, symbol: false),
+  );
+  bool _busy = false;
 
   @override
   void dispose() {
@@ -227,20 +234,43 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
     super.dispose();
   }
 
-  void _confirm() {
-    Navigator.of(context).pop();
-    final value = _amount.text.trim();
-    ScaffoldMessenger.of(widget.rootContext).showSnackBar(
-      SnackBar(
-        content: Text(value.isEmpty
-            ? 'Withdrawal started'
-            : 'Withdrawal of ${Money.naira}$value started'),
-      ),
-    );
+  Future<void> _confirm(PayoutAccount account) async {
+    final raw = _amount.text.replaceAll(',', '').trim();
+    final value = double.tryParse(raw) ?? 0;
+    if (value <= 0) {
+      AppSnackbar.error(widget.rootContext, 'Enter an amount to withdraw.');
+      return;
+    }
+    if (value > widget.balance.availableNaira) {
+      AppSnackbar.error(widget.rootContext, 'Amount exceeds your balance.');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await ref.read(walletRepositoryProvider).withdraw(
+            amountNaira: value,
+            accountId: account.id,
+          );
+      ref.invalidate(walletBalanceProvider);
+      ref.invalidate(walletLedgerProvider);
+      if (mounted) Navigator.of(context).pop();
+      if (widget.rootContext.mounted) {
+        AppSnackbar.success(widget.rootContext,
+            'Withdrawal of ${Money.format(value)} started to ${account.bank}.');
+      }
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _busy = false);
+      if (widget.rootContext.mounted) {
+        AppSnackbar.error(widget.rootContext, e.userMessage);
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final account =
+        ref.watch(authControllerProvider).valueOrNull?.user?.defaultPayoutAccount;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(
           AppSizes.xl, AppSizes.md, AppSizes.xl, AppSizes.lg),
@@ -253,103 +283,162 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
           Text('Move money from your Hoppr wallet to your bank account.',
               style: AppText.body),
           const SizedBox(height: AppSizes.xl),
-          // Default bank account.
-          Container(
-            padding: const EdgeInsets.all(AppSizes.md),
-            decoration: BoxDecoration(
-              color: AppColors.surfaceMuted,
-              borderRadius: AppRadii.card,
+          if (account == null)
+            _NoAccount(rootContext: widget.rootContext)
+          else ...[
+            _AccountTile(account: account),
+            const SizedBox(height: AppSizes.md),
+            _AmountField(controller: _amount, onSubmit: () => _confirm(account)),
+            const SizedBox(height: AppSizes.xl),
+            AppButton(
+              label: 'Confirm withdrawal',
+              icon: Icons.check_rounded,
+              loading: _busy,
+              onPressed: () => _confirm(account),
             ),
-            child: Row(
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: AppRadii.md,
-                  ),
-                  child: const Icon(Icons.account_balance_outlined, size: 20),
-                ),
-                const SizedBox(width: AppSizes.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('GTBank · •••• 6789', style: AppText.bodyStrong),
-                      const SizedBox(height: 2),
-                      Text('Amara Okafor · Default', style: AppText.caption),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: AppSizes.sm),
-                const StatusPill(label: 'Default', dense: true),
-              ],
-            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NoAccount extends StatelessWidget {
+  const _NoAccount({required this.rootContext});
+  final BuildContext rootContext;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(AppSizes.lg),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceMuted,
+            borderRadius: AppRadii.card,
           ),
-          const SizedBox(height: AppSizes.md),
-          // Editable amount.
+          child: Row(
+            children: [
+              const Icon(Icons.account_balance_outlined,
+                  size: 22, color: AppColors.textSecondary),
+              const SizedBox(width: AppSizes.md),
+              Expanded(
+                child: Text('Add a payout account to withdraw your funds.',
+                    style: AppText.body),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSizes.lg),
+        AppButton(
+          label: 'Add payout account',
+          icon: Icons.add_rounded,
+          onPressed: () {
+            Navigator.of(context).pop();
+            AppNav.push(rootContext, const PayoutAccountsScreen());
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _AccountTile extends StatelessWidget {
+  const _AccountTile({required this.account});
+  final PayoutAccount account;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(AppSizes.md),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted,
+        borderRadius: AppRadii.card,
+      ),
+      child: Row(
+        children: [
           Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppSizes.lg, vertical: AppSizes.md),
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: AppRadii.card,
-              border: Border.all(color: AppColors.border, width: 1.3),
-            ),
+                color: AppColors.surface, borderRadius: AppRadii.md),
+            child: const Icon(Icons.account_balance_outlined, size: 20),
+          ),
+          const SizedBox(width: AppSizes.md),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Amount',
-                    style:
-                        AppText.label.copyWith(color: AppColors.textTertiary)),
-                const SizedBox(height: 4),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    const Text(
-                      Money.naira,
-                      style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.6,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: TextField(
-                        controller: _amount,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [ThousandsFormatter()],
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) => _confirm(),
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.6,
-                          color: AppColors.textPrimary,
-                        ),
-                        decoration: const InputDecoration(
-                          isCollapsed: true,
-                          border: InputBorder.none,
-                          hintText: '0',
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                Text('${account.bank} · •••• ${account.accountNumberLast4}',
+                    style: AppText.bodyStrong),
+                const SizedBox(height: 2),
+                Text(account.accountName, style: AppText.caption),
               ],
             ),
           ),
-          const SizedBox(height: AppSizes.xl),
-          AppButton(
-            label: 'Confirm withdrawal',
-            icon: Icons.check_rounded,
-            variant: AppButtonVariant.outline,
-            onPressed: _confirm,
+          if (account.isDefault) ...[
+            const SizedBox(width: AppSizes.sm),
+            const StatusPill(label: 'Default', dense: true),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AmountField extends StatelessWidget {
+  const _AmountField({required this.controller, required this.onSubmit});
+  final TextEditingController controller;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSizes.lg, vertical: AppSizes.md),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: AppRadii.card,
+        border: Border.all(color: AppColors.border, width: 1.3),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Amount',
+              style: AppText.label.copyWith(color: AppColors.textTertiary)),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Text(Money.naira,
+                  style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.6,
+                      color: AppColors.textPrimary)),
+              const SizedBox(width: 4),
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [ThousandsFormatter()],
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => onSubmit(),
+                  style: const TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.6,
+                      color: AppColors.textPrimary),
+                  decoration: const InputDecoration(
+                    isCollapsed: true,
+                    border: InputBorder.none,
+                    hintText: '0',
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -373,7 +462,6 @@ class _WalletCardAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fg = filled ? AppColors.textPrimary : AppColors.textOnDark;
-    // Filled action (Withdraw) is lime in the Lime theme, white in Mono.
     final filledBg = AppAccent.of(context).isLime
         ? const Color(0xFFCBF24A)
         : AppColors.surface;
@@ -396,14 +484,9 @@ class _WalletCardAction extends StatelessWidget {
           children: [
             Icon(icon, size: 16, color: fg),
             const SizedBox(width: 7),
-            Text(
-              label,
-              style: AppText.button.copyWith(
-                color: fg,
-                fontSize: 13.5,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
+            Text(label,
+                style: AppText.button.copyWith(
+                    color: fg, fontSize: 13.5, fontWeight: FontWeight.w800)),
           ],
         ),
       ),
@@ -412,28 +495,31 @@ class _WalletCardAction extends StatelessWidget {
 }
 
 class _ActivityRow extends StatelessWidget {
-  const _ActivityRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.amount,
-    required this.positive,
-    this.onTap,
-  });
+  const _ActivityRow({required this.entry});
+  final WalletLedgerEntry entry;
 
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final String amount;
-  final bool positive;
-  final VoidCallback? onTap;
+  static (IconData, String) _meta(String type) => switch (type) {
+        'escrow_funded' => (Icons.lock_outline_rounded, 'Secured in escrow'),
+        'seller_payout' => (Icons.account_balance_outlined, 'Seller payout'),
+        'delivery_payout' => (Icons.local_shipping_outlined, 'Delivery payout'),
+        'buyer_refund' => (Icons.shield_outlined, 'Buyer refund'),
+        'trust_fee' => (Icons.verified_user_outlined, 'Hoppr trust fee'),
+        'withdrawal' => (Icons.south_rounded, 'Withdrawal'),
+        'adjustment' => (Icons.tune_rounded, 'Adjustment'),
+        _ => (Icons.receipt_long_outlined, 'Transaction'),
+      };
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
+    final (icon, title) = _meta(entry.type);
+    final positive = entry.isCredit;
+    final amount =
+        '${positive ? '+' : '−'}${Money.format(entry.amountNaira)}';
+    final subtitle = entry.createdAt != null
+        ? '${entry.description} · ${Dates.relative(entry.createdAt!)}'
+        : entry.description;
+
+    return Padding(
       padding: const EdgeInsets.symmetric(vertical: AppSizes.md),
       child: Row(
         children: [
@@ -442,9 +528,7 @@ class _ActivityRow extends StatelessWidget {
             height: 38,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: AppColors.surfaceMuted,
-              borderRadius: AppRadii.sm,
-            ),
+                color: AppColors.surfaceMuted, borderRadius: AppRadii.sm),
             child: Icon(icon, size: 18),
           ),
           const SizedBox(width: AppSizes.md),
@@ -455,16 +539,18 @@ class _ActivityRow extends StatelessWidget {
                 Text(title, style: AppText.bodyStrong),
                 const SizedBox(height: 2),
                 Text(subtitle,
-                    style: AppText.caption, overflow: TextOverflow.ellipsis),
+                    style: AppText.caption,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
               ],
             ),
           ),
           const SizedBox(width: AppSizes.sm),
           Text(amount,
               style: AppText.bodyStrong.copyWith(
-                  color: positive ? AppColors.success : AppColors.textPrimary)),
+                  color:
+                      positive ? AppColors.success : AppColors.textPrimary)),
         ],
-      ),
       ),
     );
   }

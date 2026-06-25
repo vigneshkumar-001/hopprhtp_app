@@ -9,7 +9,7 @@ import '../../data/models/models.dart';
 import '../profile/profile_screen.dart';
 import '../transaction/create_transaction_screen.dart';
 import '../transaction/enter_transaction_code_screen.dart';
-import '../transaction/package_tracking_screen.dart';
+import '../transaction/transit_map_screen.dart';
 import 'home_screen.dart';
 import 'transactions_tab.dart';
 
@@ -36,19 +36,9 @@ class _HomeShellState extends State<HomeShell> {
       AppNav.push(context, const EnterTransactionCodeScreen());
       return;
     }
-    // "Transit" (2) opens the Package on the way tracking screen.
+    // "Transit" (2) opens the live Google Map delivery tracking.
     if (i == 2) {
-      AppNav.push(
-        context,
-        PackageTrackingScreen(
-          draft: PaymentDraft(
-            productName: 'MacBook Pro M2',
-            sellerName: 'Yemi Stores',
-            sellerCode: 'HTP-LGS-8881',
-            itemSubtotal: 1230087,
-          ),
-        ),
-      );
+      AppNav.push(context, const TransitMapScreen());
       return;
     }
     setState(() {

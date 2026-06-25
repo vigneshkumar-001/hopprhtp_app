@@ -14,6 +14,7 @@ class BoxedCodeInput extends StatefulWidget {
     this.length = 6,
     this.obscure = false,
     this.autofocus = true,
+    this.autofillHints,
     this.onChanged,
     this.onCompleted,
   });
@@ -22,6 +23,9 @@ class BoxedCodeInput extends StatefulWidget {
   final int length;
   final bool obscure;
   final bool autofocus;
+
+  /// e.g. `[AutofillHints.oneTimeCode]` so the OS offers the SMS code.
+  final List<String>? autofillHints;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onCompleted;
 
@@ -88,6 +92,7 @@ class _BoxedCodeInputState extends State<BoxedCodeInput>
               controller: widget.controller,
               focusNode: _focus,
               autofocus: widget.autofocus,
+              autofillHints: widget.autofillHints,
               keyboardType: TextInputType.number,
               showCursor: false,
               enableInteractiveSelection: false,

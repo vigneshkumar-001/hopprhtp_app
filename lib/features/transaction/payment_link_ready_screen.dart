@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import '../../core/env/app_config.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
@@ -11,15 +12,20 @@ import '../../widgets/animations.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
-import 'buyer_review_screen.dart';
+import 'checkout_webview_screen.dart';
+import 'link_transaction_screen.dart';
 
 /// Payment Link Ready — shown after the seller taps "Generate Payment Link".
 /// Surfaces the shareable link + grand total, then lets them preview the
 /// buyer's payment page. Accent (the bolt circle + Share CTA) follows the
 /// selected theme: lime in the Lime theme, ink in Mono.
 class PaymentLinkReadyScreen extends StatefulWidget {
-  const PaymentLinkReadyScreen({super.key, required this.draft});
+  const PaymentLinkReadyScreen({super.key, required this.draft, this.code});
   final PaymentDraft draft;
+
+  /// The created transaction's public code (e.g. HTP-7Q2K). Falls back to the
+  /// draft's seller code for the demo preview path.
+  final String? code;
 
   @override
   State<PaymentLinkReadyScreen> createState() => _PaymentLinkReadyScreenState();
@@ -30,7 +36,8 @@ class _PaymentLinkReadyScreenState extends State<PaymentLinkReadyScreen> {
   // a "Copied" confirmation, then resets.
   bool _copied = false;
 
-  String get _link => 'pay.hoppr.africa/t/${widget.draft.sellerCode}';
+  String get _link =>
+      '${AppConfig.webBaseUrl}/pay/${widget.code ?? widget.draft.sellerCode}';
 
   void _copy() {
     Clipboard.setData(ClipboardData(text: _link));
@@ -47,6 +54,19 @@ class _PaymentLinkReadyScreenState extends State<PaymentLinkReadyScreen> {
     );
   }
 
+  /// Opens the hosted web checkout in an in-app browser. When the buyer pays,
+  /// the page hands control back and we surface the Link-transaction screen.
+  Future<void> _openCheckout() async {
+    final code = widget.code ?? widget.draft.sellerCode;
+    final paid = await AppNav.push<bool>(
+      context,
+      CheckoutWebViewScreen(code: code, lime: AppAccent.of(context).isLime),
+    );
+    if (paid == true && mounted) {
+      AppNav.push(context, const LinkTransactionScreen());
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final accent = AppAccent.of(context);
@@ -57,9 +77,9 @@ class _PaymentLinkReadyScreenState extends State<PaymentLinkReadyScreen> {
     return AppScaffold(
       title: 'Payment Link Ready',
       bottomAction: AppButton(
-        label: "Preview buyer's payment page",
+        label: "Open buyer's payment page",
         trailingIcon: Icons.arrow_forward_rounded,
-        onPressed: () => AppNav.push(context, BuyerReviewScreen(draft: draft)),
+        onPressed: _openCheckout,
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

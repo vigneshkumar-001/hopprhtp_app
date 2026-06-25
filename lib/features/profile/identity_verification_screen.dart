@@ -1,18 +1,48 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../core/network/api_exception.dart';
+import '../../core/network/error_messages.dart';
+import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
-import '../../data/app_state.dart';
+import '../auth/application/auth_controller.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_snackbar.dart';
 
-/// Identity verification intro (mockup 7) + a lightweight working flow.
+/// Mutable draft carried through the KYC steps (doc type + 3 captured images).
+class KycDraft {
+  int? docIndex; // 0 NIN · 1 licence · 2 passport
+  XFile? front;
+  XFile? back;
+  XFile? selfie;
+
+  String get docType => switch (docIndex) {
+        1 => 'drivers_license',
+        2 => 'passport',
+        _ => 'nin',
+      };
+  String get docLabel => switch (docIndex) {
+        1 => "Driver's licence",
+        2 => 'International passport',
+        _ => 'National ID (NIN)',
+      };
+
+  /// Passports are single-sided (data page); other IDs need a back too.
+  bool get needsBack => docType != 'passport';
+
+  bool get documentsReady =>
+      docIndex != null && front != null && (!needsBack || back != null);
+}
+
+/// Identity verification intro (mockup 7).
 class IdentityVerificationScreen extends StatelessWidget {
   const IdentityVerificationScreen({super.key});
 
@@ -25,16 +55,15 @@ class IdentityVerificationScreen extends StatelessWidget {
         label: 'Start verification',
         trailingIcon: Icons.arrow_forward_rounded,
         onPressed: () =>
-            AppNav.push(context, const ChooseDocumentScreen()),
+            AppNav.push(context, ChooseDocumentScreen(draft: KycDraft())),
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: AppSizes.sm),
           AppCard(
-            color: accent.isLime
-                ? const Color(0xFFE2DDF8)
-                : AppColors.surfaceMuted,
+            color:
+                accent.isLime ? const Color(0xFFE2DDF8) : AppColors.surfaceMuted,
             padding: const EdgeInsets.all(AppSizes.xl),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -44,10 +73,7 @@ class IdentityVerificationScreen extends StatelessWidget {
                   height: 52,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: AppColors.ink,
-                    // Rounded-square ("half") tile, not a full circle.
-                    borderRadius: AppRadii.md,
-                  ),
+                      color: AppColors.ink, borderRadius: AppRadii.md),
                   child: Icon(Icons.verified_outlined,
                       color: accent.isLime
                           ? const Color(0xFFCBF24A)
@@ -58,7 +84,8 @@ class IdentityVerificationScreen extends StatelessWidget {
                 Text('Get the HTP Verified badge', style: AppText.h2),
                 const SizedBox(height: AppSizes.sm),
                 Text(
-                  'Verified accounts win more buyers, unlock higher transaction limits, and rank higher in trust scores.',
+                  'Verified accounts win more buyers, unlock higher transaction '
+                  'limits, and rank higher in trust scores.',
                   style: AppText.body,
                 ),
               ],
@@ -70,7 +97,7 @@ class IdentityVerificationScreen extends StatelessWidget {
           _RequirementCard(
             icon: Icons.badge_outlined,
             title: 'A valid government ID',
-            subtitle: 'Clear photo of the document',
+            subtitle: 'Front & back, clearly photographed',
             iconBg: accent.isLime ? const Color(0xFFD0EEDB) : null,
           ),
           const SizedBox(height: AppSizes.md),
@@ -83,13 +110,12 @@ class IdentityVerificationScreen extends StatelessWidget {
       ),
     );
   }
-
 }
 
-/// Choose-a-document step — pick an ID type, (mock) upload it, then run the
-/// capture/selfie verification flow.
+/// Step 1 — pick an ID type, then capture FRONT + BACK photos.
 class ChooseDocumentScreen extends StatefulWidget {
-  const ChooseDocumentScreen({super.key});
+  const ChooseDocumentScreen({super.key, required this.draft});
+  final KycDraft draft;
 
   @override
   State<ChooseDocumentScreen> createState() => _ChooseDocumentScreenState();
@@ -102,8 +128,6 @@ class _DocOptionData {
 }
 
 class _ChooseDocumentScreenState extends State<ChooseDocumentScreen> {
-  int? _selected;
-  XFile? _idImage;
   final _picker = ImagePicker();
 
   static const _docs = [
@@ -112,27 +136,29 @@ class _ChooseDocumentScreenState extends State<ChooseDocumentScreen> {
     _DocOptionData('International passport', Icons.public_outlined),
   ];
 
-  Future<void> _pickId() async {
-    final f = await _picker.pickImage(source: ImageSource.gallery);
-    if (f != null && mounted) setState(() => _idImage = f);
+  KycDraft get _d => widget.draft;
+
+  Future<void> _pick({required bool front}) async {
+    final f = await _picker.pickImage(
+        source: ImageSource.gallery, imageQuality: 80, maxWidth: 1600);
+    if (f != null && mounted) {
+      setState(() => front ? _d.front = f : _d.back = f);
+    }
   }
 
-  void _continue() {
-    AppNav.push(
-      context,
-      TakeSelfieScreen(docLabel: _docs[_selected!].label),
-    );
-  }
+  void _continue() =>
+      AppNav.push(context, TakeSelfieScreen(draft: _d));
 
   @override
   Widget build(BuildContext context) {
     final accent = AppAccent.of(context);
     return AppScaffold(
       title: 'Identity verification',
+      stepTrailing: Text('1 / 3', style: AppText.caption),
       bottomAction: AppButton(
         label: 'Continue',
         trailingIcon: Icons.arrow_forward_rounded,
-        enabled: _selected != null,
+        enabled: _d.documentsReady,
         onPressed: _continue,
       ),
       body: Column(
@@ -141,47 +167,35 @@ class _ChooseDocumentScreenState extends State<ChooseDocumentScreen> {
           const SizedBox(height: AppSizes.sm),
           Text('Choose a document', style: AppText.h1),
           const SizedBox(height: AppSizes.xs),
-          Text('Select the ID type you want to upload.', style: AppText.body),
+          Text('Select the ID type, then add clear photos.',
+              style: AppText.body),
           const SizedBox(height: AppSizes.lg),
           for (int i = 0; i < _docs.length; i++) ...[
             _DocOption(
               data: _docs[i],
-              selected: _selected == i,
+              selected: _d.docIndex == i,
               accent: accent,
-              onTap: () => setState(() => _selected = i),
+              onTap: () => setState(() => _d.docIndex = i),
             ),
             if (i != _docs.length - 1) const SizedBox(height: AppSizes.md),
           ],
-          if (_selected != null) ...[
+          if (_d.docIndex != null) ...[
             const SizedBox(height: AppSizes.xl),
-            SectionLabel('Upload ${_docs[_selected!].label}'),
+            SectionLabel('Upload ${_docs[_d.docIndex!].label}'),
             const SizedBox(height: AppSizes.md),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _pickId,
-              child: DottedBorderBox(
-                fill: AppColors.surfaceMuted,
-                active: _idImage != null,
-                child: SizedBox(
-                  height: 150,
-                  width: double.infinity,
-                  child: _idImage != null
-                      ? _PickedImage(file: _idImage!)
-                      : const Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.image_outlined,
-                                  size: 30, color: AppColors.textTertiary),
-                              SizedBox(height: 8),
-                              Text('Tap to upload front of ID',
-                                  style: AppText.caption),
-                            ],
-                          ),
-                        ),
-                ),
-              ),
+            _UploadBox(
+              label: _d.needsBack ? 'Front of document' : 'Photo page',
+              file: _d.front,
+              onTap: () => _pick(front: true),
             ),
+            if (_d.needsBack) ...[
+              const SizedBox(height: AppSizes.md),
+              _UploadBox(
+                label: 'Back of document',
+                file: _d.back,
+                onTap: () => _pick(front: false),
+              ),
+            ],
           ],
         ],
       ),
@@ -189,7 +203,67 @@ class _ChooseDocumentScreenState extends State<ChooseDocumentScreen> {
   }
 }
 
-/// A single selectable document row (icon tile + label + radio).
+/// A labelled dashed upload area showing the picked image (or a prompt).
+class _UploadBox extends StatelessWidget {
+  const _UploadBox({required this.label, required this.file, required this.onTap});
+  final String label;
+  final XFile? file;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(label, style: AppText.label),
+            const Spacer(),
+            if (file != null)
+              Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded,
+                      size: 14, color: AppColors.success),
+                  const SizedBox(width: 4),
+                  Text('Added',
+                      style: AppText.caption.copyWith(
+                          color: AppColors.success,
+                          fontWeight: FontWeight.w700)),
+                ],
+              ),
+          ],
+        ),
+        const SizedBox(height: AppSizes.sm),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: DottedBorderBox(
+            fill: AppColors.surfaceMuted,
+            active: file != null,
+            child: SizedBox(
+              height: 150,
+              width: double.infinity,
+              child: file != null
+                  ? _PickedImage(file: file!)
+                  : const Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add_a_photo_outlined,
+                              size: 28, color: AppColors.textTertiary),
+                          SizedBox(height: 8),
+                          Text('Tap to add photo', style: AppText.caption),
+                        ],
+                      ),
+                    ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _DocOption extends StatelessWidget {
   const _DocOption({
     required this.data,
@@ -205,8 +279,6 @@ class _DocOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Selected tile is lime in the Lime theme (ink in Mono); unselected is a
-    // soft lilac (muted grey in Mono).
     final tileColor = selected
         ? (accent.isLime ? const Color(0xFFCBF24A) : AppColors.ink)
         : (accent.isLime ? const Color(0xFFECE9FB) : AppColors.surfaceMuted);
@@ -227,10 +299,8 @@ class _DocOption extends StatelessWidget {
               width: 40,
               height: 40,
               alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: tileColor,
-                borderRadius: AppRadii.sm,
-              ),
+              decoration:
+                  BoxDecoration(color: tileColor, borderRadius: AppRadii.sm),
               child: Icon(data.icon, size: 20, color: iconColor),
             ),
             const SizedBox(width: AppSizes.md),
@@ -243,7 +313,6 @@ class _DocOption extends StatelessWidget {
   }
 }
 
-/// Round radio indicator — filled black tick when selected, hollow otherwise.
 class _Radio extends StatelessWidget {
   const _Radio({required this.selected});
   final bool selected;
@@ -258,12 +327,11 @@ class _Radio extends StatelessWidget {
         color: selected ? AppColors.ink : Colors.transparent,
         shape: BoxShape.circle,
         border: Border.all(
-          color: selected ? AppColors.ink : AppColors.border,
-          width: 1.6,
-        ),
+            color: selected ? AppColors.ink : AppColors.border, width: 1.6),
       ),
       child: selected
-          ? const Icon(Icons.check_rounded, size: 14, color: AppColors.textOnDark)
+          ? const Icon(Icons.check_rounded,
+              size: 14, color: AppColors.textOnDark)
           : null,
     );
   }
@@ -292,9 +360,8 @@ class _RequirementCard extends StatelessWidget {
             height: 44,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: iconBg ?? AppColors.surfaceMuted,
-              borderRadius: AppRadii.sm,
-            ),
+                color: iconBg ?? AppColors.surfaceMuted,
+                borderRadius: AppRadii.sm),
             child: Icon(icon, size: 22, color: AppColors.textPrimary),
           ),
           const SizedBox(width: AppSizes.md),
@@ -314,151 +381,40 @@ class _RequirementCard extends StatelessWidget {
   }
 }
 
-/// Submitted-for-review confirmation — shown after the user submits their
-/// documents. Grants the HTP Verified badge (prototype) and routes back.
-class SubmittedForReviewScreen extends StatefulWidget {
-  const SubmittedForReviewScreen({super.key, required this.docLabel});
-  final String docLabel;
-
-  @override
-  State<SubmittedForReviewScreen> createState() =>
-      _SubmittedForReviewScreenState();
-}
-
-class _SubmittedForReviewScreenState extends State<SubmittedForReviewScreen> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) AppScope.read(context).markVerified();
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = AppAccent.of(context);
-    final circle = accent.isLime ? accent.accent : AppColors.ink;
-    final onCircle = accent.isLime ? accent.onAccent : AppColors.textOnDark;
-
-    return AppScaffold(
-      title: 'Verification',
-      bottomAction: AppButton(
-        label: 'Back to profile',
-        trailingIcon: Icons.arrow_forward_rounded,
-        onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
-      ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: AppSizes.xl),
-          Center(
-            child: Container(
-              width: 84,
-              height: 84,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: circle,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: circle.withValues(alpha: 0.45),
-                    blurRadius: 28,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-              child: Icon(Icons.verified_rounded, size: 40, color: onCircle),
-            ),
-          ),
-          const SizedBox(height: AppSizes.xl),
-          Text('Submitted for review',
-              textAlign: TextAlign.center, style: AppText.h1),
-          const SizedBox(height: AppSizes.sm),
-          Text(
-            'We\'re reviewing your documents. Most verifications complete within a few minutes — we\'ll notify you.',
-            textAlign: TextAlign.center,
-            style: AppText.body,
-          ),
-          const SizedBox(height: AppSizes.xl),
-          AppCard(
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: accent.isLime
-                        ? const Color(0xFFF7EBB0)
-                        : AppColors.surfaceMuted,
-                    borderRadius: AppRadii.sm,
-                  ),
-                  child: const Icon(Icons.schedule_rounded,
-                      size: 20, color: AppColors.textPrimary),
-                ),
-                const SizedBox(width: AppSizes.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Status: Pending', style: AppText.bodyStrong),
-                      const SizedBox(height: 2),
-                      Text('${widget.docLabel} + selfie received',
-                          style: AppText.caption),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: AppSizes.sm),
-                StatusPill(
-                  label: 'In review',
-                  icon: Icons.refresh_rounded,
-                  background: accent.isLime
-                      ? const Color(0xFFFBF2C6)
-                      : AppColors.surfaceMuted,
-                  dense: true,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Take-a-selfie step — pick a selfie from the gallery, then continue to review.
+/// Step 2 — capture a selfie.
 class TakeSelfieScreen extends StatefulWidget {
-  const TakeSelfieScreen({super.key, required this.docLabel});
-  final String docLabel;
+  const TakeSelfieScreen({super.key, required this.draft});
+  final KycDraft draft;
 
   @override
   State<TakeSelfieScreen> createState() => _TakeSelfieScreenState();
 }
 
 class _TakeSelfieScreenState extends State<TakeSelfieScreen> {
-  XFile? _selfie;
   final _picker = ImagePicker();
 
   Future<void> _pickSelfie() async {
     final f = await _picker.pickImage(
       source: ImageSource.camera,
       preferredCameraDevice: CameraDevice.front,
+      imageQuality: 80,
+      maxWidth: 1200,
     );
-    if (f != null && mounted) setState(() => _selfie = f);
+    if (f != null && mounted) setState(() => widget.draft.selfie = f);
   }
 
-  void _continue() {
-    AppNav.push(context, ReviewSubmitScreen(docLabel: widget.docLabel));
-  }
+  void _continue() =>
+      AppNav.push(context, ReviewSubmitScreen(draft: widget.draft));
 
   @override
   Widget build(BuildContext context) {
     return AppScaffold(
       title: 'Identity verification',
+      stepTrailing: Text('2 / 3', style: AppText.caption),
       bottomAction: AppButton(
         label: 'Continue',
         trailingIcon: Icons.arrow_forward_rounded,
-        enabled: _selfie != null,
+        enabled: widget.draft.selfie != null,
         onPressed: _continue,
       ),
       body: Column(
@@ -476,12 +432,12 @@ class _TakeSelfieScreenState extends State<TakeSelfieScreen> {
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: _pickSelfie,
-            child: _SelfieCircle(file: _selfie),
+            child: _SelfieCircle(file: widget.draft.selfie),
           ),
           const SizedBox(height: AppSizes.xl),
-          Row(
+          const Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: const [
+            children: [
               _SelfieCheck(label: 'Face forward'),
               _SelfieCheck(label: 'Remove glasses'),
               _SelfieCheck(label: 'Good light'),
@@ -493,7 +449,6 @@ class _TakeSelfieScreenState extends State<TakeSelfieScreen> {
   }
 }
 
-/// Dashed circle "Add selfie" target.
 class _SelfieCircle extends StatelessWidget {
   const _SelfieCircle({this.file});
   final XFile? file;
@@ -516,7 +471,7 @@ class _SelfieCircle extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.image_outlined,
+                    Icon(Icons.camera_alt_outlined,
                         size: 30, color: AppColors.textTertiary),
                     SizedBox(height: 8),
                     Text('Add selfie', style: AppText.caption),
@@ -563,10 +518,9 @@ class _PickedImageState extends State<_PickedImage> {
     if (b == null) {
       return const Center(
         child: SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2)),
       );
     }
     return Image.memory(b,
@@ -631,25 +585,61 @@ class _SelfieCheck extends StatelessWidget {
   }
 }
 
-/// Review & submit step — confirm the uploaded ID + selfie, then submit.
-class ReviewSubmitScreen extends StatelessWidget {
-  const ReviewSubmitScreen({super.key, required this.docLabel});
-  final String docLabel;
+/// Step 3 — review the captured documents, upload + submit for review.
+class ReviewSubmitScreen extends ConsumerStatefulWidget {
+  const ReviewSubmitScreen({super.key, required this.draft});
+  final KycDraft draft;
 
-  void _submit(BuildContext context) {
-    AppNav.push(context, SubmittedForReviewScreen(docLabel: docLabel));
+  @override
+  ConsumerState<ReviewSubmitScreen> createState() => _ReviewSubmitScreenState();
+}
+
+class _ReviewSubmitScreenState extends ConsumerState<ReviewSubmitScreen> {
+  bool _busy = false;
+
+  Future<void> _submit() async {
+    final d = widget.draft;
+    setState(() => _busy = true);
+    try {
+      final upload = ref.read(uploadRepositoryProvider);
+      final frontUrl = await upload.uploadImage(d.front!.path);
+      final backUrl =
+          d.back != null ? await upload.uploadImage(d.back!.path) : null;
+      final selfieUrl = await upload.uploadImage(d.selfie!.path);
+      await ref.read(authControllerProvider.notifier).submitIdentity(
+            docType: d.docType,
+            documentFrontUrl: frontUrl,
+            documentBackUrl: backUrl,
+            selfieUrl: selfieUrl,
+          );
+      if (!mounted) return;
+      AppNav.push(context, SubmittedForReviewScreen(docLabel: d.docLabel));
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        AppSnackbar.error(context, e.userMessage);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _busy = false);
+        AppSnackbar.error(context, 'Upload failed. Please try again.');
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final accent = AppAccent.of(context);
+    final d = widget.draft;
     return AppScaffold(
       title: 'Identity verification',
+      stepTrailing: Text('3 / 3', style: AppText.caption),
       bottomAction: AppButton(
         label: 'Submit for verification',
         icon: Icons.verified_outlined,
         accentInLime: true,
-        onPressed: () => _submit(context),
+        loading: _busy,
+        onPressed: _submit,
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -657,21 +647,31 @@ class ReviewSubmitScreen extends StatelessWidget {
           const SizedBox(height: AppSizes.sm),
           Text('Review & submit', style: AppText.h1),
           const SizedBox(height: AppSizes.xs),
-          Text('Confirm everything looks right before submitting.',
+          Text('Confirm everything is clear and readable before submitting.',
               style: AppText.body),
           const SizedBox(height: AppSizes.lg),
           _ReviewRow(
-            icon: Icons.crop_free_rounded,
-            title: docLabel,
-            status: 'Uploaded',
-            tile: accent.isLime ? const Color(0xFFD0EEDB) : AppColors.surfaceMuted,
+            title: '${d.docLabel} — front',
+            file: d.front,
+            tile:
+                accent.isLime ? const Color(0xFFD0EEDB) : AppColors.surfaceMuted,
           ),
+          if (d.back != null) ...[
+            const SizedBox(height: AppSizes.md),
+            _ReviewRow(
+              title: '${d.docLabel} — back',
+              file: d.back,
+              tile: accent.isLime
+                  ? const Color(0xFFD0EEDB)
+                  : AppColors.surfaceMuted,
+            ),
+          ],
           const SizedBox(height: AppSizes.md),
           _ReviewRow(
-            icon: Icons.camera_alt_outlined,
             title: 'Selfie',
-            status: 'Captured',
-            tile: accent.isLime ? const Color(0xFFF7EBB0) : AppColors.surfaceMuted,
+            file: d.selfie,
+            tile:
+                accent.isLime ? const Color(0xFFF7EBB0) : AppColors.surfaceMuted,
           ),
           const SizedBox(height: AppSizes.md),
           Container(
@@ -690,7 +690,8 @@ class ReviewSubmitScreen extends StatelessWidget {
                 const SizedBox(width: AppSizes.sm),
                 Expanded(
                   child: Text(
-                    'By submitting you confirm these documents are genuine and belong to you.',
+                    'By submitting you confirm these documents are genuine and '
+                    'belong to you.',
                     style: AppText.caption
                         .copyWith(color: AppColors.textSecondary),
                   ),
@@ -705,16 +706,10 @@ class ReviewSubmitScreen extends StatelessWidget {
 }
 
 class _ReviewRow extends StatelessWidget {
-  const _ReviewRow({
-    required this.icon,
-    required this.title,
-    required this.status,
-    required this.tile,
-  });
+  const _ReviewRow({required this.title, required this.file, required this.tile});
 
-  final IconData icon;
   final String title;
-  final String status;
+  final XFile? file;
   final Color tile;
 
   @override
@@ -722,12 +717,16 @@ class _ReviewRow extends StatelessWidget {
     return AppCard(
       child: Row(
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: tile, borderRadius: AppRadii.sm),
-            child: Icon(icon, size: 20, color: AppColors.textPrimary),
+          ClipRRect(
+            borderRadius: AppRadii.sm,
+            child: Container(
+              width: 48,
+              height: 48,
+              color: tile,
+              child: file != null
+                  ? _PickedImage(file: file!)
+                  : const Icon(Icons.image_outlined, size: 22),
+            ),
           ),
           const SizedBox(width: AppSizes.md),
           Expanded(
@@ -736,13 +735,110 @@ class _ReviewRow extends StatelessWidget {
               children: [
                 Text(title, style: AppText.bodyStrong),
                 const SizedBox(height: 2),
-                Text(status,
+                Text('Captured',
                     style: AppText.caption.copyWith(color: AppColors.success)),
               ],
             ),
           ),
           const Icon(Icons.check_circle_outline_rounded,
               size: 22, color: AppColors.success),
+        ],
+      ),
+    );
+  }
+}
+
+/// Submitted-for-review confirmation. Identity is now genuinely `pending`.
+class SubmittedForReviewScreen extends StatelessWidget {
+  const SubmittedForReviewScreen({super.key, required this.docLabel});
+  final String docLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppAccent.of(context);
+    final circle = accent.isLime ? accent.accent : AppColors.ink;
+    final onCircle = accent.isLime ? accent.onAccent : AppColors.textOnDark;
+
+    return AppScaffold(
+      title: 'Verification',
+      bottomAction: AppButton(
+        label: 'Back to profile',
+        trailingIcon: Icons.arrow_forward_rounded,
+        onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: AppSizes.xl),
+          Center(
+            child: Container(
+              width: 84,
+              height: 84,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: circle,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                      color: circle.withValues(alpha: 0.45),
+                      blurRadius: 28,
+                      spreadRadius: 2),
+                ],
+              ),
+              child: Icon(Icons.verified_rounded, size: 40, color: onCircle),
+            ),
+          ),
+          const SizedBox(height: AppSizes.xl),
+          Text('Submitted for review',
+              textAlign: TextAlign.center, style: AppText.h1),
+          const SizedBox(height: AppSizes.sm),
+          Text(
+            'We\'re reviewing your documents. Most verifications complete within '
+            'a few minutes — we\'ll notify you.',
+            textAlign: TextAlign.center,
+            style: AppText.body,
+          ),
+          const SizedBox(height: AppSizes.xl),
+          AppCard(
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: accent.isLime
+                        ? const Color(0xFFF7EBB0)
+                        : AppColors.surfaceMuted,
+                    borderRadius: AppRadii.sm,
+                  ),
+                  child: const Icon(Icons.schedule_rounded,
+                      size: 20, color: AppColors.textPrimary),
+                ),
+                const SizedBox(width: AppSizes.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Status: Pending', style: AppText.bodyStrong),
+                      const SizedBox(height: 2),
+                      Text('$docLabel + selfie received',
+                          style: AppText.caption),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSizes.sm),
+                StatusPill(
+                  label: 'In review',
+                  icon: Icons.refresh_rounded,
+                  background: accent.isLime
+                      ? const Color(0xFFFBF2C6)
+                      : AppColors.surfaceMuted,
+                  dense: true,
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

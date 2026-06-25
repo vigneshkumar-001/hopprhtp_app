@@ -23,6 +23,7 @@ class AppTextField extends StatefulWidget {
     this.onSubmitted,
     this.autofocus = false,
     this.prefixText,
+    this.focusNode,
   });
 
   final String? label;
@@ -39,20 +40,37 @@ class AppTextField extends StatefulWidget {
   final bool autofocus;
   final String? prefixText;
 
+  /// Optional external focus node (e.g. to programmatically focus the field).
+  final FocusNode? focusNode;
+
   @override
   State<AppTextField> createState() => _AppTextFieldState();
 }
 
 class _AppTextFieldState extends State<AppTextField> {
-  late final FocusNode _focus = FocusNode()..addListener(_onFocus);
+  late final bool _ownsFocus = widget.focusNode == null;
+  late final FocusNode _focus =
+      (widget.focusNode ?? FocusNode())..addListener(_onFocus);
   bool _focused = false;
 
   void _onFocus() => setState(() => _focused = _focus.hasFocus);
 
+  /// Default keyboard-action behaviour when a screen doesn't supply its own:
+  /// the "Next" action jumps to the following field, anything else dismisses
+  /// the keyboard. Gives the whole app field-to-field keyboard navigation.
+  void _defaultSubmit(String _) {
+    final action = widget.textInputAction ?? TextInputAction.next;
+    if (action == TextInputAction.next) {
+      FocusScope.of(context).nextFocus();
+    } else {
+      FocusScope.of(context).unfocus();
+    }
+  }
+
   @override
   void dispose() {
     _focus.removeListener(_onFocus);
-    _focus.dispose();
+    if (_ownsFocus) _focus.dispose();
     super.dispose();
   }
 
@@ -101,9 +119,12 @@ class _AppTextFieldState extends State<AppTextField> {
                   obscureText: widget.obscure,
                   keyboardType: widget.keyboardType,
                   inputFormatters: widget.inputFormatters,
-                  textInputAction: widget.textInputAction,
+                  // Default to a "Next" action so the keyboard shows a next
+                  // button that walks through the form's fields in order.
+                  textInputAction:
+                      widget.textInputAction ?? TextInputAction.next,
                   onChanged: widget.onChanged,
-                  onSubmitted: widget.onSubmitted,
+                  onSubmitted: widget.onSubmitted ?? _defaultSubmit,
                   cursorColor: AppColors.ink,
                   style: AppText.bodyStrong,
                   decoration: InputDecoration(

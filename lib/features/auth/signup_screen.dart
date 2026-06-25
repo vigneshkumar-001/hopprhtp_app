@@ -1,10 +1,14 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
+import '../../core/network/connectivity.dart';
+import '../../core/network/error_messages.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
-import '../../data/app_state.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
@@ -12,23 +16,30 @@ import '../../widgets/app_scaffold.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/boxed_code_input.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_snackbar.dart';
 import '../profile/identity_verification_screen.dart';
-import '../home/home_shell.dart';
+import 'application/auth_controller.dart';
 import 'signin_screen.dart';
 
 /// Multi-step sign-up wizard (4 steps). Step 1 matches the mockup exactly;
 /// the remaining steps (phone OTP, set PIN, done) complete the flow.
-class SignUpScreen extends StatefulWidget {
+class SignUpScreen extends ConsumerStatefulWidget {
   const SignUpScreen({super.key});
 
   @override
-  State<SignUpScreen> createState() => _SignUpScreenState();
+  ConsumerState<SignUpScreen> createState() => _SignUpScreenState();
 }
 
-class _SignUpScreenState extends State<SignUpScreen> {
+class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   static const int _totalSteps = 4;
   final PageController _pager = PageController();
   int _step = 0; // 0-based
+  bool _busy = false;
+
+  // Resend cooldown (mirrors the server's OTP_RESEND_COOLDOWN_SECONDS).
+  static const int _resendCooldown = 30;
+  Timer? _resendTimer;
+  int _resendIn = 0;
 
   // Step 1
   final _name = TextEditingController();
@@ -51,6 +62,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   @override
   void dispose() {
+    _resendTimer?.cancel();
     _pager.dispose();
     for (final c in [_name, _phone, _email, _otp, _pin]) {
       c.dispose();
@@ -59,8 +71,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   bool get _canContinue => switch (_step) {
-        0 => _name.text.trim().isNotEmpty && _phone.text.trim().length >= 7,
-        1 => _otp.text.length >= 4, // demo: 4–6 digits
+        0 => _name.text.trim().length >= 2 && _phone.text.trim().length >= 7,
+        1 => _otp.text.length == 6,
         2 => _pin.text.length == 6,
         _ => true,
       };
@@ -78,22 +90,136 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
   }
 
-  void _next() {
-    FocusScope.of(context).unfocus();
-    if (_step < _totalSteps - 1) {
-      // On the final form step, persist the account before the success page.
-      if (_step == 2) {
-        AppScope.read(context).signUp(
-          fullName: _name.text,
-          phone: _phone.text,
-          email: _email.text,
-        );
+  void _goToStep(int step) {
+    setState(() => _step = step);
+    _pager.animateToPage(step,
+        duration: AppDurations.normal, curve: AppDurations.easeOut);
+  }
+
+  void _advance() => _goToStep(_step + 1);
+
+  /// Starts/restarts the 30s resend countdown shown on the Verify step.
+  void _startResendCountdown() {
+    _resendTimer?.cancel();
+    setState(() => _resendIn = _resendCooldown);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
       }
-      setState(() => _step++);
-      _pager.animateToPage(_step,
-          duration: AppDurations.normal, curve: AppDurations.easeOut);
-    } else {
-      AppNav.replaceAll(context, const HomeShell());
+      setState(() => _resendIn -= 1);
+      if (_resendIn <= 0) t.cancel();
+    });
+  }
+
+  Future<void> _next() async {
+    FocusScope.of(context).unfocus();
+    if (_busy) return;
+    final notifier = ref.read(authControllerProvider.notifier);
+
+    switch (_step) {
+      // Step 1 → request an OTP for the entered phone, then advance.
+      case 0:
+        if (!ref.isOnline) {
+          AppSnackbar.error(context,
+              'No internet connection. Please check your network and try again.');
+          return;
+        }
+        setState(() => _busy = true);
+        try {
+          final email = _email.text.trim();
+          await notifier.requestOtp(
+            fullName: _name.text.trim(),
+            phone: _phone.text.trim(),
+            email: email.isEmpty ? null : email,
+          );
+          if (!mounted) return;
+          _advance();
+          _startResendCountdown();
+        } on ApiException catch (e) {
+          if (mounted) AppSnackbar.error(context, e.userMessage);
+        } finally {
+          if (mounted) setState(() => _busy = false);
+        }
+
+      // Step 2 → verify the code now (123456 in dev; the real OTP when live).
+      case 1:
+        if (!ref.isOnline) {
+          AppSnackbar.error(context,
+              'No internet connection. Please check your network and try again.');
+          return;
+        }
+        setState(() => _busy = true);
+        try {
+          await ref.read(authControllerProvider.notifier).verifyOtp(
+                phone: _phone.text.trim(),
+                otp: _otp.text.trim(),
+              );
+          if (mounted) _advance();
+        } on ApiException catch (e) {
+          if (!mounted) return;
+          if (e.message.toLowerCase().contains('verification code')) {
+            AppSnackbar.error(
+                context, 'The verification code entered is incorrect.');
+          } else {
+            AppSnackbar.error(context, e.userMessage);
+          }
+        } finally {
+          if (mounted) setState(() => _busy = false);
+        }
+
+      // Step 3 → confirm registration (verifies OTP + sets PIN), then show done.
+      case 2:
+        if (!ref.isOnline) {
+          AppSnackbar.error(context,
+              'No internet connection. Please check your network and try again.');
+          return;
+        }
+        setState(() => _busy = true);
+        try {
+          await notifier.confirmRegister(
+            phone: _phone.text.trim(),
+            otp: _otp.text.trim(),
+            pin: _pin.text,
+          );
+          // Session is now authenticated; HomeShell is live under this route.
+          if (mounted) _advance();
+        } on ApiException catch (e) {
+          if (!mounted) return;
+          // A wrong code bounces back to the Verify step with a clear message.
+          if (e.message.toLowerCase().contains('verification code')) {
+            _goToStep(1);
+            AppSnackbar.error(context, 'The verification code entered is incorrect.');
+          } else {
+            AppSnackbar.error(context, e.userMessage);
+          }
+        } finally {
+          if (mounted) setState(() => _busy = false);
+        }
+
+      // Final step → reveal the dashboard AuthGate is already showing.
+      default:
+        Navigator.of(context).popUntil((r) => r.isFirst);
+    }
+  }
+
+  /// Re-request the OTP from the verify step.
+  Future<void> _resendOtp() async {
+    if (_busy || _resendIn > 0) return;
+    if (!ref.isOnline) {
+      AppSnackbar.error(context,
+          'No internet connection. Please check your network and try again.');
+      return;
+    }
+    try {
+      await ref
+          .read(authControllerProvider.notifier)
+          .resendOtp(phone: _phone.text.trim());
+      if (!mounted) return;
+      _startResendCountdown();
+      AppSnackbar.success(context, 'A new code has been sent.');
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.userMessage);
     }
   }
 
@@ -146,7 +272,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   children: [
                     _StepAccount(
                         name: _name, phone: _phone, email: _email),
-                    _StepOtp(otp: _otp, phone: _phone.text),
+                    _StepOtp(
+                      otp: _otp,
+                      phone: _phone.text,
+                      onResend: _resendOtp,
+                      resendIn: _resendIn,
+                    ),
                     _StepPin(pin: _pin),
                     _StepDone(
                       name: _name.text,
@@ -171,6 +302,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       label: _ctaLabel,
                       trailingIcon: Icons.arrow_forward_rounded,
                       enabled: _canContinue,
+                      loading: _busy,
                       onPressed: _next,
                     ),
                     if (_step == 0) ...[
@@ -269,9 +401,16 @@ class _StepAccount extends StatelessWidget {
 // Step 2 — Verify your number (6-digit OTP)
 // ---------------------------------------------------------------------------
 class _StepOtp extends StatelessWidget {
-  const _StepOtp({required this.otp, required this.phone});
+  const _StepOtp({
+    required this.otp,
+    required this.phone,
+    required this.onResend,
+    required this.resendIn,
+  });
   final TextEditingController otp;
   final String phone;
+  final VoidCallback onResend;
+  final int resendIn;
 
   @override
   Widget build(BuildContext context) {
@@ -286,23 +425,31 @@ class _StepOtp extends StatelessWidget {
           style: AppText.body,
         ),
         const SizedBox(height: AppSizes.xxl),
-        BoxedCodeInput(controller: otp, length: 6, autofocus: false),
+        BoxedCodeInput(
+          controller: otp,
+          length: 6,
+          autofocus: false,
+          autofillHints: const [AutofillHints.oneTimeCode],
+        ),
         const SizedBox(height: AppSizes.xl),
         Row(
           children: [
             Text("Didn't get it? ", style: AppText.body),
-            GestureDetector(
-              onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Code resent')),
+            if (resendIn > 0)
+              Text('Resend in ${resendIn}s',
+                  style: AppText.bodyStrong.copyWith(
+                      color: AppColors.textTertiary, fontWeight: FontWeight.w700))
+            else
+              GestureDetector(
+                onTap: onResend,
+                child: Text('Resend code',
+                    style: AppText.bodyStrong
+                        .copyWith(fontWeight: FontWeight.w700)),
               ),
-              child: Text('Resend code',
-                  style:
-                      AppText.bodyStrong.copyWith(fontWeight: FontWeight.w700)),
-            ),
           ],
         ),
         const SizedBox(height: AppSizes.lg),
-        const _DemoHint('demo · type any 4–6 digits'),
+        const _DemoHint('6-digit code · check your SMS'),
       ],
     );
   }
@@ -357,9 +504,9 @@ class _StepDone extends StatelessWidget {
   }
 
   void _verifyNow(BuildContext context) {
-    // Land on the dashboard, then open the verification flow on top of it.
+    // Reveal the dashboard (AuthGate already shows it), then open verification.
     final nav = Navigator.of(context);
-    nav.pushAndRemoveUntil(AppNav.route(const HomeShell()), (r) => false);
+    nav.popUntil((r) => r.isFirst);
     nav.push(AppNav.route(const IdentityVerificationScreen()));
   }
 

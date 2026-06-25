@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
+import '../../core/network/connectivity.dart';
+import '../../core/network/error_messages.dart';
+import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
@@ -9,12 +14,15 @@ import '../../data/models/models.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
+import '../../widgets/feedback/app_snackbar.dart';
+import '../../widgets/feedback/pin_prompt.dart';
 import '../../widgets/segmented_control.dart';
+import 'application/transactions_provider.dart';
 import 'payment_link_ready_screen.dart';
 import 'widgets/transaction_widgets.dart';
 
 /// Payment Setup (seller) — delivery fee + trust-fee split, then a payment link.
-class PaymentSetupScreen extends StatefulWidget {
+class PaymentSetupScreen extends ConsumerStatefulWidget {
   const PaymentSetupScreen({
     super.key,
     required this.consignments,
@@ -26,12 +34,13 @@ class PaymentSetupScreen extends StatefulWidget {
   final FeeSplit feeSplit;
 
   @override
-  State<PaymentSetupScreen> createState() => _PaymentSetupScreenState();
+  ConsumerState<PaymentSetupScreen> createState() => _PaymentSetupScreenState();
 }
 
-class _PaymentSetupScreenState extends State<PaymentSetupScreen> {
+class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
   late final PaymentDraft _draft;
   late final TextEditingController _deliveryCtrl;
+  bool _busy = false;
 
   double _parse(String s) =>
       double.tryParse(s.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0;
@@ -62,6 +71,60 @@ class _PaymentSetupScreenState extends State<PaymentSetupScreen> {
     super.dispose();
   }
 
+  /// Create the transaction on the backend, then open the payment-link screen.
+  Future<void> _generate() async {
+    if (_busy) return;
+    if (!ref.isOnline) {
+      AppSnackbar.error(context,
+          'No internet connection. Please check your network and try again.');
+      return;
+    }
+    // Confirm with the transaction PIN (verified server-side, never stored).
+    final pin = await showPinSheet(context,
+        subtitle: 'Confirm with your PIN to create this transaction.');
+    if (pin == null || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      final tx =
+          await ref.read(transactionRepositoryProvider).create(_buildBody(pin));
+      if (!mounted) return;
+      // Land it on the dashboard (demo bridge) + refresh the provider-backed list.
+      AppScope.read(context).addFromApi(tx);
+      ref.invalidate(transactionsProvider);
+      AppNav.push(
+          context, PaymentLinkReadyScreen(draft: _draft, code: tx.code));
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.userMessage);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Map<String, dynamic> _buildBody(String pin) => {
+        'pin': pin,
+        'consignments': [
+          for (final c in widget.consignments)
+            {
+              'product': c.product,
+              'amountNaira': _parse(c.amount),
+              'buyerContact': c.buyerContact,
+              if (c.payout.isComplete)
+                'payout': {
+                  'dispatcherName': c.payout.dispatcherName,
+                  'dispatcherPhone': c.payout.dispatcherPhone,
+                  'bank': c.payout.bank,
+                  'accountNumber': c.payout.accountNumber,
+                  'accountName': c.payout.accountName,
+                },
+              'dispatchPhotoUrl': ?c.dispatchPhotoUrl,
+              'waybillImageUrl': ?c.waybillImageUrl,
+            },
+        ],
+        'feeSplit': _draft.feeSplit.name,
+        'deliveryFeeNaira': _draft.deliveryFee,
+      };
+
   @override
   Widget build(BuildContext context) {
     return AppScaffold(
@@ -70,8 +133,8 @@ class _PaymentSetupScreenState extends State<PaymentSetupScreen> {
         label: 'Generate Payment Link',
         trailingIcon: Icons.bolt_rounded,
         accentInLime: true,
-        onPressed: () => AppNav.push(
-            context, PaymentLinkReadyScreen(draft: _draft)),
+        loading: _busy,
+        onPressed: _generate,
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

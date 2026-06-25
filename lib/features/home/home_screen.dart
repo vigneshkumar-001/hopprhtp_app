@@ -164,7 +164,7 @@ class _TopBar extends StatelessWidget {
         ),
         AppIconButton(icon: FeatherIcons.maximize, onTap: onScan),
         const SizedBox(width: AppSizes.sm),
-        AppIconButton(icon: FeatherIcons.bell, onTap: onNotifications),
+        NotificationBell(onTap: onNotifications),
       ],
     );
   }

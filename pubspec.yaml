@@ -39,6 +39,16 @@ dependencies:
   shared_preferences: ^2.5.5
   image_picker: ^1.1.2
 
+  # ── Networking + state management (added for backend integration) ──────────
+  flutter_riverpod: ^2.6.1        # granular, compile-safe state + DI
+  dio: ^5.7.0                     # HTTP client (interceptors, retries)
+  flutter_secure_storage: ^9.2.2  # encrypted store for JWT access/refresh
+  connectivity_plus: ^6.0.5       # online/offline detection
+  logger: ^2.4.0                  # pretty API request/response logging
+  local_auth: ^2.3.0              # biometric (fingerprint / face) unlock
+  webview_flutter: ^4.10.0        # in-app browser for the hosted web checkout
+  google_maps_flutter: ^2.9.0     # Google Maps for the Transit tracking tab
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

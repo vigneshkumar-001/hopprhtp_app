@@ -1,8 +1,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Network access (API calls + the in-app web checkout). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Biometric (fingerprint / face) unlock — used by local_auth. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <application
         android:label="Hoppr HTP"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Google Maps SDK key for the Transit tracking tab.
+             ⚠️ RESTRICT this key in Google Cloud Console: limit it to the
+             "Maps SDK for Android", this app's package (com.fenizotechnologies.escrow)
+             and its SHA-1 fingerprint, and set usage quotas. -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyBFNOIc2cmuwprJvcKcU6R7Inq2m8bt5Ig"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"

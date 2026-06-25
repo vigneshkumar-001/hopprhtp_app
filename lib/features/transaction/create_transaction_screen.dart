@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../core/network/api_exception.dart';
+import '../../core/network/error_messages.dart';
+import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
@@ -14,6 +18,8 @@ import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_loaders.dart';
+import '../../widgets/feedback/app_snackbar.dart';
 import '../../widgets/segmented_control.dart';
 import 'payment_setup_screen.dart';
 import 'scan_vision_screen.dart';
@@ -47,6 +53,8 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
   }
 
   bool get _allComplete => _forms.every((f) => f.isComplete);
+  bool get _anyUploading =>
+      _forms.any((f) => f.uploadingDispatch || f.uploadingWaybill);
 
   // New consignment appears stacked below the existing ones.
   void _addConsignment() {
@@ -118,12 +126,22 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
       f.accountName.text = 'Tunde Bello';
       f.payoutExpanded = true;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Waybill scanned — fields auto-filled')),
-    );
+    AppSnackbar.info(
+        context, 'Demo scan — sample details filled. Review & edit each field.');
   }
 
   void _continue() {
+    // Validate courier account numbers here (where the field lives) so a bad
+    // one is caught + focused now, not as a 422 later on Payment Setup.
+    for (final f in _forms) {
+      if (f.payoutStarted && f.account.text.trim().length != 10) {
+        setState(() => f.payoutExpanded = true);
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => f.accountFocus.requestFocus());
+        AppSnackbar.error(context, 'Account number must be exactly 10 digits.');
+        return;
+      }
+    }
     final consignments = _forms.map((f) => f.toModel()).toList();
     AppNav.push(
       context,
@@ -139,7 +157,7 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
       bottomAction: AppButton(
         label: 'Continue to Payment Setup',
         trailingIcon: Icons.arrow_forward_rounded,
-        enabled: _allComplete,
+        enabled: _allComplete && !_anyUploading,
         onPressed: _continue,
       ),
       body: Column(
@@ -259,7 +277,7 @@ class _VisionBanner extends StatelessWidget {
   }
 }
 
-class _ConsignmentEditor extends StatelessWidget {
+class _ConsignmentEditor extends ConsumerWidget {
   const _ConsignmentEditor({
     super.key,
     required this.form,
@@ -275,21 +293,53 @@ class _ConsignmentEditor extends StatelessWidget {
   final VoidCallback onChanged;
   final VoidCallback? onRemove;
 
-  /// Open the gallery, and on selection store the picked image on the form.
-  Future<void> _pickPhoto(void Function(XFile) assign) async {
-    final file = await ImagePicker().pickImage(
+  /// Pick an image from the gallery and upload it; store the returned URL on the
+  /// form. On failure the picked file is dropped so the user can retry.
+  Future<void> _pickPhoto(
+      BuildContext context, WidgetRef ref, bool isDispatch) async {
+    final picked = await ImagePicker().pickImage(
       source: ImageSource.gallery,
       imageQuality: 80,
       maxWidth: 1600,
     );
-    if (file != null) {
-      assign(file);
+    if (picked == null) return;
+
+    if (isDispatch) {
+      form.dispatchPhoto = picked;
+      form.uploadingDispatch = true;
+    } else {
+      form.waybillImage = picked;
+      form.uploadingWaybill = true;
+    }
+    onChanged();
+
+    try {
+      final url =
+          await ref.read(uploadRepositoryProvider).uploadImage(picked.path);
+      if (isDispatch) {
+        form.dispatchPhotoUrl = url;
+      } else {
+        form.waybillImageUrl = url;
+      }
+    } on ApiException catch (e) {
+      if (isDispatch) {
+        form.dispatchPhoto = null;
+      } else {
+        form.waybillImage = null;
+      }
+      if (context.mounted) AppSnackbar.error(context, e.userMessage);
+    } finally {
+      if (isDispatch) {
+        form.uploadingDispatch = false;
+      } else {
+        form.uploadingWaybill = false;
+      }
       onChanged();
     }
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return AppCard(
       color: const Color(0xFFFFFFFF),
       padding: const EdgeInsets.all(AppSizes.lg),
@@ -319,9 +369,11 @@ class _ConsignmentEditor extends StatelessWidget {
                 child: _UploadBox(
                   label: 'Dispatch Photo',
                   file: form.dispatchPhoto,
-                  onTap: () => _pickPhoto((f) => form.dispatchPhoto = f),
+                  uploading: form.uploadingDispatch,
+                  onTap: () => _pickPhoto(context, ref, true),
                   onClear: () {
                     form.dispatchPhoto = null;
+                    form.dispatchPhotoUrl = null;
                     onChanged();
                   },
                 ),
@@ -331,9 +383,11 @@ class _ConsignmentEditor extends StatelessWidget {
                 child: _UploadBox(
                   label: 'Waybill Image',
                   file: form.waybillImage,
-                  onTap: () => _pickPhoto((f) => form.waybillImage = f),
+                  uploading: form.uploadingWaybill,
+                  onTap: () => _pickPhoto(context, ref, false),
                   onClear: () {
                     form.waybillImage = null;
+                    form.waybillImageUrl = null;
                     onChanged();
                   },
                 ),
@@ -389,12 +443,14 @@ class _UploadBox extends StatefulWidget {
     required this.file,
     required this.onTap,
     required this.onClear,
+    this.uploading = false,
   });
 
   final String label;
   final XFile? file;
   final VoidCallback onTap;
   final VoidCallback onClear;
+  final bool uploading;
 
   @override
   State<_UploadBox> createState() => _UploadBoxState();
@@ -457,6 +513,12 @@ class _UploadBoxState extends State<_UploadBox> {
                               child:
                                   CircularProgressIndicator(strokeWidth: 2),
                             ),
+                          ),
+                        if (widget.uploading)
+                          Container(
+                            color: Colors.black.withValues(alpha: 0.4),
+                            child: const Center(
+                                child: AppButtonLoader(color: Colors.white)),
                           ),
                         Positioned(
                           top: 6,
@@ -656,6 +718,7 @@ class _CourierPayoutSection extends StatelessWidget {
                           label: 'Account number',
                           hint: '0000000000',
                           controller: form.account,
+                          focusNode: form.accountFocus,
                           keyboardType: TextInputType.number,
                           inputFormatters: [
                             FilteringTextInputFormatter.digitsOnly,
@@ -728,10 +791,23 @@ class _ConsignmentForm {
   final accountName = TextEditingController();
   XFile? dispatchPhoto;
   XFile? waybillImage;
+  String? dispatchPhotoUrl; // backend URL once the upload completes
+  String? waybillImageUrl;
+  bool uploadingDispatch = false;
+  bool uploadingWaybill = false;
   bool payoutExpanded = false;
+  final accountFocus = FocusNode();
 
   bool get hasDispatchPhoto => dispatchPhoto != null;
   bool get hasWaybill => waybillImage != null;
+
+  /// True once any courier-payout field has been touched.
+  bool get payoutStarted =>
+      dispatcherName.text.trim().isNotEmpty ||
+      dispatcherPhone.text.trim().isNotEmpty ||
+      bank.text.trim().isNotEmpty ||
+      account.text.trim().isNotEmpty ||
+      accountName.text.trim().isNotEmpty;
 
   bool get isComplete =>
       product.text.trim().isNotEmpty &&
@@ -753,6 +829,8 @@ class _ConsignmentForm {
         payout: payoutModel,
         hasDispatchPhoto: hasDispatchPhoto,
         hasWaybillImage: hasWaybill,
+        dispatchPhotoUrl: dispatchPhotoUrl,
+        waybillImageUrl: waybillImageUrl,
       );
 
   void dispose() {
@@ -768,5 +846,6 @@ class _ConsignmentForm {
     ]) {
       c.dispose();
     }
+    accountFocus.dispose();
   }
 }

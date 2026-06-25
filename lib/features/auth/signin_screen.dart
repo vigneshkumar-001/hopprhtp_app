@@ -1,35 +1,54 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
+import '../../core/network/connectivity.dart';
+import '../../core/network/error_messages.dart';
+import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
-import '../../data/app_state.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_snackbar.dart';
 import '../../widgets/pin_field.dart';
-import '../home/home_shell.dart';
+import 'application/auth_controller.dart';
 import 'signup_screen.dart';
 
-class SignInScreen extends StatefulWidget {
+class SignInScreen extends ConsumerStatefulWidget {
   const SignInScreen({super.key});
 
   @override
-  State<SignInScreen> createState() => _SignInScreenState();
+  ConsumerState<SignInScreen> createState() => _SignInScreenState();
 }
 
-class _SignInScreenState extends State<SignInScreen> {
+class _SignInScreenState extends ConsumerState<SignInScreen> {
   final _identifier = TextEditingController();
   final _pin = TextEditingController();
   bool _busy = false;
+  bool _biometricSession = false; // a biometric-protected session is remembered
 
   @override
   void initState() {
     super.initState();
     _identifier.addListener(_refresh);
     _pin.addListener(_refresh);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeBiometricPrompt());
+  }
+
+  /// On open, if a biometric-protected session is remembered, make biometrics
+  /// the primary action and auto-prompt once. (No-op for a fresh sign-in.)
+  Future<void> _maybeBiometricPrompt() async {
+    final tokens = ref.read(tokenStoreProvider);
+    await tokens.ensureLoaded();
+    final notifier = ref.read(authControllerProvider.notifier);
+    final remembered = tokens.hasSession && await notifier.isBiometricEnabled();
+    if (!mounted || !remembered) return;
+    setState(() => _biometricSession = true);
+    await notifier.unlock(); // auto-prompt the OS biometric sheet
   }
 
   void _refresh() => setState(() {});
@@ -42,19 +61,50 @@ class _SignInScreenState extends State<SignInScreen> {
   }
 
   bool get _canSubmit =>
-      _identifier.text.trim().isNotEmpty && _pin.text.length == 4;
+      _identifier.text.trim().isNotEmpty && _pin.text.length == 6;
 
-  Future<void> _enter({bool biometric = false}) async {
+  /// Biometric unlock for a returning user who enabled it. (When there's no
+  /// stored session — the usual case on this screen — guide them to set it up.)
+  Future<void> _biometricSignIn() async {
+    final tokens = ref.read(tokenStoreProvider);
+    await tokens.ensureLoaded();
+    final notifier = ref.read(authControllerProvider.notifier);
+    if (tokens.hasSession && await notifier.isBiometricEnabled()) {
+      await notifier.unlock();
+    } else if (mounted) {
+      AppSnackbar.info(context,
+          'Sign in with your PIN, then turn on biometrics in More → Security.');
+    }
+  }
+
+  Future<void> _enter() async {
     FocusScope.of(context).unfocus();
+    final identifier = _identifier.text.trim();
+    if (identifier.isEmpty || _pin.text.length != 6 || _busy) return;
+
+    // Pre-flight offline check — fail fast with a clear, actionable message.
+    if (!ref.isOnline) {
+      AppSnackbar.error(
+        context,
+        'No internet connection. Please check your network and try again.',
+        onRetry: _enter,
+      );
+      return;
+    }
+
     setState(() => _busy = true);
-    await Future<void>.delayed(AppDurations.normal);
-    if (!mounted) return;
-    AppScope.read(context).signIn(
-      identifier: _identifier.text.trim().isEmpty
-          ? 'amara@hoppr.app'
-          : _identifier.text.trim(),
-    );
-    AppNav.replaceAll(context, const HomeShell());
+    try {
+      await ref
+          .read(authControllerProvider.notifier)
+          .login(identifier: identifier, pin: _pin.text);
+      // Success: AuthGate has swapped the root to HomeShell — clear this pushed
+      // route to reveal it (no manual navigation to a screen).
+      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.userMessage, onRetry: _enter);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -63,23 +113,41 @@ class _SignInScreenState extends State<SignInScreen> {
       value: SystemUiOverlayStyle.dark,
       child: AppScaffold(
         title: 'Sign in',
+        // No back button when this is the biometric lock entry (it's the root).
+        showBack: !_biometricSession,
         bottomAction: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            AppButton(
-              label: 'Sign in',
-              trailingIcon: Icons.arrow_forward_rounded,
-              enabled: _canSubmit,
-              loading: _busy,
-              onPressed: _enter,
-            ),
-            const SizedBox(height: AppSizes.md),
-            AppButton(
-              label: 'Use biometrics',
-              icon: Icons.fingerprint_rounded,
-              variant: AppButtonVariant.outline,
-              onPressed: () => _enter(biometric: true),
-            ),
+            if (_biometricSession) ...[
+              AppButton(
+                label: 'Unlock with biometrics',
+                icon: Icons.fingerprint_rounded,
+                onPressed: _biometricSignIn,
+              ),
+              const SizedBox(height: AppSizes.md),
+              AppButton(
+                label: 'Sign in with PIN',
+                enabled: _canSubmit,
+                loading: _busy,
+                variant: AppButtonVariant.outline,
+                onPressed: _enter,
+              ),
+            ] else ...[
+              AppButton(
+                label: 'Sign in',
+                trailingIcon: Icons.arrow_forward_rounded,
+                enabled: _canSubmit,
+                loading: _busy,
+                onPressed: _enter,
+              ),
+              const SizedBox(height: AppSizes.md),
+              AppButton(
+                label: 'Use biometrics',
+                icon: Icons.fingerprint_rounded,
+                variant: AppButtonVariant.outline,
+                onPressed: _biometricSignIn,
+              ),
+            ],
             const SizedBox(height: AppSizes.md),
             _CreateAccountPrompt(),
           ],
@@ -108,6 +176,7 @@ class _SignInScreenState extends State<SignInScreen> {
             const SizedBox(height: AppSizes.sm),
             PinField(
               controller: _pin,
+              length: 6,
               onCompleted: (_) {
                 if (_canSubmit) _enter();
               },
@@ -150,9 +219,8 @@ class _SignInScreenState extends State<SignInScreen> {
               label: 'Send reset link',
               onPressed: () {
                 Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Reset link sent')),
-                );
+                AppSnackbar.info(
+                    context, 'Reset link sent to your phone and email.');
               },
             ),
           ],

@@ -206,6 +206,8 @@ class Consignment {
     CourierPayout? payout,
     this.hasDispatchPhoto = false,
     this.hasWaybillImage = false,
+    this.dispatchPhotoUrl,
+    this.waybillImageUrl,
   }) : payout = payout ?? CourierPayout();
 
   String product;
@@ -214,6 +216,8 @@ class Consignment {
   CourierPayout payout;
   bool hasDispatchPhoto;
   bool hasWaybillImage;
+  String? dispatchPhotoUrl; // backend URL after upload
+  String? waybillImageUrl;
 
   bool get isComplete =>
       product.isNotEmpty && amount.isNotEmpty && buyerContact.isNotEmpty;

@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'data/app_state.dart';
-import 'features/onboarding/onboarding_screen.dart';
+import 'features/auth/auth_gate.dart';
 import 'widgets/theme_reveal.dart';
 
 /// Root widget. Owns the single [AppState] and shares it through [AppScope].
@@ -67,7 +67,7 @@ class _HopprAppState extends State<HopprApp> {
               ),
             );
           },
-          home: const OnboardingScreen(),
+          home: const AuthGate(),
         ),
       ),
     );

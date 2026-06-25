@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
 
@@ -12,5 +13,6 @@ Future<void> main() async {
   } catch (_) {
     prefs = null; // fall back to defaults if storage is unavailable
   }
-  runApp(HopprApp(prefs: prefs));
+  // ProviderScope hosts every Riverpod provider (network layer, auth, data).
+  runApp(ProviderScope(child: HopprApp(prefs: prefs)));
 }

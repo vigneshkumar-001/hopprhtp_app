@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/routing/app_transitions.dart';
+import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
@@ -17,6 +18,7 @@ class LinkTransactionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = AppAccent.of(context);
     return AppScaffold(
       title: 'Link transaction',
       bottomAction: AppButton(
@@ -96,8 +98,8 @@ class LinkTransactionScreen extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const Icon(Icons.check_circle_outline_rounded,
-                        color: AppColors.textOnDark, size: 20),
+                    Icon(Icons.check_circle_rounded,
+                        color: accent.highlight, size: 20),
                   ],
                 ),
               ],
@@ -125,8 +127,10 @@ class LinkTransactionScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: AppSizes.md),
-          const NoteBanner(
+          NoteBanner(
             icon: Icons.shield_outlined,
+            color: accent.isLime ? accent.accentSoft : null,
+            textColor: accent.isLime ? AppColors.ink : null,
             text:
                 'Once linked, you can verify delivery, enter the dispatcher\'s OTP, track the package, and raise disputes — all from the app.',
           ),
@@ -145,6 +149,7 @@ class _MatchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = AppAccent.of(context);
     return Row(
       children: [
         Container(
@@ -152,10 +157,10 @@ class _MatchRow extends StatelessWidget {
           height: 40,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: AppColors.surfaceMuted,
+            color: accent.accentSoft,
             borderRadius: AppRadii.sm,
           ),
-          child: Icon(icon, size: 18),
+          child: Icon(icon, size: 18, color: accent.onAccentSoft),
         ),
         const SizedBox(width: AppSizes.md),
         Expanded(
@@ -169,8 +174,8 @@ class _MatchRow extends StatelessWidget {
             ],
           ),
         ),
-        const Icon(Icons.check_circle_outline_rounded,
-            color: AppColors.textSecondary, size: 20),
+        const Icon(Icons.check_circle_rounded,
+            color: AppColors.success, size: 20),
       ],
     );
   }

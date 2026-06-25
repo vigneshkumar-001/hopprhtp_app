@@ -4,6 +4,7 @@ import '../core/theme/app_accent.dart';
 import '../core/theme/app_colors.dart';
 import '../core/theme/app_sizes.dart';
 import '../core/theme/app_typography.dart';
+import 'feedback/app_loaders.dart';
 
 enum AppButtonVariant { filled, outline, soft }
 
@@ -127,14 +128,7 @@ class _AppButtonState extends State<AppButton> {
             ),
             child: Center(
               child: widget.loading
-                  ? SizedBox(
-                      height: 22,
-                      width: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.4,
-                        valueColor: AlwaysStoppedAnimation(fg),
-                      ),
-                    )
+                  ? AppButtonLoader(color: fg)
                   : Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
