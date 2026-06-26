@@ -201,30 +201,167 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
       useSafeArea: true,
       backgroundColor: AppColors.surface,
       shape: RoundedRectangleBorder(borderRadius: AppRadii.xl),
-      builder: (_) => SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(
-            AppSizes.xl, AppSizes.xl, AppSizes.xl, AppSizes.lg),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Reset your PIN', style: AppText.h2),
-            const SizedBox(height: AppSizes.sm),
-            Text(
-              'We\'ll send a reset link to your registered phone number and email.',
-              style: AppText.body,
+      builder: (_) => _ForgotPinSheet(),
+    );
+  }
+}
+
+class _ForgotPinSheet extends ConsumerStatefulWidget {
+  @override
+  ConsumerState<_ForgotPinSheet> createState() => _ForgotPinSheetState();
+}
+
+class _ForgotPinSheetState extends ConsumerState<_ForgotPinSheet> {
+  final _phone = TextEditingController();
+  final _otp = TextEditingController();
+  final _newPin = TextEditingController();
+  final _confirmPin = TextEditingController();
+  bool _sent = false;
+  bool _busy = false;
+
+  bool get _canSend => _phone.text.trim().isNotEmpty;
+  bool get _canConfirm =>
+      _phone.text.trim().isNotEmpty &&
+      _otp.text.trim().length == 6 &&
+      _newPin.text.length == 6 &&
+      _confirmPin.text.length == 6 &&
+      _newPin.text == _confirmPin.text;
+
+  @override
+  void initState() {
+    super.initState();
+    for (final c in [_phone, _otp, _newPin, _confirmPin]) {
+      c.addListener(_refresh);
+    }
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _phone.dispose();
+    _otp.dispose();
+    _newPin.dispose();
+    _confirmPin.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendOtp() async {
+    FocusScope.of(context).unfocus();
+    if (_busy || !_canSend) return;
+    if (!context.mounted) return;
+    final phone = _phone.text.trim();
+    setState(() => _busy = true);
+    try {
+      final devOtp =
+          await ref.read(authControllerProvider.notifier).requestPinReset(phone: phone);
+      if (!mounted) return;
+      setState(() => _sent = true);
+      AppSnackbar.success(
+        context,
+        devOtp == null
+            ? 'If the number exists, a PIN reset code has been sent.'
+            : 'Dev OTP: $devOtp',
+      );
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.userMessage);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _confirmReset() async {
+    FocusScope.of(context).unfocus();
+    if (_busy || !_canConfirm) return;
+    setState(() => _busy = true);
+    try {
+      await ref.read(authControllerProvider.notifier).confirmPinReset(
+            phone: _phone.text.trim(),
+            otp: _otp.text.trim(),
+            newPin: _newPin.text,
+          );
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      AppSnackbar.success(context, 'Your PIN has been reset. You can sign in now.');
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.userMessage);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        AppSizes.xl,
+        AppSizes.xl,
+        AppSizes.xl,
+        AppSizes.lg + MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Reset your PIN', style: AppText.h2),
+          const SizedBox(height: AppSizes.sm),
+          Text(
+            _sent
+                ? 'Enter the code we sent to your registered phone number, then choose a new 6-digit PIN.'
+                : 'We will send a one-time code to your registered phone number to verify the reset.',
+            style: AppText.body,
+          ),
+          const SizedBox(height: AppSizes.xl),
+          AppTextField(
+            label: 'Phone number',
+            hint: 'Enter your registered phone number',
+            icon: Icons.phone_outlined,
+            controller: _phone,
+            keyboardType: TextInputType.phone,
+            autofillHints: const [AutofillHints.telephoneNumber],
+          ),
+          if (_sent) ...[
+            const SizedBox(height: AppSizes.lg),
+            AppTextField(
+              label: 'Verification code',
+              hint: '6-digit code',
+              icon: Icons.verified_outlined,
+              controller: _otp,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.next,
             ),
-            const SizedBox(height: AppSizes.xl),
-            AppButton(
-              label: 'Send reset link',
-              onPressed: () {
-                Navigator.of(context).pop();
-                AppSnackbar.info(
-                    context, 'Reset link sent to your phone and email.');
-              },
+            const SizedBox(height: AppSizes.lg),
+            Text('New PIN', style: AppText.label),
+            const SizedBox(height: AppSizes.sm),
+            AppTextField(
+              hint: 'Enter new 6-digit PIN',
+              icon: Icons.lock_outline,
+              controller: _newPin,
+              keyboardType: TextInputType.number,
+              obscure: true,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            ),
+            const SizedBox(height: AppSizes.lg),
+            AppTextField(
+              label: 'Confirm PIN',
+              hint: 'Re-enter new 6-digit PIN',
+              icon: Icons.lock_outline,
+              controller: _confirmPin,
+              keyboardType: TextInputType.number,
+              obscure: true,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             ),
           ],
-        ),
+          const SizedBox(height: AppSizes.xl),
+          AppButton(
+            label: _sent ? 'Reset PIN' : 'Send code',
+            loading: _busy,
+            enabled: _sent ? _canConfirm : _canSend,
+            onPressed: _sent ? _confirmReset : _sendOtp,
+          ),
+        ],
       ),
     );
   }

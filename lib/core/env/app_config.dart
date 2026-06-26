@@ -10,11 +10,11 @@ class AppConfig {
 
   static const String _override = String.fromEnvironment('API_BASE_URL');
 
-  /// VS Code dev tunnel forwarding to the local backend (port 4000). Reachable
-  /// from a real device, emulator, and web alike — no `10.0.2.2`/localhost juggling.
-  /// NOTE: set the tunnel port visibility to **Public** or requests hit an auth page.
+  /// Hosted backend (Heroku). Reachable from a real device, emulator and web
+  /// alike. Override per-build with `--dart-define=API_BASE_URL=...` (e.g. a
+  /// local dev tunnel) without touching this file.
   static const String _default =
-      'https://qhghjmkj-4000.inc1.devtunnels.ms/api/v1';
+      'https://hoppr-htp-ccf74f30631f.herokuapp.com/api/v1';
 
   static String get apiBaseUrl => _override.isNotEmpty ? _override : _default;
 

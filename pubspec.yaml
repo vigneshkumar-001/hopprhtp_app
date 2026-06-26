@@ -48,6 +48,9 @@ dependencies:
   local_auth: ^2.3.0              # biometric (fingerprint / face) unlock
   webview_flutter: ^4.10.0        # in-app browser for the hosted web checkout
   google_maps_flutter: ^2.9.0     # Google Maps for the Transit tracking tab
+  google_sign_in: ^6.2.2          # Google Play Services base dependency for native Android hint UI
+  qr_flutter: ^4.1.0
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:
@@ -70,6 +73,10 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # Bundled images (e.g. the WhatsApp logo on the share button).
+  assets:
+    - assets/images/
 
   # Inter is the single app-wide font (open-source twin of iOS' SF Pro).
   # One variable file covers every weight (w100–w900).

@@ -24,6 +24,11 @@ class AppTextField extends StatefulWidget {
     this.autofocus = false,
     this.prefixText,
     this.focusNode,
+    this.autofillHints,
+    this.readOnly = false,
+    this.onTap,
+    this.minLines,
+    this.maxLines,
   });
 
   final String? label;
@@ -39,6 +44,11 @@ class AppTextField extends StatefulWidget {
   final ValueChanged<String>? onSubmitted;
   final bool autofocus;
   final String? prefixText;
+  final Iterable<String>? autofillHints;
+  final bool readOnly;
+  final VoidCallback? onTap;
+  final int? minLines;
+  final int? maxLines;
 
   /// Optional external focus node (e.g. to programmatically focus the field).
   final FocusNode? focusNode;
@@ -86,7 +96,10 @@ class _AppTextFieldState extends State<AppTextField> {
         AnimatedContainer(
           duration: AppDurations.fast,
           curve: AppDurations.easeOut,
-          height: AppSizes.fieldHeight,
+          height: widget.minLines != null || widget.maxLines != null
+              ? null
+              : AppSizes.fieldHeight,
+          constraints: const BoxConstraints(minHeight: AppSizes.fieldHeight),
           padding: const EdgeInsets.symmetric(horizontal: AppSizes.lg),
           decoration: BoxDecoration(
             color: AppColors.surface,
@@ -118,6 +131,11 @@ class _AppTextFieldState extends State<AppTextField> {
                   autofocus: widget.autofocus,
                   obscureText: widget.obscure,
                   keyboardType: widget.keyboardType,
+                  autofillHints: widget.autofillHints,
+                  readOnly: widget.readOnly,
+                  onTap: widget.onTap,
+                  minLines: widget.minLines,
+                  maxLines: widget.maxLines,
                   inputFormatters: widget.inputFormatters,
                   // Default to a "Next" action so the keyboard shows a next
                   // button that walks through the form's fields in order.

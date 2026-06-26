@@ -93,6 +93,7 @@ class _PinFieldState extends State<PinField> {
                       controller: widget.controller,
                       focusNode: _focus,
                       keyboardType: TextInputType.number,
+                      textInputAction: TextInputAction.next,
                       obscureText: true,
                       maxLength: widget.length,
                       inputFormatters: [
@@ -106,6 +107,7 @@ class _PinFieldState extends State<PinField> {
                           widget.onCompleted?.call(v);
                         }
                       },
+                      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                       decoration: const InputDecoration(
                         counterText: '',
                         border: InputBorder.none,

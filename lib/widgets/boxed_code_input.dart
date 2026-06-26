@@ -94,6 +94,7 @@ class _BoxedCodeInputState extends State<BoxedCodeInput>
               autofocus: widget.autofocus,
               autofillHints: widget.autofillHints,
               keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.next,
               showCursor: false,
               enableInteractiveSelection: false,
               maxLength: widget.length,
@@ -106,6 +107,7 @@ class _BoxedCodeInputState extends State<BoxedCodeInput>
                 widget.onChanged?.call(v);
                 if (v.length == widget.length) widget.onCompleted?.call(v);
               },
+              onSubmitted: (_) => FocusScope.of(context).nextFocus(),
               decoration: const InputDecoration(
                 counterText: '',
                 border: InputBorder.none,

@@ -174,6 +174,18 @@ class AuthController extends AsyncNotifier<AuthState> {
 
   /// Verify the account PIN (Change-PIN flow). Throws on a wrong PIN.
   Future<void> verifyAccountPin(String pin) => _repo.verifyPin(pin: pin);
+
+  /// Start the forgot-PIN flow by sending a reset OTP to the registered phone.
+  Future<String?> requestPinReset({required String phone}) =>
+      _repo.requestPinReset(phone: phone);
+
+  /// Confirm the forgot-PIN flow by verifying the OTP and setting the new PIN.
+  Future<void> confirmPinReset({
+    required String phone,
+    required String otp,
+    required String newPin,
+  }) =>
+      _repo.confirmPinReset(phone: phone, otp: otp, newPin: newPin);
 }
 
 final authControllerProvider =

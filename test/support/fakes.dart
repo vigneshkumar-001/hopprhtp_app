@@ -106,6 +106,16 @@ class FakeAuthRepository implements AuthRepository {
 
   @override
   Future<void> verifyPin({required String pin}) async {}
+
+  @override
+  Future<String?> requestPinReset({required String phone}) async => '123456';
+
+  @override
+  Future<void> confirmPinReset({
+    required String phone,
+    required String otp,
+    required String newPin,
+  }) async {}
 }
 
 /// Biometrics off + unavailable by default — keeps tests deterministic and the

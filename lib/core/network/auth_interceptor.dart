@@ -37,11 +37,15 @@ class AuthInterceptor extends Interceptor {
     DioException err,
     ErrorInterceptorHandler handler,
   ) async {
-    final isAuthEndpoint = err.requestOptions.path.contains('/auth/');
+    final path = err.requestOptions.path;
+    final isNonRetryAuthEndpoint = path.contains('/auth/login') ||
+        path.contains('/auth/register/') ||
+        path.contains('/auth/refresh') ||
+        path.contains('/auth/pin-reset/');
     final alreadyRetried = err.requestOptions.extra['retried'] == true;
 
     if (err.response?.statusCode != 401 ||
-        isAuthEndpoint ||
+        isNonRetryAuthEndpoint ||
         alreadyRetried ||
         tokens.refreshToken == null) {
       return handler.next(err);

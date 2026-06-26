@@ -70,19 +70,21 @@ class AppScaffold extends StatelessWidget {
       backgroundColor: backgroundColor,
       body: SafeArea(
         bottom: false,
-        child: Column(
-          children: [
-            if (hasHeader) _Header(
-              title: title,
-              titleWidget: titleWidget,
-              showBack: showBack,
-              onBack: onBack,
-              trailing: trailing ?? stepTrailing,
-            ),
-            Expanded(child: content),
-            if (bottomAction != null)
-              _BottomBar(child: bottomAction!),
-          ],
+        child: FocusTraversalGroup(
+          policy: ReadingOrderTraversalPolicy(),
+          child: Column(
+            children: [
+              if (hasHeader) _Header(
+                title: title,
+                titleWidget: titleWidget,
+                showBack: showBack,
+                onBack: onBack,
+                trailing: trailing ?? stepTrailing,
+              ),
+              Expanded(child: content),
+              if (bottomAction != null) _BottomBar(child: bottomAction!),
+            ],
+          ),
         ),
       ),
     );

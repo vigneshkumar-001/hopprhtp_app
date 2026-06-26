@@ -86,6 +86,29 @@ class AuthRepository {
         (_) {},
       );
 
+  /// Start the PIN reset flow by sending an OTP to the registered phone.
+  Future<String?> requestPinReset({required String phone}) {
+    return apiCall(
+      () => _dio.post('/auth/pin-reset/request-otp', data: {'phone': phone}),
+      (d) => asStringOrNull(asMap(d)['devOtp']),
+    );
+  }
+
+  /// Confirm the PIN reset with the OTP and the new 6-digit PIN.
+  Future<void> confirmPinReset({
+    required String phone,
+    required String otp,
+    required String newPin,
+  }) {
+    return apiCall<void>(
+      () => _dio.post(
+        '/auth/pin-reset/confirm',
+        data: {'phone': phone, 'otp': otp, 'newPin': newPin},
+      ),
+      (_) {},
+    );
+  }
+
   /// Fetch the current user profile (also used to validate a restored session).
   Future<ApiUser> me() =>
       apiCall(() => _dio.get('/users/me'), (d) => ApiUser.fromJson(asMap(d)));

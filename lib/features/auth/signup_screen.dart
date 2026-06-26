@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/network/connectivity.dart';
 import '../../core/network/error_messages.dart';
+import '../../core/native/phone_hint_service.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
@@ -383,6 +384,19 @@ class _StepAccount extends StatelessWidget {
           controller: phone,
           keyboardType: TextInputType.phone,
           textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.telephoneNumber],
+          readOnly: false,
+          onTap: () async {
+            final picked = await PhoneHintService.pickPhoneNumber();
+            if (picked != null && picked.isNotEmpty) {
+              phone.text = picked;
+            }
+          },
+        ),
+        const SizedBox(height: AppSizes.xs),
+        Text(
+          'Tap to choose a Google number, or type your own manually.',
+          style: AppText.caption.copyWith(color: AppColors.textTertiary),
         ),
         const SizedBox(height: AppSizes.lg),
         AppTextField(

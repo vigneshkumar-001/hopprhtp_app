@@ -202,7 +202,14 @@ class Consignment {
   Consignment({
     this.product = '',
     this.amount = '',
+    this.quantity = '',
+    this.weight = '',
+    this.buyerName = '',
     this.buyerContact = '',
+    this.deliveryAddress = '',
+    this.waybillTrackingNumber = '',
+    this.dispatcherAddress = '',
+    this.specialInstructions = '',
     CourierPayout? payout,
     this.hasDispatchPhoto = false,
     this.hasWaybillImage = false,
@@ -212,7 +219,14 @@ class Consignment {
 
   String product;
   String amount; // kept as text while editing
+  String quantity;
+  String weight;
+  String buyerName;
   String buyerContact;
+  String deliveryAddress;
+  String waybillTrackingNumber;
+  String dispatcherAddress;
+  String specialInstructions;
   CourierPayout payout;
   bool hasDispatchPhoto;
   bool hasWaybillImage;
@@ -220,5 +234,11 @@ class Consignment {
   String? waybillImageUrl;
 
   bool get isComplete =>
-      product.isNotEmpty && amount.isNotEmpty && buyerContact.isNotEmpty;
+      product.isNotEmpty &&
+      amount.isNotEmpty &&
+      quantity.isNotEmpty &&
+      buyerName.isNotEmpty &&
+      buyerContact.isNotEmpty &&
+      deliveryAddress.isNotEmpty &&
+      payout.isComplete;
 }
