@@ -37,6 +37,16 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Deep link: the hosted web checkout's "Continue in App" button
+                 (backend/public/checkout.html) opens hopprpay://tx/<code> when
+                 the buyer isn't already inside the app's WebView. Only opens
+                 the app for now — no in-app route parsing yet. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="hopprpay"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

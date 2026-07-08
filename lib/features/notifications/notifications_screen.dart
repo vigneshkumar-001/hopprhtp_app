@@ -3,26 +3,29 @@ import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/error_messages.dart';
 import '../../core/providers.dart';
+import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/dto/notification_dto.dart';
+import '../../data/models/models.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/app_snackbar.dart';
 import '../../widgets/feedback/state_views.dart';
+import '../transaction/transaction_detail_screen.dart';
 
 IconData _iconFor(String type) => switch (type) {
-      'payment' => Icons.account_balance_wallet_outlined,
-      'payout' => Icons.account_balance_outlined,
-      'delivery' => Icons.local_shipping_outlined,
-      'dispute' => Icons.flag_outlined,
-      'transaction' => Icons.receipt_long_outlined,
-      _ => Icons.notifications_none_rounded,
-    };
+  'payment' => Icons.account_balance_wallet_outlined,
+  'payout' => Icons.account_balance_outlined,
+  'delivery' => Icons.local_shipping_outlined,
+  'dispute' => Icons.flag_outlined,
+  'transaction' => Icons.receipt_long_outlined,
+  _ => Icons.notifications_none_rounded,
+};
 
 /// The home app-bar bell with a live unread badge.
 class NotificationBell extends ConsumerWidget {
@@ -31,10 +34,9 @@ class NotificationBell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final unread = ref.watch(unreadNotificationsProvider).maybeWhen(
-          data: (n) => n,
-          orElse: () => 0,
-        );
+    final unread = ref
+        .watch(unreadNotificationsProvider)
+        .maybeWhen(data: (n) => n, orElse: () => 0);
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -142,15 +144,40 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   }
 
   Future<void> _open(AppNotification n) async {
-    if (n.read) return;
-    setState(() {
-      final i = _items.indexWhere((x) => x.id == n.id);
-      if (i != -1) _items[i] = _readCopy(n);
-    });
+    // Optimistically mark read (only if it was unread), then open the related
+    // transaction so a tapped notification lands somewhere useful.
+    if (!n.read) {
+      setState(() {
+        final i = _items.indexWhere((x) => x.id == n.id);
+        if (i != -1) _items[i] = _readCopy(n);
+      });
+      try {
+        await ref.read(notificationRepositoryProvider).markRead(n.id);
+        ref.invalidate(unreadNotificationsProvider);
+      } catch (_) {
+        /* optimistic — stays read locally */
+      }
+    }
+    await _openTarget(n);
+  }
+
+  /// Best-effort deep link: a notification carries the transaction's public
+  /// code, so fetch that transaction and open its detail (which surfaces the
+  /// dispute card for dispute notifications). A missing/inaccessible code just
+  /// doesn't navigate — never an error to the user.
+  Future<void> _openTarget(AppNotification n) async {
+    final code = (n.code ?? '').trim();
+    if (code.isEmpty) return;
     try {
-      await ref.read(notificationRepositoryProvider).markRead(n.id);
-      ref.invalidate(unreadNotificationsProvider);
-    } catch (_) {/* optimistic — stays read locally */}
+      final tx = await ref.read(transactionRepositoryProvider).getByCode(code);
+      if (!mounted) return;
+      AppNav.push(
+        context,
+        TransactionDetailScreen(tx: EscrowTransaction.fromApi(tx)),
+      );
+    } catch (_) {
+      // Best-effort — no navigation if the transaction can't be loaded.
+    }
   }
 
   Future<void> _markAllRead() async {
@@ -169,14 +196,14 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   }
 
   AppNotification _readCopy(AppNotification n) => AppNotification(
-        id: n.id,
-        type: n.type,
-        title: n.title,
-        body: n.body,
-        code: n.code,
-        read: true,
-        createdAt: n.createdAt,
-      );
+    id: n.id,
+    type: n.type,
+    title: n.title,
+    body: n.body,
+    code: n.code,
+    read: true,
+    createdAt: n.createdAt,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -189,14 +216,17 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
               onTap: _markAllRead,
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: AppSizes.md, vertical: 8),
+                  horizontal: AppSizes.md,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.surfaceMuted,
                   borderRadius: AppRadii.pill,
                 ),
-                child: Text('Mark read',
-                    style:
-                        AppText.caption.copyWith(fontWeight: FontWeight.w700)),
+                child: Text(
+                  'Mark read',
+                  style: AppText.caption.copyWith(fontWeight: FontWeight.w700),
+                ),
               ),
             )
           : null,
@@ -212,7 +242,10 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       return const Center(child: AppCircularLoader());
     }
     if (_error != null && _items.isEmpty) {
-      return ErrorRetryView(message: friendlyError(_error!), onRetry: _loadFirst);
+      return ErrorRetryView(
+        message: friendlyError(_error!),
+        onRetry: _loadFirst,
+      );
     }
     if (_items.isEmpty) {
       return const EmptyStateView(
@@ -232,7 +265,10 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         separatorBuilder: (_, _) => const SizedBox(height: AppSizes.sm),
         itemBuilder: (context, i) => i == _items.length
             ? _footer()
-            : _NotificationCard(notice: _items[i], onTap: () => _open(_items[i])),
+            : _NotificationCard(
+                notice: _items[i],
+                onTap: () => _open(_items[i]),
+              ),
       ),
     );
   }
@@ -250,9 +286,13 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         child: Center(
           child: GestureDetector(
             onTap: _loadMore,
-            child: Text('Tap to retry',
-                style: AppText.caption
-                    .copyWith(fontWeight: FontWeight.w700, color: AppColors.ink)),
+            child: Text(
+              'Tap to retry',
+              style: AppText.caption.copyWith(
+                fontWeight: FontWeight.w700,
+                color: AppColors.ink,
+              ),
+            ),
           ),
         ),
       );
@@ -284,9 +324,11 @@ class _NotificationCard extends StatelessWidget {
               color: unread ? accent.accentSoft : AppColors.surfaceMuted,
               borderRadius: AppRadii.sm,
             ),
-            child: Icon(_iconFor(notice.type),
-                size: 19,
-                color: unread ? accent.onAccentSoft : AppColors.textSecondary),
+            child: Icon(
+              _iconFor(notice.type),
+              size: 19,
+              color: unread ? accent.onAccentSoft : AppColors.textSecondary,
+            ),
           ),
           const SizedBox(width: AppSizes.md),
           Expanded(
@@ -296,10 +338,12 @@ class _NotificationCard extends StatelessWidget {
                 Row(
                   children: [
                     Expanded(
-                      child: Text(notice.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppText.bodyStrong),
+                      child: Text(
+                        notice.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppText.bodyStrong,
+                      ),
                     ),
                     if (unread) ...[
                       const SizedBox(width: AppSizes.sm),
@@ -307,7 +351,9 @@ class _NotificationCard extends StatelessWidget {
                         width: 8,
                         height: 8,
                         decoration: const BoxDecoration(
-                            color: AppColors.ink, shape: BoxShape.circle),
+                          color: AppColors.ink,
+                          shape: BoxShape.circle,
+                        ),
                       ),
                     ],
                   ],
@@ -316,9 +362,12 @@ class _NotificationCard extends StatelessWidget {
                 Text(notice.body, style: AppText.caption),
                 if (notice.createdAt != null) ...[
                   const SizedBox(height: 4),
-                  Text(Dates.relative(notice.createdAt!),
-                      style: AppText.caption
-                          .copyWith(color: AppColors.textTertiary)),
+                  Text(
+                    Dates.relative(notice.createdAt!),
+                    style: AppText.caption.copyWith(
+                      color: AppColors.textTertiary,
+                    ),
+                  ),
                 ],
               ],
             ),

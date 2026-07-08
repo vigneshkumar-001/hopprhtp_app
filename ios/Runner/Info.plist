@@ -34,6 +34,21 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Deep link: the hosted web checkout's "Continue in App" button
+	     (backend/public/checkout.html) opens hopprpay://tx/<code> when the
+	     buyer isn't already inside the app's WebView. Only opens the app for
+	     now — no in-app route parsing yet. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.fenizotechnologies.escrow.hopprpay</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>hopprpay</string>
+			</array>
+		</dict>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -11,6 +11,7 @@ import '../../core/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/dto/user_dto.dart';
 import '../../data/dto/wallet_dto.dart';
+import '../../widgets/animated_refresh_icon_button.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
@@ -35,9 +36,13 @@ class WalletScreen extends ConsumerWidget {
 
     return AppScaffold(
       title: 'Wallet',
-      trailing: AppIconButton(
-        icon: Icons.refresh_rounded,
-        onTap: () {
+      // Spins only while the balance is actually refetching; taps are ignored
+      // mid-fetch so a refresh can't be queued twice. The `.when` below keeps
+      // showing the cached balance during the reload (skipLoadingOnRefresh),
+      // so there's no full-page loader flicker on manual refresh.
+      trailing: AnimatedRefreshIconButton(
+        isLoading: balanceAsync.isLoading,
+        onPressed: () {
           ref.invalidate(walletBalanceProvider);
           ref.invalidate(walletLedgerProvider);
         },

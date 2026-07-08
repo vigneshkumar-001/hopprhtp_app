@@ -133,6 +133,11 @@ class _ConfirmDeliveryScreenState extends ConsumerState<ConfirmDeliveryScreen> {
       ref.invalidate(transactionDetailProvider(txId));
       ref.invalidate(transactionsProvider);
       ref.invalidate(trackingProvider(txId));
+      // Delivery is confirmed — the buyer's delivery-code card must stop
+      // showing (the code is now consumed/cleared server-side). Invalidating
+      // it here covers the same-session case; a still-open buyer screen on a
+      // different device re-syncs on its own app-resume/pull-to-refresh.
+      ref.invalidate(deliveryCodeProvider(txId));
       ref.invalidate(transactionLedgerProvider(txId));
       ref.invalidate(walletBalanceProvider);
       ref.invalidate(walletLedgerProvider);

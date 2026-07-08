@@ -1,15 +1,21 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../core/env/app_config.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/network/error_messages.dart';
+import '../../core/network/socket_service.dart';
 import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/utils/app_logger.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/dto/dispute_dto.dart';
 import '../../data/dto/transaction_dto.dart';
@@ -19,6 +25,7 @@ import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
 import '../../widgets/feedback/app_snackbar.dart';
+import '../../widgets/feedback/state_views.dart';
 import 'application/transactions_provider.dart';
 import 'widgets/transaction_widgets.dart';
 import 'confirm_delivery_screen.dart';
@@ -40,7 +47,8 @@ class TransactionDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _TransactionDetailScreenState
-    extends ConsumerState<TransactionDetailScreen> {
+    extends ConsumerState<TransactionDetailScreen>
+    with WidgetsBindingObserver {
   EscrowTransaction get tx => widget.tx;
 
   /// Guards the "Track package" tap: prevents overlapping fetches and drives
@@ -50,6 +58,68 @@ class _TransactionDetailScreenState
 
   /// Guards the seller's Start Delivery / Out-for-delivery actions.
   bool _shipping = false;
+
+  StreamSubscription<TransactionSocketEvent>? _socketSub;
+
+  /// Cached at [initState] and reused in [dispose] — `ref.read` is not safe
+  /// to call inside `dispose()`: when an element is torn down via Flutter's
+  /// deferred/batched unmount path (multiple screens popping in one frame,
+  /// a Navigator replace, etc.) rather than a synchronous `deactivate()`,
+  /// Riverpod may have already flagged its `ref` disposed by the time
+  /// `dispose()` runs, and `ref.read` throws `StateError: Cannot use "ref"
+  /// after the widget was disposed`. The service itself never changes for
+  /// the life of this screen, so grabbing it once up front sidesteps that
+  /// entirely.
+  late final SocketService _socket;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _socket = ref.read(socketServiceProvider);
+    _socket.joinTransaction(tx.id);
+    // Realtime — instant update the moment the other party changes this
+    // exact transaction (seller confirms delivery, payout releases, a
+    // dispute is raised…) while this screen is open. Filtered to this
+    // transaction's id: the same event stream also carries every OTHER
+    // transaction the user is a party to (for the app-wide Home/History
+    // refresh in app.dart), which this screen has no reason to react to.
+    _socketSub = _socket.events.where((e) => e.transactionId == tx.id).listen((
+      event,
+    ) {
+      AppLogger.debug(
+        '[socket] provider invalidation triggered: tx=${tx.id} '
+        'type=${event.type} status=${event.status}',
+      );
+      _invalidateTx();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _socketSub?.cancel();
+    _socket.leaveTransaction(tx.id);
+    super.dispose();
+  }
+
+  /// No socket/live-update service exists in this app yet, so the app-resume
+  /// lifecycle event is the substitute "live update" signal: if the buyer or
+  /// seller backgrounds the app while the other side changes the transaction
+  /// (pays, ships, confirms delivery…), coming back to the foreground
+  /// re-syncs instead of showing whatever was cached when they left.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _invalidateTx();
+  }
+
+  /// Pull-to-refresh: re-syncs and waits for the transaction detail fetch to
+  /// land before the indicator releases (so a fast pull still shows the
+  /// spinner for a beat instead of resolving before anything changed).
+  Future<void> _refresh() async {
+    _invalidateTx();
+    await ref.read(transactionDetailProvider(tx.id).future);
+  }
 
   /// Re-fetches the real transaction (never trusts stale/legacy display data)
   /// and only opens tracking if the buyer's delivery address has real
@@ -84,10 +154,17 @@ class _TransactionDetailScreenState
     }
   }
 
-  /// Re-syncs everything a lifecycle action can have changed.
+  /// Re-syncs everything this screen reads that a lifecycle action (ship,
+  /// confirm delivery elsewhere, resume from background, pull-to-refresh)
+  /// could have changed. Single source of truth for what to invalidate, so
+  /// every trigger (action success, app resume, pull-to-refresh) refreshes
+  /// the same set — never a partial refresh that leaves one card stale.
   void _invalidateTx() {
     ref.invalidate(transactionDetailProvider(tx.id));
+    ref.invalidate(deliveryCodeProvider(tx.id));
     ref.invalidate(trackingProvider(tx.id));
+    ref.invalidate(transactionLedgerProvider(tx.id));
+    ref.invalidate(transactionDisputesProvider(tx.id));
     ref.invalidate(transactionsProvider);
   }
 
@@ -152,31 +229,33 @@ class _TransactionDetailScreenState
     }
   }
 
-  /// Seller-only primary action. Renders immediately from the role/status
-  /// snapshot handed in by Home/History (`tx.myRole` + `tx.apiStatus`), then
-  /// reconciles with the authoritative background refetch
-  /// ([transactionDetailProvider]) — so a seller sees Verify Delivery right
-  /// away instead of after a network round-trip, and a buyer never sees a
-  /// seller button flash in. Shows nothing (never a wrong action) when the
-  /// role/status is still unknown.
+  /// Seller-only primary action — always driven by the fresh
+  /// [transactionDetailProvider] fetch, never the frozen Home/History
+  /// snapshot: a wrong action button (e.g. Start Delivery lingering after the
+  /// backend already moved to in_transit) is worse than a brief skeleton.
+  /// While the first fetch for this transaction hasn't resolved at all yet
+  /// (`!hasValue` — true first paint only, not a later background refetch,
+  /// which keeps its previous value via Riverpod's automatic
+  /// `copyWithPrevious`), this returns null and lets the caller's own
+  /// role-agnostic skeleton (see `showInitialActionSkeleton` in `build()`)
+  /// reserve the space instead — a buyer's Track Package button needs the
+  /// exact same first-load placeholder, not just the seller's actions.
   /// Returns null (never an empty placeholder) when there's nothing to show,
   /// so the caller can collapse the whole bottom action bar instead of
   /// leaving dangling empty space.
   Widget? _buildSellerActionSlot(BuildContext context) {
     final detailAsync = ref.watch(transactionDetailProvider(tx.id));
-    final isSeller = detailAsync.maybeWhen(
-      data: (f) => f.isSeller,
-      orElse: () => tx.myRole == 'seller',
-    );
-    if (!isSeller) return null;
+    if (!detailAsync.hasValue) return null;
+    final full = detailAsync.value!;
+    if (!full.isSeller) return null;
+    // A background refetch is in flight (e.g. after app resume / pull to
+    // refresh) but we still have the last-known-good status — keep showing
+    // it (no layout jump) but block the irreversible actions until the fresh
+    // status is confirmed, so a stale "Start delivery" can't be double-fired
+    // against a transaction that already moved on.
+    final refreshing = detailAsync.isLoading;
 
-    final status = detailAsync.maybeWhen(
-      data: (f) => f.status,
-      orElse: () => tx.apiStatus,
-    );
-    if (status == null) return null;
-
-    switch (status) {
+    switch (full.status) {
       case ApiTxStatus.paymentReceived:
       case ApiTxStatus.awaitingDispatch:
         return AppButton(
@@ -184,7 +263,7 @@ class _TransactionDetailScreenState
           trailingIcon: Icons.local_shipping_rounded,
           accentInLime: true,
           loading: _shipping,
-          enabled: !_shipping,
+          enabled: !_shipping && !refreshing,
           onPressed: _startDelivery,
         );
       case ApiTxStatus.inTransit:
@@ -195,6 +274,7 @@ class _TransactionDetailScreenState
               label: 'Verify delivery',
               trailingIcon: Icons.lock_open_rounded,
               accentInLime: true,
+              enabled: !refreshing,
               onPressed: () =>
                   AppNav.push(context, ConfirmDeliveryScreen(draft: _draft)),
             ),
@@ -204,7 +284,7 @@ class _TransactionDetailScreenState
               icon: Icons.moving_rounded,
               variant: AppButtonVariant.outline,
               loading: _shipping,
-              enabled: !_shipping,
+              enabled: !_shipping && !refreshing,
               onPressed: _markOutForDelivery,
             ),
           ],
@@ -214,6 +294,7 @@ class _TransactionDetailScreenState
           label: 'Verify delivery',
           trailingIcon: Icons.lock_open_rounded,
           accentInLime: true,
+          enabled: !refreshing,
           onPressed: () =>
               AppNav.push(context, ConfirmDeliveryScreen(draft: _draft)),
         );
@@ -240,61 +321,117 @@ class _TransactionDetailScreenState
       status == null || _trackableStatuses.contains(status);
 
   /// Buyer-only: the delivery code to share with the seller once the product
-  /// arrives. Role is resolved snapshot-first (so a buyer isn't briefly treated
-  /// as a seller); silently hides on loading/error/already-confirmed/no-code.
+  /// arrives. Gated on the FRESH transaction status (never the snapshot) so
+  /// it can't keep showing after the seller has already confirmed delivery
+  /// elsewhere — that's the whole card, hidden the moment status moves past
+  /// "in delivery" (see [_trackableStatuses]: paid/in_transit/out_for_delivery
+  /// only). `deliveryCodeProvider` is the second, independent confirmation —
+  /// its own `alreadyConfirmed`/`code == null` also hides the card, using
+  /// whatever value it has (fresh or still-cached-during-refetch) rather than
+  /// falling back to nothing while a background refresh is in flight.
   Widget _buildDeliveryCodeSlot(BuildContext context) {
-    final isBuyer = ref
-        .watch(transactionDetailProvider(tx.id))
-        .maybeWhen(data: (f) => f.isBuyer, orElse: () => tx.myRole == 'buyer');
-    if (!isBuyer) return const SizedBox.shrink();
-    final codeAsync = ref.watch(deliveryCodeProvider(tx.id));
-    return codeAsync.maybeWhen(
-      data: (dc) {
-        if (dc.alreadyConfirmed || dc.code == null) {
-          return const SizedBox.shrink();
-        }
-        return Padding(
-          padding: const EdgeInsets.only(bottom: AppSizes.md),
-          child: _DeliveryCodeCard(code: dc.code!),
-        );
-      },
-      orElse: () => const SizedBox.shrink(),
+    final detailAsync = ref.watch(transactionDetailProvider(tx.id));
+    if (!detailAsync.hasValue) {
+      // Only reserve the delivery-code space on first load when the frozen
+      // snapshot already puts us in a delivery phase where a buyer would
+      // actually see the code. Reserving it for every buyer (then collapsing it
+      // for non-delivery statuses once fresh data lands) jumped the layout — and
+      // a shaped skeleton matches the real card so nothing shifts when it fills.
+      final expectCode =
+          tx.myRole == 'buyer' && _trackableStatuses.contains(tx.apiStatus);
+      return expectCode
+          ? const Padding(
+              padding: EdgeInsets.only(bottom: AppSizes.md),
+              child: _DeliveryCodeSkeleton(),
+            )
+          : const SizedBox.shrink();
+    }
+    final full = detailAsync.value!;
+    if (!full.isBuyer || !_trackableStatuses.contains(full.status)) {
+      return const SizedBox.shrink();
+    }
+    final dc = ref.watch(deliveryCodeProvider(tx.id)).valueOrNull;
+    if (dc == null || dc.alreadyConfirmed || dc.code == null) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSizes.md),
+      child: _DeliveryCodeCard(code: dc.code!),
     );
   }
 
   /// Real cooling-period card, shown only once the transaction has actually
   /// reached a cooling-relevant status. Reuses [transactionDetailProvider]
   /// (the full `ApiTransaction`, with `coolingEndsAt`/`timeline`) rather than
-  /// adding a new provider — [trackingProvider] above doesn't carry these
-  /// fields, since that response is intentionally scoped to tracking only.
+  /// adding a new provider. Uses whatever value the providers currently have
+  /// (fresh or cached-during-refetch via `valueOrNull`) instead of collapsing
+  /// to nothing on every background refresh — that was hiding/re-showing this
+  /// card on every invalidate even though nothing actually changed.
   Widget _buildCoolingSlot(BuildContext context) {
-    final detailAsync = ref.watch(transactionDetailProvider(tx.id));
-    // Same cached provider instance as _buildVerifyDeliverySlot — no extra fetch.
-    final isSeller = ref
-        .watch(trackingProvider(tx.id))
-        .maybeWhen(data: (t) => t.isSeller, orElse: () => false);
-    final disputes = ref
-        .watch(transactionDisputesProvider(tx.id))
-        .maybeWhen(data: (d) => d, orElse: () => const <Dispute>[]);
-    return detailAsync.maybeWhen(
-      data: (full) {
-        const relevant = {
-          ApiTxStatus.cooling,
-          ApiTxStatus.released,
-          ApiTxStatus.completed,
-          ApiTxStatus.disputed,
-        };
-        if (!relevant.contains(full.status)) return const SizedBox.shrink();
-        return Padding(
-          padding: const EdgeInsets.only(top: AppSizes.md),
-          child: _CoolingPeriodCard(
-            tx: full,
-            isSeller: isSeller,
-            disputes: disputes,
-          ),
-        );
-      },
-      orElse: () => const SizedBox.shrink(),
+    final full = ref.watch(transactionDetailProvider(tx.id)).valueOrNull;
+    if (full == null) return const SizedBox.shrink();
+    // Includes `delivered` (not just `cooling` and beyond) so there's no dead
+    // zone right after the seller confirms delivery: Delivery Code is already
+    // hidden by then (it's not in `_trackableStatuses`), and this card must
+    // be showing by the same moment — never a gap where neither is visible.
+    const relevant = {
+      ApiTxStatus.delivered,
+      ApiTxStatus.cooling,
+      ApiTxStatus.released,
+      ApiTxStatus.completed,
+      ApiTxStatus.disputed,
+    };
+    if (!relevant.contains(full.status)) return const SizedBox.shrink();
+    // trackingProvider is the pre-existing source for isSeller here; fall
+    // back to the detail fetch's own isSeller (same field, same backend
+    // truth) rather than a hardcoded `false` while tracking hasn't resolved.
+    final isSeller =
+        ref.watch(trackingProvider(tx.id)).valueOrNull?.isSeller ??
+        full.isSeller;
+    final disputes =
+        ref.watch(transactionDisputesProvider(tx.id)).valueOrNull ??
+        const <Dispute>[];
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSizes.md),
+      child: _CoolingPeriodCard(
+        tx: full,
+        isSeller: isSeller,
+        disputes: disputes,
+      ),
+    );
+  }
+
+  /// Prominent card whenever an unresolved dispute exists on this transaction,
+  /// for either party. The counter-party (the side that didn't raise it) also
+  /// gets a Respond action; both open the full [DisputeStatusScreen], which
+  /// re-checks eligibility and hosts the response form. Uses whatever value the
+  /// provider currently has (fresh or cached-during-refetch) so it doesn't
+  /// flicker away on every background refresh.
+  Widget _buildDisputeSlot(BuildContext context) {
+    final disputes =
+        ref.watch(transactionDisputesProvider(tx.id)).valueOrNull ??
+        const <Dispute>[];
+    if (disputes.isEmpty) return const SizedBox.shrink();
+    final dispute = disputes.lastWhere(
+      (d) => !d.isResolved,
+      orElse: () => disputes.last,
+    );
+    if (dispute.isResolved) return const SizedBox.shrink();
+
+    final detail = ref.watch(transactionDetailProvider(tx.id)).valueOrNull;
+    final myRole = detail?.isSeller == true
+        ? 'seller'
+        : detail?.isBuyer == true
+        ? 'buyer'
+        : tx.myRole;
+    // Only the OTHER party can respond, and only once, before resolution.
+    final canRespond =
+        myRole != null &&
+        myRole != dispute.raisedByRole &&
+        !dispute.hasResponse;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSizes.md),
+      child: _DisputeCard(dispute: dispute, canRespond: canRespond),
     );
   }
 
@@ -337,20 +474,47 @@ class _TransactionDetailScreenState
     final deliveryAddress = (tx.deliveryAddress ?? '').trim();
     final buyerContact = (tx.buyerContact ?? '').trim();
     final dispatcherLabel = buyerInfo.isNotEmpty ? buyerInfo : tx.merchantName;
-    // Same cached provider instance _buildCoolingSlot already watches — no
-    // extra fetch. Lets the escrow timeline reflect a mutation that happened
-    // on another screen (confirm delivery / release / dispute) without
-    // requiring the user to fully leave and re-enter this screen.
-    final liveStatus = ref
-        .watch(transactionDetailProvider(tx.id))
-        .maybeWhen(data: (full) => full.status, orElse: () => null);
+    // Same cached provider instance _buildCoolingSlot/_buildSellerActionSlot
+    // already watch — no extra fetch. `.valueOrNull` (not `.maybeWhen(data:)`)
+    // so this keeps the last-known status during a background refetch
+    // instead of reverting to nothing/stale mid-screen.
+    final detailAsync = ref.watch(transactionDetailProvider(tx.id));
+    final liveStatus = detailAsync.valueOrNull?.status;
+    // A refetch is in flight but we still have a previous value — surface the
+    // small "Updating…" indicator rather than silently swapping data under
+    // the user, or blocking the screen with a full-page spinner.
+    final isUpdating = detailAsync.isLoading && detailAsync.hasValue;
 
-    // Snapshot-first (liveStatus while loading falls back to the list
-    // snapshot) so Track Package doesn't flicker in/out while the live
-    // status is still resolving.
+    // Seller + still-unpaid → surface the re-shareable Buyer Payment Link card
+    // (and hide the "money is in escrow" banners that would contradict it).
+    // Falls back to the frozen snapshot's role/status on first paint. The
+    // seller can never pay it — the card offers copy/share only.
+    final isSellerView =
+        detailAsync.valueOrNull?.isSeller ?? (tx.myRole == 'seller');
+    final effStatus = liveStatus ?? tx.apiStatus;
+    const unpaidStatuses = {
+      ApiTxStatus.draft,
+      ApiTxStatus.awaitingAgreement,
+      ApiTxStatus.awaitingPayment,
+    };
+    final showPaymentLink =
+        isSellerView && effStatus != null && unpaidStatuses.contains(effStatus);
+
+    // Track Package waits for the fresh fetch too (Issue 1/4) — the seller
+    // action slot and delivery-code slot already gate themselves the same way.
     final sellerAction = _buildSellerActionSlot(context);
-    final showTrackPackage = _isTrackableStatus(liveStatus ?? tx.apiStatus);
+    final showTrackPackage =
+        detailAsync.hasValue && _isTrackableStatus(liveStatus);
+    // First paint only (never a background refetch — `hasValue` covers
+    // that): we know a role from the snapshot, so SOMETHING plausible could
+    // land in the bottom bar (seller actions or Track Package) — reserve a
+    // skeleton instead of leaving it empty and then popping content in once
+    // the fetch resolves. A transaction with no known role yet shows nothing,
+    // same as before — never a guess.
+    final showInitialActionSkeleton =
+        !detailAsync.hasValue && tx.myRole != null;
     final bottomChildren = <Widget>[
+      if (showInitialActionSkeleton) const _ActionBarSkeleton(),
       ?sellerAction,
       if (sellerAction != null && showTrackPackage)
         const SizedBox(height: AppSizes.sm),
@@ -368,63 +532,185 @@ class _TransactionDetailScreenState
     return AppScaffold(
       title: 'Transaction',
       trailing: const AppIconButton(icon: Icons.more_horiz_rounded),
-      scrollable: true,
+      // Scrolling/padding is built by hand below (RefreshIndicator needs to
+      // be the ancestor of the actual Scrollable — AppScaffold's own
+      // `scrollable: true` would put it the wrong way round).
+      scrollable: false,
+      padding: EdgeInsets.zero,
       // No dangling empty bottom bar once delivery is confirmed (cooling and
       // beyond) — both actions collapse cleanly instead of showing padding
-      // with nothing in it.
+      // with nothing in it. When there IS something to show, AnimatedSwitcher
+      // fades between skeleton / one action set / another instead of an
+      // abrupt swap, keyed on a signature so it only transitions when the
+      // content actually changes.
       bottomAction: bottomChildren.isEmpty
           ? null
-          : Column(mainAxisSize: MainAxisSize.min, children: bottomChildren),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+          : AnimatedSwitcher(
+              duration: AppDurations.normal,
+              child: Column(
+                key: ValueKey('${liveStatus?.name}-${detailAsync.hasValue}'),
+                mainAxisSize: MainAxisSize.min,
+                children: bottomChildren,
+              ),
+            ),
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        color: AppColors.ink,
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
+          padding: const EdgeInsets.only(bottom: AppSizes.xxl),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSizes.screenPad),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: AppSizes.sm),
+                AnimatedSize(
+                  duration: AppDurations.normal,
+                  alignment: Alignment.topCenter,
+                  child: isUpdating
+                      ? const _UpdatingBanner()
+                      : const SizedBox(width: double.infinity),
+                ),
+                _SellerCard(
+                  tx: tx,
+                  trustScore: _trustScore,
+                  successfulTx: _successfulTx,
+                  onTap: () =>
+                      AppNav.push(context, const MerchantProfileScreen()),
+                ),
+                const SizedBox(height: AppSizes.md),
+                _ProductCard(tx: tx, category: _category),
+                const SizedBox(height: AppSizes.md),
+                // Prominent dispute banner (either party) when one is active.
+                _buildDisputeSlot(context),
+                _BuyerInfoCard(
+                  buyerLabel: buyerInfo,
+                  buyerContact: buyerContact,
+                  deliveryAddress: deliveryAddress,
+                  eta: deliveryEta,
+                  onCopyAddress: () => _copy(
+                    context,
+                    deliveryAddress,
+                    'Delivery address copied',
+                  ),
+                  onCopyContact: () =>
+                      _copy(context, buyerContact, 'Buyer contact copied'),
+                ),
+                const SizedBox(height: AppSizes.md),
+                if (showPaymentLink) ...[
+                  _PaymentLinkCard(code: tx.code, amount: tx.amount),
+                  const SizedBox(height: AppSizes.md),
+                ],
+                _buildDeliveryCodeSlot(context),
+                _EscrowStatusCard(
+                  tx: tx,
+                  dispatcherLabel: dispatcherLabel,
+                  eta: deliveryEta,
+                  liveStatus: liveStatus,
+                ),
+                _buildCoolingSlot(context),
+                // "Funds held in escrow" banners only make sense once the buyer
+                // has actually paid — hidden while the seller still sees the
+                // Buyer Payment Link (awaiting payment) card above.
+                if (!showPaymentLink) ...[
+                  const SizedBox(height: AppSizes.md),
+                  const _ReleaseBanner(),
+                  const SizedBox(height: AppSizes.md),
+                  _PaidCard(total: tx.amount),
+                ],
+                const SizedBox(height: AppSizes.md),
+                _DeliveryDetailsCard(
+                  address: deliveryAddress.isEmpty
+                      ? 'Not provided'
+                      : deliveryAddress,
+                  dispatcher: dispatcherLabel.isEmpty
+                      ? 'Not provided'
+                      : dispatcherLabel,
+                  eta: deliveryEta.isEmpty ? 'Not available' : deliveryEta,
+                  onAddress: () => _copy(
+                    context,
+                    deliveryAddress,
+                    'Delivery address copied',
+                  ),
+                  onDispatcher: () =>
+                      _copy(context, buyerContact, 'Buyer contact copied'),
+                  onEta: _onTrackPackage,
+                ),
+                const SizedBox(height: 24),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Button-height shimmer placeholder shown in the bottom action bar until the
+/// first fresh [transactionDetailProvider] fetch resolves — never a guessed
+/// action button from the frozen list/history snapshot.
+class _ActionBarSkeleton extends StatelessWidget {
+  const _ActionBarSkeleton();
+
+  @override
+  Widget build(BuildContext context) => const AppShimmerBox(
+    width: double.infinity,
+    height: AppSizes.buttonHeight,
+  );
+}
+
+/// Small top-of-screen indicator shown while a background refetch is in
+/// flight but the screen still has data to show (app resume, pull-to-refresh,
+/// or right after a lifecycle action) — makes it clear the visible data is
+/// being reconciled instead of silently swapping it under the user.
+class _UpdatingBanner extends StatelessWidget {
+  const _UpdatingBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSizes.sm),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(height: AppSizes.sm),
-          _SellerCard(
-            tx: tx,
-            trustScore: _trustScore,
-            successfulTx: _successfulTx,
-            onTap: () => AppNav.push(context, const MerchantProfileScreen()),
+          const SizedBox(
+            width: 13,
+            height: 13,
+            child: CircularProgressIndicator(strokeWidth: 2),
           ),
-          const SizedBox(height: AppSizes.md),
-          _ProductCard(tx: tx, category: _category),
-          const SizedBox(height: AppSizes.md),
-          _BuyerInfoCard(
-            buyerLabel: buyerInfo,
-            buyerContact: buyerContact,
-            deliveryAddress: deliveryAddress,
-            eta: deliveryEta,
-            onCopyAddress: () =>
-                _copy(context, deliveryAddress, 'Delivery address copied'),
-            onCopyContact: () =>
-                _copy(context, buyerContact, 'Buyer contact copied'),
+          const SizedBox(width: AppSizes.sm),
+          Text('Updating transaction…', style: AppText.caption),
+        ],
+      ),
+    ).animate().fadeIn(duration: 160.ms);
+  }
+}
+
+/// First-load shimmer shaped like [_DeliveryCodeCard] (label · code · note) so
+/// the real card slots in without a layout jump. Blocks only, no fake values.
+class _DeliveryCodeSkeleton extends StatelessWidget {
+  const _DeliveryCodeSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AppShimmerBox(width: 96, height: 12, radius: AppRadii.sm),
+          const SizedBox(height: AppSizes.lg),
+          Center(
+            child: AppShimmerBox(width: 180, height: 40, radius: AppRadii.md),
           ),
-          const SizedBox(height: AppSizes.md),
-          _buildDeliveryCodeSlot(context),
-          _EscrowStatusCard(
-            tx: tx,
-            dispatcherLabel: dispatcherLabel,
-            eta: deliveryEta,
-            liveStatus: liveStatus,
+          const SizedBox(height: AppSizes.lg),
+          AppShimmerBox(
+            width: double.infinity,
+            height: 40,
+            radius: AppRadii.md,
           ),
-          _buildCoolingSlot(context),
-          const SizedBox(height: AppSizes.md),
-          const _ReleaseBanner(),
-          const SizedBox(height: AppSizes.md),
-          _PaidCard(total: tx.amount),
-          const SizedBox(height: AppSizes.md),
-          _DeliveryDetailsCard(
-            address: deliveryAddress.isEmpty ? 'Not provided' : deliveryAddress,
-            dispatcher: dispatcherLabel.isEmpty
-                ? 'Not provided'
-                : dispatcherLabel,
-            eta: deliveryEta.isEmpty ? 'Not available' : deliveryEta,
-            onAddress: () =>
-                _copy(context, deliveryAddress, 'Delivery address copied'),
-            onDispatcher: () =>
-                _copy(context, buyerContact, 'Buyer contact copied'),
-            onEta: _onTrackPackage,
-          ),
-          const SizedBox(height: 24),
         ],
       ),
     );
@@ -1025,24 +1311,38 @@ class _EscrowStatusCard extends StatelessWidget {
     final bool paid;
     final bool inTransit;
     final bool outForDelivery;
+    // A dead-ended transaction (cancelled/refunded/returned/undeliverable, or
+    // a status this app build doesn't recognise) has nothing "actively
+    // happening right now" — never fabricate an in-progress step for it.
+    final bool terminated;
     if (live != null) {
       done = live == ApiTxStatus.released || live == ApiTxStatus.completed;
       paid =
           live != ApiTxStatus.draft &&
           live != ApiTxStatus.awaitingAgreement &&
           live != ApiTxStatus.awaitingPayment;
+      // Disputes are raised during/after cooling — i.e. strictly after
+      // delivery — so a disputed transaction has already passed through
+      // transit/out-for-delivery/delivered; only the release stays open
+      // pending resolution. Without this, `disputed` fell through every
+      // check below and its whole timeline collapsed back to "pending".
+      final pastDelivery =
+          live == ApiTxStatus.delivered ||
+          live == ApiTxStatus.cooling ||
+          live == ApiTxStatus.disputed ||
+          done;
       inTransit =
           paid &&
           (live == ApiTxStatus.inTransit ||
               live == ApiTxStatus.outForDelivery ||
-              live == ApiTxStatus.delivered ||
-              live == ApiTxStatus.cooling ||
-              done);
-      outForDelivery =
-          live == ApiTxStatus.outForDelivery ||
-          live == ApiTxStatus.delivered ||
-          live == ApiTxStatus.cooling ||
-          done;
+              pastDelivery);
+      outForDelivery = live == ApiTxStatus.outForDelivery || pastDelivery;
+      terminated =
+          live == ApiTxStatus.cancelled ||
+          live == ApiTxStatus.refunded ||
+          live == ApiTxStatus.returned ||
+          live == ApiTxStatus.undeliverable ||
+          live == ApiTxStatus.unknown;
     } else {
       done = tx.stage == TxStage.done || tx.status == TxStatus.released;
       paid = tx.status != TxStatus.awaitingDispatch;
@@ -1055,36 +1355,57 @@ class _EscrowStatusCard extends StatelessWidget {
           tx.status == TxStatus.outForDelivery ||
           tx.status == TxStatus.delivered ||
           done;
+      // The coarse list/history snapshot enum has no cancelled/refunded
+      // value — nothing to flag as terminated before the fresh fetch lands.
+      terminated = false;
+    }
+
+    // Each flag means "this stage has been reached (or passed)" and is
+    // monotonic — once true for a stage it stays true for every later
+    // status. So the first `false` in order is the ONE step genuinely in
+    // progress right now; every flag after it is also false and hasn't
+    // started yet (pending) — never "current" just because it isn't done.
+    final reached = [paid, inTransit, outForDelivery, done];
+    final activeIndex = reached.indexWhere((r) => !r);
+
+    _StepState stateFor(int index) {
+      if (reached[index]) return _StepState.done;
+      if (index == activeIndex && !terminated) return _StepState.current;
+      return _StepState.pending;
     }
 
     final steps = <_StepData>[
       _StepData(
-        state: paid ? _StepState.done : _StepState.current,
+        state: stateFor(0),
         icon: Icons.account_balance_wallet_outlined,
         title: 'Paid into escrow',
         lines: paid ? ['Payment secured'] : ['Awaiting buyer payment'],
+        stopped: terminated && activeIndex == 0,
       ),
       _StepData(
-        state: inTransit ? _StepState.done : _StepState.current,
+        state: stateFor(1),
         icon: Icons.local_shipping_outlined,
         title: 'In transit',
         lines: inTransit ? ['Package is moving'] : ['Waiting for dispatch'],
+        stopped: terminated && activeIndex == 1,
       ),
       _StepData(
-        state: outForDelivery ? _StepState.done : _StepState.current,
+        state: stateFor(2),
         icon: Icons.local_shipping_outlined,
         title: 'Out for delivery',
         lines: outForDelivery
             ? [dispatcherLabel, if (eta.isNotEmpty) eta]
             : ['Near destination'],
+        stopped: terminated && activeIndex == 2,
       ),
       _StepData(
-        state: done ? _StepState.done : _StepState.pending,
+        state: stateFor(3),
         icon: Icons.inventory_2_outlined,
         title: 'Delivered & released',
         lines: done
             ? ['Funds released to seller']
             : ['Confirm delivery to release payment'],
+        stopped: terminated && activeIndex == 3,
       ),
     ];
 
@@ -1122,11 +1443,18 @@ class _StepData {
     required this.icon,
     required this.title,
     required this.lines,
+    this.stopped = false,
   });
   final _StepState state;
   final IconData icon;
   final String title;
   final List<String> lines;
+
+  /// True for the one step where a dead-ended transaction (cancelled /
+  /// refunded / returned / undeliverable) stopped — rendered as a distinct
+  /// "stopped" style rather than pending grey or a fabricated current step.
+  /// Meaningless when [state] is already `done`.
+  final bool stopped;
 }
 
 class _TimelineNode extends StatelessWidget {
@@ -1139,10 +1467,40 @@ class _TimelineNode extends StatelessWidget {
     final accent = AppAccent.of(context);
     final done = step.state == _StepState.done;
     final current = step.state == _StepState.current;
-    final filled = step.state != _StepState.pending;
-    final circleColor = filled ? accent.accent : AppColors.surfaceMuted;
-    final iconColor = filled ? accent.onAccent : AppColors.textTertiary;
-    final glyph = done ? Icons.check_rounded : step.icon;
+    final stopped = !done && step.stopped;
+
+    // Completed keeps the existing brand/accent tick untouched (already the
+    // correct, approved look). Current gets its own distinct "in progress"
+    // treatment — never the same solid fill as done, and never black even in
+    // the Mono theme (where accent.accent is ink). Stopped marks the one
+    // step a dead-ended transaction halted at. Anything else is plain
+    // pending grey.
+    final Color circleColor;
+    final Color iconColor;
+    final Color borderColor;
+    if (done) {
+      circleColor = accent.accent;
+      iconColor = accent.onAccent;
+      borderColor = accent.accent;
+    } else if (current) {
+      circleColor = AppColors.warning.withValues(alpha: 0.14);
+      iconColor = AppColors.warning;
+      borderColor = AppColors.warning;
+    } else if (stopped) {
+      circleColor = AppColors.danger.withValues(alpha: 0.10);
+      iconColor = AppColors.danger;
+      borderColor = AppColors.danger.withValues(alpha: 0.4);
+    } else {
+      circleColor = AppColors.surfaceMuted;
+      iconColor = AppColors.textTertiary;
+      borderColor = AppColors.border;
+    }
+
+    final glyph = done
+        ? Icons.check_rounded
+        : stopped
+        ? Icons.close_rounded
+        : step.icon;
     final lineColor = done ? accent.accent : AppColors.border;
 
     return IntrinsicHeight(
@@ -1160,7 +1518,7 @@ class _TimelineNode extends StatelessWidget {
                       height: 34,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: accent.accent.withValues(alpha: 0.18),
+                        color: AppColors.warning.withValues(alpha: 0.18),
                       ),
                     ),
                   Container(
@@ -1169,9 +1527,7 @@ class _TimelineNode extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: circleColor,
                       shape: BoxShape.circle,
-                      border: Border.all(
-                        color: filled ? accent.accent : AppColors.border,
-                      ),
+                      border: Border.all(color: borderColor),
                     ),
                     child: Icon(glyph, size: 17, color: iconColor),
                   ),
@@ -1499,6 +1855,264 @@ class _DispatchProofSheetState extends ConsumerState<_DispatchProofSheet> {
             variant: AppButtonVariant.soft,
             onPressed: () => Navigator.of(context).maybePop(),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Seller-only, shown while the transaction is still unpaid: a re-shareable
+/// Buyer Payment Link so a seller who returns later can copy/share it again.
+/// Copy/share only — the seller can never pay their own transaction, and an
+/// explicit note says so. Removed the moment the buyer pays (status leaves the
+/// unpaid set), replaced by the "Paid into escrow" banner.
+class _PaymentLinkCard extends StatelessWidget {
+  const _PaymentLinkCard({required this.code, required this.amount});
+  final String code;
+  final double amount;
+
+  String get _link => '${AppConfig.webBaseUrl}/pay/$code';
+  String get _linkDisplay => _link.replaceFirst(RegExp(r'^https?://'), '');
+  String get _shareMessage =>
+      'Pay securely for your order via Hoppr escrow.\n'
+      'Amount: ${Money.format(amount)}\n'
+      'Pay here: $_link';
+
+  void _copyLink(BuildContext context) {
+    Clipboard.setData(ClipboardData(text: _link));
+    AppSnackbar.success(context, 'Payment link copied');
+  }
+
+  Future<void> _shareLink(BuildContext context) async {
+    final uri = Uri.parse(
+      'https://wa.me/?text=${Uri.encodeComponent(_shareMessage)}',
+    );
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && context.mounted) {
+        AppSnackbar.error(context, 'Could not open a share app.');
+      }
+    } catch (_) {
+      if (context.mounted) {
+        AppSnackbar.error(context, 'Could not open a share app.');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppAccent.of(context);
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const CardSectionLabel('Buyer payment link'),
+          const SizedBox(height: AppSizes.sm),
+          Text(
+            'Share this link with the buyer to collect escrow payment securely.',
+            style: AppText.caption,
+          ),
+          const SizedBox(height: AppSizes.md),
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSizes.md,
+              vertical: AppSizes.md,
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.cardSoft,
+              borderRadius: AppRadii.md,
+              border: Border.all(color: AppColors.border, width: 1.2),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.link_rounded, size: 18, color: accent.ring),
+                const SizedBox(width: AppSizes.sm),
+                Expanded(
+                  child: Text(
+                    _linkDisplay,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: accent.ring,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSizes.sm),
+                GestureDetector(
+                  onTap: () => _copyLink(context),
+                  behavior: HitTestBehavior.opaque,
+                  child: const Icon(
+                    Icons.copy_rounded,
+                    size: 18,
+                    color: AppColors.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSizes.md),
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSizes.md,
+              vertical: AppSizes.md,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFCF4E5),
+              borderRadius: AppRadii.md,
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.schedule_rounded,
+                  size: 18,
+                  color: AppColors.warning,
+                ),
+                const SizedBox(width: AppSizes.sm),
+                Expanded(
+                  child: Text(
+                    'Waiting for buyer payment',
+                    style: AppText.bodyStrong.copyWith(
+                      color: const Color(0xFF9A6B14),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSizes.md),
+          Row(
+            children: [
+              Expanded(
+                child: AppButton(
+                  label: 'Copy Link',
+                  icon: Icons.copy_rounded,
+                  variant: AppButtonVariant.outline,
+                  onPressed: () => _copyLink(context),
+                ),
+              ),
+              const SizedBox(width: AppSizes.sm),
+              Expanded(
+                child: AppButton(
+                  label: 'Share Link',
+                  icon: Icons.ios_share_rounded,
+                  variant: AppButtonVariant.soft,
+                  onPressed: () => _shareLink(context),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSizes.md),
+          const NoteBanner(
+            icon: Icons.info_outline_rounded,
+            text:
+                'Only the buyer can pay this link. You can’t pay your own '
+                'transaction.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Prominent dispute banner for either party while a dispute is unresolved.
+/// Shows reason, who raised it, when, and the live status. "View Dispute"
+/// always; the counter-party (the side that didn't raise it) additionally
+/// gets "Respond". Both open [DisputeStatusScreen], which hosts the response
+/// form and re-checks eligibility on submit — payout stays blocked meanwhile
+/// (enforced server-side by the escrow state machine).
+class _DisputeCard extends StatelessWidget {
+  const _DisputeCard({required this.dispute, required this.canRespond});
+  final Dispute dispute;
+  final bool canRespond;
+
+  @override
+  Widget build(BuildContext context) {
+    final raiser = dispute.raisedByRole == 'buyer' ? 'The buyer' : 'The seller';
+    void openDispute() =>
+        AppNav.push(context, DisputeStatusScreen(disputeId: dispute.id));
+    return AppCard(
+      color: const Color(0xFFFCF4E5),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: const BoxDecoration(
+                  color: AppColors.warning,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.flag_rounded,
+                  size: 20,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: AppSizes.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Dispute raised', style: AppText.h3),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$raiser has raised a dispute for this transaction.',
+                      style: AppText.caption,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSizes.md),
+          _InfoRow(
+            icon: Icons.category_outlined,
+            label: 'Reason',
+            value: dispute.categoryLabel,
+          ),
+          if ((dispute.reason ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: AppSizes.sm),
+            Text(dispute.reason!.trim(), style: AppText.body),
+          ],
+          const SizedBox(height: AppSizes.sm),
+          _InfoRow(
+            icon: Icons.schedule_rounded,
+            label: 'Raised',
+            value: Dates.relative(dispute.createdAt),
+          ),
+          const SizedBox(height: AppSizes.md),
+          Row(
+            children: [
+              Text('Status', style: AppText.caption),
+              const SizedBox(width: 8),
+              StatusPill(label: dispute.displayStatus, dense: true),
+            ],
+          ),
+          const SizedBox(height: AppSizes.md),
+          if (canRespond) ...[
+            AppButton(
+              label: 'Respond',
+              icon: Icons.reply_rounded,
+              onPressed: openDispute,
+            ),
+            const SizedBox(height: AppSizes.sm),
+            AppButton(
+              label: 'View Dispute',
+              variant: AppButtonVariant.outline,
+              onPressed: openDispute,
+            ),
+          ] else
+            AppButton(
+              label: 'View Dispute',
+              icon: Icons.flag_outlined,
+              variant: AppButtonVariant.outline,
+              onPressed: openDispute,
+            ),
         ],
       ),
     );

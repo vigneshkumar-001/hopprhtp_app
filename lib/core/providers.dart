@@ -35,10 +35,17 @@ final biometricServiceProvider = Provider<BiometricService>(
 final dioProvider = Provider<Dio>((ref) {
   final tokens = ref.watch(tokenStoreProvider);
 
+  // Timeouts are sized to survive a Heroku eco/basic dyno COLD START: the dyno
+  // sleeps after ~30 min idle, and the first request then waits for it to boot
+  // (typically 10–30s). At 12s the client aborted before the server answered
+  // (see the `/public-config` + `/users/me` cold-start aborts). 30s covers a
+  // normal boot; a genuinely dead network still fails, just a bit later.
+  // NOTE: the durable fix is to keep the dyno warm (see comment below) so these
+  // long waits only ever happen on a truly cold first hit.
   BaseOptions options() => BaseOptions(
     baseUrl: AppConfig.apiBaseUrl,
-    connectTimeout: const Duration(seconds: 12),
-    receiveTimeout: const Duration(seconds: 20),
+    connectTimeout: const Duration(seconds: 30),
+    receiveTimeout: const Duration(seconds: 30),
     contentType: 'application/json',
     headers: const {'Accept': 'application/json'},
   );

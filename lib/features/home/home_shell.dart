@@ -9,7 +9,7 @@ import '../../core/theme/app_typography.dart';
 import '../../data/models/models.dart';
 import '../profile/profile_screen.dart';
 import '../transaction/create_transaction_screen.dart';
-import '../transaction/enter_transaction_code_screen.dart';
+import '../transaction/join_transaction_screen.dart';
 import '../transaction/transit_map_screen.dart';
 import 'home_screen.dart';
 import 'transactions_tab.dart';
@@ -29,14 +29,14 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   void _select(int i) {
     // "Initiation" (1) opens the Create Transaction flow — always for real;
     // the identity-verification gate runs inside CreateTransactionScreen
-    // itself once it's on screen. "Send" (3) opens the Enter Transaction
-    // Code screen. Neither switches to a tab.
+    // itself once it's on screen. "Send" (3) opens the Join Transaction
+    // screen (buyer enters the seller's code). Neither switches to a tab.
     if (i == 1) {
       AppNav.push(context, const CreateTransactionScreen());
       return;
     }
     if (i == 3) {
-      AppNav.push(context, const EnterTransactionCodeScreen());
+      AppNav.push(context, const JoinTransactionScreen());
       return;
     }
     // "Transit" (2) opens the live Google Map delivery tracking.

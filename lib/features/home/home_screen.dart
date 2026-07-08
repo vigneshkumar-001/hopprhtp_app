@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:skeletonizer/skeletonizer.dart';
 import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
+import '../../widgets/animated_refresh_icon_button.dart';
 import '../../widgets/animations.dart';
 import '../../data/dto/transaction_dto.dart';
 import '../../data/models/models.dart';
@@ -15,6 +15,7 @@ import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/feedback/app_snackbar.dart';
+import '../../widgets/feedback/state_views.dart';
 import '../../widgets/premium_card.dart';
 import '../../widgets/transaction_card.dart';
 import '../auth/application/auth_controller.dart';
@@ -23,7 +24,7 @@ import '../profile/profile_screen.dart';
 import '../profile/transaction_history_screen.dart';
 import '../transaction/create_transaction_screen.dart';
 import '../transaction/application/transactions_provider.dart';
-import '../transaction/enter_transaction_code_screen.dart';
+import '../transaction/join_transaction_screen.dart';
 import '../transaction/transaction_detail_screen.dart';
 import '../wallet/wallet_screen.dart';
 import 'dashboard_stats.dart';
@@ -96,8 +97,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void _createTransaction() =>
       AppNav.push(context, const CreateTransactionScreen());
 
-  void _enterTransactionCode() =>
-      AppNav.push(context, const EnterTransactionCodeScreen());
+  void _joinTransaction() =>
+      AppNav.push(context, const JoinTransactionScreen());
 
   void _openWallet() => AppNav.push(context, const WalletScreen());
   void _openAlerts() => AppNav.push(context, const NotificationsScreen());
@@ -161,20 +162,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             children: [
               _TopBar(
                 firstName: user?.displayFirstName,
-                onScan: _enterTransactionCode,
+                onScan: _joinTransaction,
                 onNotifications: _openAlerts,
               ),
               const SizedBox(height: AppSizes.lg),
-              Skeletonizer(
-                enabled: statsLoading,
-                child: _BalanceCard(
-                  balance: stats.protectedNaira,
-                  active: stats.active,
-                  cooling: stats.cooling,
-                  trustScore: trustLabel,
-                  hasError: txs.hasError,
-                  onRetry: () => ref.invalidate(transactionsProvider),
-                ),
+              _BalanceCard(
+                balance: stats.protectedNaira,
+                active: stats.active,
+                cooling: stats.cooling,
+                trustScore: trustLabel,
+                loading: statsLoading,
+                hasError: txs.hasError,
+                refreshing: txs.isLoading,
+                onRetry: () => ref.invalidate(transactionsProvider),
               ),
               const SizedBox(height: AppSizes.lg),
               AppButton(
@@ -187,7 +187,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 label: 'Enter Transaction Code',
                 icon: Icons.qr_code_scanner_rounded,
                 variant: AppButtonVariant.soft,
-                onPressed: _enterTransactionCode,
+                onPressed: _joinTransaction,
               ),
               const SizedBox(height: AppSizes.xl),
               _QuickActions(
@@ -231,8 +231,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
               const SizedBox(height: AppSizes.md),
               txs.when(
-                loading: () =>
-                    Skeletonizer(enabled: true, child: const _HomeSkeleton()),
+                loading: () => const _TransactionListSkeleton(),
                 error: (e, _) => _ErrorState(
                   message: 'Could not load live transactions.',
                   onRetry: () => ref.invalidate(transactionsProvider),
@@ -438,13 +437,21 @@ class _TopBar extends StatelessWidget {
   }
 }
 
+/// Shimmer tone tuned for the dark [PremiumCard] surface — a light card's
+/// [AppShimmerBox] defaults (grey bone, white sweep) would barely read
+/// against white text on ink, so the balance card passes these explicitly.
+const Color _darkBoneColor = Color(0x26FFFFFF); // white @ 15%
+const Color _darkBoneHighlight = Color(0x59FFFFFF); // white @ 35%
+
 class _BalanceCard extends StatelessWidget {
   const _BalanceCard({
     required this.balance,
     required this.active,
     required this.cooling,
     required this.trustScore,
+    this.loading = false,
     this.hasError = false,
+    this.refreshing = false,
     this.onRetry,
   });
 
@@ -453,10 +460,23 @@ class _BalanceCard extends StatelessWidget {
   final int cooling;
   final String trustScore;
 
+  /// First-load only (see `statsLoading` in `HomeScreen.build`). The card's
+  /// premium chrome — dark gradient, glossy orb, "Protected in escrow" label
+  /// — renders immediately either way; only the numbers that aren't known
+  /// yet shimmer in place. Previously the whole card was wrapped in a
+  /// generic Skeletonizer, which flattened the gradient into a plain grey
+  /// box while leaving the decorative orb un-boned on top of it — these
+  /// bones are shaped for this card specifically, so nothing looks broken.
+  final bool loading;
+
   /// True when the underlying transaction fetch failed — the figures shown
   /// are still the last real values seen (never zeroed out), but a small
   /// refresh affordance lets the user retry without a full pull-to-refresh.
   final bool hasError;
+
+  /// True while a reload is in flight — spins the inline Refresh glyph so the
+  /// error-recovery tap reads as "fetching" rather than doing nothing.
+  final bool refreshing;
   final VoidCallback? onRetry;
 
   @override
@@ -495,21 +515,21 @@ class _BalanceCard extends StatelessWidget {
                   ),
                 ),
               ),
-              if (hasError && onRetry != null)
+              if (!loading && hasError && onRetry != null)
                 GestureDetector(
-                  onTap: onRetry,
+                  onTap: refreshing ? null : onRetry,
                   behavior: HitTestBehavior.opaque,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.refresh_rounded,
+                      AnimatedRefreshIcon(
+                        isLoading: refreshing,
                         size: 14,
                         color: Colors.white.withValues(alpha: 0.8),
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        'Refresh',
+                        refreshing ? 'Refreshing…' : 'Refresh',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
@@ -521,31 +541,81 @@ class _BalanceCard extends StatelessWidget {
                 ),
             ],
           ),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: AnimatedMoney(
-              balance,
-              style: const TextStyle(
-                fontSize: 40,
-                height: 1.0,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -1.4,
-                color: Colors.white,
+          if (loading)
+            const AppShimmerBox(
+              width: 168,
+              height: 38,
+              radius: BorderRadius.all(Radius.circular(10)),
+              color: _darkBoneColor,
+              highlightColor: _darkBoneHighlight,
+            )
+          else
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: AnimatedMoney(
+                balance,
+                style: const TextStyle(
+                  fontSize: 40,
+                  height: 1.0,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -1.4,
+                  color: Colors.white,
+                ),
               ),
             ),
-          ),
           Row(
             children: [
-              CardStat(value: '$active', label: 'Active'),
+              loading
+                  ? const _CardStatSkeleton()
+                  : CardStat(value: '$active', label: 'Active'),
               const CardStatDivider(),
-              CardStat(value: '$cooling', label: 'Cooling'),
+              loading
+                  ? const _CardStatSkeleton()
+                  : CardStat(value: '$cooling', label: 'Cooling'),
               const CardStatDivider(),
-              CardStat(value: trustScore, label: 'Trust score', valueColor: hi),
+              loading
+                  ? const _CardStatSkeleton()
+                  : CardStat(
+                      value: trustScore,
+                      label: 'Trust score',
+                      valueColor: hi,
+                    ),
             ],
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Mirrors [CardStat]'s two-line shape (value + label) with shimmer bones, so
+/// the row's height never jumps once the real numbers land.
+class _CardStatSkeleton extends StatelessWidget {
+  const _CardStatSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AppShimmerBox(
+          width: 26,
+          height: 20,
+          radius: BorderRadius.all(Radius.circular(6)),
+          color: _darkBoneColor,
+          highlightColor: _darkBoneHighlight,
+        ),
+        SizedBox(height: 6),
+        AppShimmerBox(
+          width: 50,
+          height: 11,
+          radius: BorderRadius.all(Radius.circular(4)),
+          color: _darkBoneColor,
+          highlightColor: _darkBoneHighlight,
+        ),
+      ],
     );
   }
 }
@@ -706,33 +776,88 @@ class _TabEmptyState extends StatelessWidget {
   }
 }
 
-/// Placeholder shown while live transactions load. Renders a few dummy
-/// [TransactionCard]s that Skeletonizer paints over as shimmering bones, so
-/// the loading state matches the real list layout exactly.
-class _HomeSkeleton extends StatelessWidget {
-  const _HomeSkeleton();
+/// Placeholder shown while live transactions load — three cards shaped like
+/// the real [TransactionCard] layout, built from plain shimmer bones rather
+/// than handing the real (pastel-gradient + blurred-orb) card to Skeletonizer
+/// to auto-bone, which used to leave the decorative bubble showing through
+/// un-shimmered next to flattened grey text blocks.
+class _TransactionListSkeleton extends StatelessWidget {
+  const _TransactionListSkeleton();
 
   @override
   Widget build(BuildContext context) {
     return Column(
-      children: List.generate(3, (i) {
-        // Unique id per card → unique Hero tag inside TransactionCard.
-        final placeholder = EscrowTransaction(
-          id: 'skeleton-$i',
-          code: 'HTP-0000',
-          merchantName: 'Merchant Name',
-          productName: 'Product name here',
-          variant: 'Variant details',
-          amount: 0,
-          stage: TxStage.active,
-          status: TxStatus.inTransit,
-          createdAt: DateTime.now(),
-        );
-        return Padding(
-          padding: const EdgeInsets.only(bottom: AppSizes.md),
-          child: TransactionCard(tx: placeholder, colorIndex: i),
-        );
-      }),
+      children: List.generate(
+        3,
+        (_) => const Padding(
+          padding: EdgeInsets.only(bottom: AppSizes.md),
+          child: _TransactionCardSkeleton(),
+        ),
+      ),
+    );
+  }
+}
+
+class _TransactionCardSkeleton extends StatelessWidget {
+  const _TransactionCardSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AppShimmerBox(width: 44, height: 44, radius: AppRadii.md),
+              const SizedBox(width: AppSizes.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const AppShimmerBox(width: 120, height: 14),
+                    const SizedBox(height: 8),
+                    AppShimmerBox(width: 72, height: 11, radius: AppRadii.sm),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSizes.sm),
+              AppShimmerBox(width: 64, height: 22, radius: AppRadii.pill),
+            ],
+          ),
+          const SizedBox(height: AppSizes.md),
+          AppShimmerBox(width: 96, height: 11, radius: AppRadii.sm),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: AppSizes.md),
+            child: Divider(height: 1),
+          ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const AppShimmerBox(width: 140, height: 16),
+                    const SizedBox(height: 6),
+                    AppShimmerBox(width: 80, height: 11, radius: AppRadii.sm),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSizes.sm),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  const AppShimmerBox(width: 70, height: 16),
+                  const SizedBox(height: 6),
+                  AppShimmerBox(width: 50, height: 11, radius: AppRadii.sm),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

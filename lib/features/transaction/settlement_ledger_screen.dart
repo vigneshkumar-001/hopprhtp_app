@@ -7,6 +7,7 @@ import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/dto/transaction_ledger_dto.dart';
+import '../../widgets/animated_refresh_icon_button.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
@@ -70,6 +71,9 @@ class SettlementLedgerScreen extends ConsumerWidget {
         onRetry: () => ref.invalidate(transactionLedgerProvider(id)),
         data: (ledger) => _LedgerBody(
           ledger: ledger,
+          // True only while a manual refresh is refetching (the cached ledger
+          // stays on screen via skipLoadingOnRefresh) — drives the spin.
+          isRefreshing: ledgerAsync.isLoading,
           onRefresh: () => ref.invalidate(transactionLedgerProvider(id)),
         ),
       ),
@@ -78,9 +82,14 @@ class SettlementLedgerScreen extends ConsumerWidget {
 }
 
 class _LedgerBody extends StatelessWidget {
-  const _LedgerBody({required this.ledger, required this.onRefresh});
+  const _LedgerBody({
+    required this.ledger,
+    required this.onRefresh,
+    this.isRefreshing = false,
+  });
   final TransactionLedger ledger;
   final VoidCallback onRefresh;
+  final bool isRefreshing;
 
   (Color, Color) _statusColors(String status) {
     final s = status.toLowerCase();
@@ -200,7 +209,10 @@ class _LedgerBody extends StatelessWidget {
               Row(
                 children: [
                   const Expanded(child: CardSectionLabel('Ledger feed')),
-                  AppIconButton(icon: Icons.refresh_rounded, onTap: onRefresh),
+                  AnimatedRefreshIconButton(
+                    isLoading: isRefreshing,
+                    onPressed: onRefresh,
+                  ),
                 ],
               ),
               const SizedBox(height: AppSizes.md),

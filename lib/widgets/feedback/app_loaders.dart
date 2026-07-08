@@ -97,9 +97,44 @@ class _ArcPainter extends CustomPainter {
       old.progress != progress || old.color != color;
 }
 
+/// The app's standard "this whole area is loading" placeholder: a centered
+/// [AppCircularLoader] with an optional caption underneath. Use this instead of
+/// a bare Material `CircularProgressIndicator` so first-load states feel
+/// premium and on-brand. Fills and centers within its parent.
+class AppCenteredLoader extends StatelessWidget {
+  const AppCenteredLoader({super.key, this.message, this.size = 30});
+
+  final String? message;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppCircularLoader(size: size),
+          if (message != null) ...[
+            const SizedBox(height: AppSizes.md),
+            Text(
+              message!,
+              textAlign: TextAlign.center,
+              style: AppText.body.copyWith(color: AppColors.textSecondary),
+            ),
+          ],
+        ],
+      ),
+    ).animate().fadeIn(duration: 160.ms);
+  }
+}
+
 /// Button-sized loader (used inside [AppButton] while an action is in flight).
 class AppButtonLoader extends StatelessWidget {
-  const AppButtonLoader({super.key, this.color = AppColors.textOnDark, this.size = 22});
+  const AppButtonLoader({
+    super.key,
+    this.color = AppColors.textOnDark,
+    this.size = 22,
+  });
 
   final Color color;
   final double size;

@@ -17,10 +17,12 @@ import '../../core/utils/formatters.dart';
 import '../../data/dto/tracking_dto.dart';
 import '../../data/dto/transaction_dto.dart';
 import '../../data/models/models.dart';
+import '../../widgets/animated_refresh_icon_button.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/app_snackbar.dart';
 import 'application/transactions_provider.dart';
 
@@ -147,7 +149,9 @@ class _PackageTrackingScreenState extends ConsumerState<PackageTrackingScreen> {
               skipLoadingOnRefresh: true,
               skipLoadingOnReload: true,
               loading: () => const _MapArea(
-                child: Center(child: CircularProgressIndicator()),
+                child: AppCenteredLoader(
+                  message: 'Preparing tracking information…',
+                ),
               ),
               error: (e, _) => _MapArea(
                 child: _MessageCard(
@@ -212,6 +216,10 @@ class _PackageTrackingScreenState extends ConsumerState<PackageTrackingScreen> {
               child: _StatusSheet(
                 tracking: trackingAsync.value!,
                 updatingLocation: _updatingLocation,
+                // A refetch is in flight (manual refresh or the 45s auto-poll)
+                // while the cached map/sheet stay on screen — spins the Refresh
+                // location icon without blocking the whole screen.
+                refreshing: trackingAsync.isLoading,
                 onRefresh: _refresh,
                 onUpdateMyLocation: _updateMyLocation,
               ),
@@ -634,12 +642,14 @@ class _StatusSheet extends StatelessWidget {
   const _StatusSheet({
     required this.tracking,
     required this.updatingLocation,
+    required this.refreshing,
     required this.onRefresh,
     required this.onUpdateMyLocation,
   });
 
   final TransactionTracking tracking;
   final bool updatingLocation;
+  final bool refreshing;
   final VoidCallback onRefresh;
   final VoidCallback onUpdateMyLocation;
 
@@ -788,12 +798,7 @@ class _StatusSheet extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSizes.md),
-          AppButton(
-            label: 'Refresh location',
-            icon: Icons.refresh_rounded,
-            variant: AppButtonVariant.outline,
-            onPressed: onRefresh,
-          ),
+          _RefreshLocationButton(refreshing: refreshing, onTap: onRefresh),
           if (tracking.isSeller) ...[
             const SizedBox(height: AppSizes.sm),
             AppButton(
@@ -806,6 +811,51 @@ class _StatusSheet extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Outline "Refresh location" button whose icon spins while a tracking refetch
+/// is in flight. Disabled during the fetch so repeated taps can't queue
+/// duplicate calls; the label switches to "Refreshing…". The spin stops the
+/// moment the fetch completes or fails (never left spinning).
+class _RefreshLocationButton extends StatelessWidget {
+  const _RefreshLocationButton({required this.refreshing, required this.onTap});
+  final bool refreshing;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.surface,
+      borderRadius: AppRadii.md,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: refreshing ? null : onTap,
+        child: Container(
+          height: AppSizes.buttonHeight,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: AppRadii.md,
+            border: Border.all(color: AppColors.border, width: 1.4),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedRefreshIcon(
+                isLoading: refreshing,
+                size: 18,
+                color: AppColors.textPrimary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                refreshing ? 'Refreshing…' : 'Refresh location',
+                style: AppText.bodyStrong,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

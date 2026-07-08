@@ -131,6 +131,7 @@ class ApiTransaction {
     required this.deliveryFeeKobo,
     required this.grandTotalKobo,
     required this.trustFullKobo,
+    this.buyerTrustShareKobo,
     required this.feeSplit,
     required this.currency,
     required this.inspectionPeriodSeconds,
@@ -148,6 +149,8 @@ class ApiTransaction {
     this.estimatedDeliveryDate,
     this.estimatedDeliveryTime,
     this.productPhotoUrl,
+    this.weight,
+    this.waybillTrackingNumber,
     this.myRole,
     this.isSeller = false,
     this.isBuyer = false,
@@ -167,6 +170,11 @@ class ApiTransaction {
   final int deliveryFeeKobo;
   final int grandTotalKobo;
   final int trustFullKobo;
+
+  /// The buyer's share of the trust/protection fee (may be less than
+  /// [trustFullKobo] when the seller absorbs part of it — see [feeSplit]).
+  /// Null on older/legacy records; callers should fall back to [trustFullKobo].
+  final int? buyerTrustShareKobo;
   final String feeSplit; // buyer | split | seller
   final String currency;
 
@@ -192,6 +200,15 @@ class ApiTransaction {
   /// those three remain separate fields and are never conflated going forward.
   final String? productPhotoUrl;
 
+  /// Package weight as entered by the seller at creation (freeform, e.g.
+  /// "2.5kg") — from `consignments[].weight`. Null when not provided.
+  final String? weight;
+
+  /// Courier/waybill tracking number captured at creation — from
+  /// `consignments[].waybillTrackingNumber`. Distinct from [trackingNumber]
+  /// (set later, on dispatch). Null when not provided.
+  final String? waybillTrackingNumber;
+
   /// Per-transaction role of the signed-in user, computed by the backend from
   /// this transaction only (there is no global buyer/seller account type). The
   /// same user can be seller on one transaction and buyer on another.
@@ -202,6 +219,13 @@ class ApiTransaction {
   double get itemSubtotalNaira => itemSubtotalKobo / 100;
   double get deliveryFeeNaira => deliveryFeeKobo / 100;
   double get grandTotalNaira => grandTotalKobo / 100;
+  double get trustFullNaira => trustFullKobo / 100;
+
+  /// The trust fee actually payable by the buyer — [buyerTrustShareKobo] when
+  /// the backend provided it, else the full fee (older records / seller-paid
+  /// split where the buyer's share equals the full amount shown).
+  double get buyerTrustShareNaira =>
+      (buyerTrustShareKobo ?? trustFullKobo) / 100;
 
   /// True once the buyer's delivery address has real coordinates (set from the
   /// map picker at creation). Screens must gate any map/tracking UI on this —
@@ -227,6 +251,9 @@ class ApiTransaction {
       deliveryFeeKobo: asInt(j['deliveryFeeKobo']),
       grandTotalKobo: asInt(j['grandTotalKobo']),
       trustFullKobo: asInt(j['trustFullKobo']),
+      buyerTrustShareKobo: j['buyerTrustShareKobo'] == null
+          ? null
+          : asInt(j['buyerTrustShareKobo']),
       feeSplit: asString(j['feeSplit'], 'split'),
       currency: asString(j['currency'], 'NGN'),
       inspectionPeriodSeconds: asInt(j['inspectionPeriodSeconds'], 86400),
@@ -262,6 +289,10 @@ class ApiTransaction {
           asStringOrNull(firstConsignment['productPhotoUrl']) ??
           asStringOrNull(firstConsignment['dispatchPhotoUrl']) ??
           asStringOrNull(firstConsignment['waybillImageUrl']),
+      weight: asStringOrNull(firstConsignment['weight']),
+      waybillTrackingNumber: asStringOrNull(
+        firstConsignment['waybillTrackingNumber'],
+      ),
       myRole: asStringOrNull(j['myRole']),
       // Prefer explicit booleans; fall back to deriving them from myRole so the
       // DTO is correct whichever shape the backend sends.

@@ -8,12 +8,24 @@ import '../../core/theme/app_typography.dart';
 import '../app_button.dart';
 
 /// A single shimmering skeleton block. Compose several to mock a loading layout.
+/// Defaults suit a light card (muted-grey bone, white shimmer sweep); pass
+/// [color]/[highlightColor] to use the same block on a dark surface (e.g. a
+/// premium/dark hero card) without it looking like a mistake.
 class AppShimmerBox extends StatelessWidget {
-  const AppShimmerBox({super.key, this.width, this.height = 16, this.radius});
+  const AppShimmerBox({
+    super.key,
+    this.width,
+    this.height = 16,
+    this.radius,
+    this.color,
+    this.highlightColor,
+  });
 
   final double? width;
   final double height;
   final BorderRadius? radius;
+  final Color? color;
+  final Color? highlightColor;
 
   @override
   Widget build(BuildContext context) {
@@ -21,14 +33,14 @@ class AppShimmerBox extends StatelessWidget {
           width: width,
           height: height,
           decoration: BoxDecoration(
-            color: AppColors.surfaceMuted,
+            color: color ?? AppColors.surfaceMuted,
             borderRadius: radius ?? AppRadii.sm,
           ),
         )
         .animate(onPlay: (c) => c.repeat())
         .shimmer(
           duration: 1200.ms,
-          color: Colors.white.withValues(alpha: 0.55),
+          color: highlightColor ?? Colors.white.withValues(alpha: 0.55),
         );
   }
 }

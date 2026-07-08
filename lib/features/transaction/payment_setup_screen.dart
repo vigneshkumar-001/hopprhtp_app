@@ -199,9 +199,12 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
       // Land it on the dashboard (demo bridge) + refresh the provider-backed list.
       AppScope.read(context).addFromApi(tx);
       ref.invalidate(transactionsProvider);
-      AppNav.push(
+      // Creation flow is done: clear Create Transaction + Payment Setup from the
+      // stack so Back from Payment Link Ready (and the detail screen after it)
+      // returns to Home, never back into the half-filled create form.
+      AppNav.pushAndClearToFirst(
         context,
-        PaymentLinkReadyScreen(draft: _draft, code: tx.code),
+        PaymentLinkReadyScreen(draft: _draft, code: tx.code, tx: tx),
       );
     } on ApiException catch (e) {
       if (mounted) AppSnackbar.error(context, e.userMessage);

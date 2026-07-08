@@ -194,7 +194,7 @@ class _CreateTransactionScreenState
       f.product.text = 'MacBook Pro M2';
       f.amount.text = '1,230,087';
       f.quantity.text = '1';
-      f.weight.text = '2.1 kg';
+      f.weight.text = '2.1';
       f.buyerName.text = 'Amara Okafor';
       f.buyerContact.text = '0901234 5678';
       f.deliveryAddress.text = '12 Bode Thomas Street, Surulere, Lagos';
@@ -731,15 +731,37 @@ class _ConsignmentEditor extends ConsumerWidget {
               Expanded(
                 child: ordered(
                   4,
-                  AppTextField(
-                    label: 'Weight',
-                    required: false,
-                    controller: form.weight,
-                    focusNode: form.weightFocus,
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => focusNext(form.buyerNameFocus),
-                    onChanged: (_) => onChanged(),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AppTextField(
+                        label: 'Package Weight',
+                        required: false,
+                        hint: '0.0',
+                        controller: form.weight,
+                        focusNode: form.weightFocus,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                        ],
+                        trailing: Text(
+                          'kg',
+                          style: AppText.bodyStrong.copyWith(
+                            color: AppColors.textTertiary,
+                          ),
+                        ),
+                        textInputAction: TextInputAction.next,
+                        onSubmitted: (_) => focusNext(form.buyerNameFocus),
+                        onChanged: (_) => onChanged(),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Enter package weight in kilograms.',
+                        style: AppText.caption,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -815,7 +837,7 @@ class _ConsignmentEditor extends ConsumerWidget {
           ordered(
             8,
             AppTextField(
-              label: 'Waybill / tracking number',
+              label: 'Waybill / Tracking Number',
               hint: 'TRK-8839201',
               icon: Icons.receipt_long_outlined,
               controller: form.waybillTrackingNumber,
@@ -824,6 +846,14 @@ class _ConsignmentEditor extends ConsumerWidget {
               onSubmitted: (_) => focusNext(form.dispatcherNameFocus),
               onChanged: (_) => onChanged(),
             ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            "Enter the tracking number from your courier receipt or shipping "
+            "label after dispatch. Don't have it yet? You can add it later "
+            "from Start Delivery / Dispatch Proof once the courier gives it "
+            'to you.',
+            style: AppText.caption,
           ),
           const SizedBox(height: AppSizes.lg),
           _SectionHeader(title: 'Dispatcher Information'),
@@ -1415,6 +1445,15 @@ class _ConsignmentForm {
   bool get hasDispatchPhoto => dispatchPhoto != null;
   bool get hasWaybill => waybillImage != null;
 
+  /// The weight field only ever holds a plain number — the "kg" unit is a
+  /// fixed suffix shown in the UI, not part of the editable text — so it's
+  /// appended once here to keep the backend/downstream value unambiguous
+  /// (e.g. "2.1" -> "2.1 kg").
+  String get _weightWithUnit {
+    final w = weight.text.trim();
+    return w.isEmpty ? w : '$w kg';
+  }
+
   double get _amountValue =>
       double.tryParse(amount.text.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0;
 
@@ -1449,8 +1488,21 @@ class _ConsignmentForm {
       return err(quantityFocus, 'Quantity must be 40 characters or fewer.');
     }
 
-    if (weight.text.trim().length > 40) {
-      return err(weightFocus, 'Weight must be 40 characters or fewer.');
+    final weightText = weight.text.trim();
+    if (weightText.isNotEmpty) {
+      final w = double.tryParse(weightText);
+      if (w == null) {
+        return err(weightFocus, 'Enter a valid numeric weight in kilograms.');
+      }
+      if (w <= 0) {
+        return err(weightFocus, 'Weight must be greater than 0.');
+      }
+      if (w > 100000) {
+        return err(
+          weightFocus,
+          'That weight looks too large — check the value.',
+        );
+      }
     }
 
     final bName = buyerName.text.trim();
@@ -1589,7 +1641,7 @@ class _ConsignmentForm {
     product: product.text.trim(),
     amount: amount.text.trim(),
     quantity: quantity.text.trim(),
-    weight: weight.text.trim(),
+    weight: _weightWithUnit,
     buyerName: buyerName.text.trim(),
     buyerContact: buyerContact.text.trim(),
     deliveryAddress: deliveryAddress.text.trim(),
