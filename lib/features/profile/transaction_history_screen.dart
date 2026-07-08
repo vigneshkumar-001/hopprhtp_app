@@ -3,16 +3,17 @@ import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/error_messages.dart';
 import '../../core/providers.dart';
+import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
-import '../../core/utils/formatters.dart';
 import '../../data/dto/transaction_dto.dart';
-import '../../widgets/app_card.dart';
+import '../../data/models/models.dart';
 import '../../widgets/app_scaffold.dart';
-import '../../widgets/common.dart';
 import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/state_views.dart';
+import '../../widgets/transaction_card.dart';
+import '../transaction/transaction_detail_screen.dart';
 
 class _Filter {
   const _Filter(this.label, {this.stage, this.status});
@@ -25,7 +26,11 @@ class _Filter {
 /// infinite scroll: only ~15 rows are fetched at a time and the next page loads
 /// as the user nears the bottom, keeping it fast even with many transactions.
 class TransactionHistoryScreen extends ConsumerStatefulWidget {
-  const TransactionHistoryScreen({super.key});
+  const TransactionHistoryScreen({super.key, this.initialStage});
+
+  /// Pre-selects the matching tab (e.g. from Home's "View All") — null opens
+  /// on the unfiltered "All" tab.
+  final ApiTxStage? initialStage;
 
   @override
   ConsumerState<TransactionHistoryScreen> createState() =>
@@ -37,6 +42,7 @@ class _TransactionHistoryScreenState
   static const _filters = [
     _Filter('All'),
     _Filter('Active', stage: 'active'),
+    _Filter('Cooling', stage: 'cooling'),
     _Filter('Completed', stage: 'done'),
     _Filter('Disputed', status: 'disputed'),
   ];
@@ -53,8 +59,15 @@ class _TransactionHistoryScreenState
   @override
   void initState() {
     super.initState();
+    _tab = _tabIndexFor(widget.initialStage);
     _scroll.addListener(_onScroll);
     _loadFirst();
+  }
+
+  static int _tabIndexFor(ApiTxStage? stage) {
+    if (stage == null) return 0; // "All"
+    final i = _filters.indexWhere((f) => f.stage == stage.name);
+    return i == -1 ? 0 : i;
   }
 
   @override
@@ -85,12 +98,9 @@ class _TransactionHistoryScreenState
     setState(() => _loading = true);
     final f = _filters[_tab];
     try {
-      final page = await ref.read(transactionRepositoryProvider).listPage(
-            page: _page,
-            limit: 15,
-            stage: f.stage,
-            status: f.status,
-          );
+      final page = await ref
+          .read(transactionRepositoryProvider)
+          .listPage(page: _page, limit: 15, stage: f.stage, status: f.status);
       if (!mounted) return;
       setState(() {
         _items.addAll(page.items);
@@ -148,7 +158,9 @@ class _TransactionHistoryScreenState
                 child: AnimatedContainer(
                   duration: AppDurations.fast,
                   padding: const EdgeInsets.symmetric(
-                      horizontal: AppSizes.md, vertical: AppSizes.sm),
+                    horizontal: AppSizes.md,
+                    vertical: AppSizes.sm,
+                  ),
                   decoration: BoxDecoration(
                     color: i == _tab ? AppColors.ink : AppColors.surfaceMuted,
                     borderRadius: AppRadii.pill,
@@ -175,7 +187,10 @@ class _TransactionHistoryScreenState
       return const Center(child: AppCircularLoader());
     }
     if (_error != null && _items.isEmpty) {
-      return ErrorRetryView(message: friendlyError(_error!), onRetry: _loadFirst);
+      return ErrorRetryView(
+        message: friendlyError(_error!),
+        onRetry: _loadFirst,
+      );
     }
     if (_items.isEmpty) {
       return const EmptyStateView(
@@ -193,8 +208,17 @@ class _TransactionHistoryScreenState
         padding: const EdgeInsets.only(bottom: AppSizes.xxl),
         itemCount: _items.length + 1,
         separatorBuilder: (_, _) => const SizedBox(height: AppSizes.md),
-        itemBuilder: (context, i) =>
-            i == _items.length ? _footer() : _HistoryCard(tx: _items[i]),
+        itemBuilder: (context, i) {
+          if (i == _items.length) return _footer();
+          // Same premium card used on Home, so history reads as one
+          // consistent design instead of a plain, separate row style.
+          final tx = EscrowTransaction.fromApi(_items[i]);
+          return TransactionCard(
+            tx: tx,
+            colorIndex: i,
+            onTap: () => AppNav.push(context, TransactionDetailScreen(tx: tx)),
+          );
+        },
       ),
     );
   }
@@ -212,9 +236,13 @@ class _TransactionHistoryScreenState
         child: Center(
           child: GestureDetector(
             onTap: _loadMore,
-            child: Text('Tap to retry',
-                style: AppText.caption
-                    .copyWith(fontWeight: FontWeight.w700, color: AppColors.ink)),
+            child: Text(
+              'Tap to retry',
+              style: AppText.caption.copyWith(
+                fontWeight: FontWeight.w700,
+                color: AppColors.ink,
+              ),
+            ),
           ),
         ),
       );
@@ -223,101 +251,13 @@ class _TransactionHistoryScreenState
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: AppSizes.lg),
         child: Center(
-          child: Text("That's everything",
-              style:
-                  AppText.caption.copyWith(color: AppColors.textTertiary)),
+          child: Text(
+            'No more transactions',
+            style: AppText.caption.copyWith(color: AppColors.textTertiary),
+          ),
         ),
       );
     }
     return const SizedBox(height: AppSizes.lg);
-  }
-}
-
-class _HistoryCard extends StatelessWidget {
-  const _HistoryCard({required this.tx});
-  final ApiTransaction tx;
-
-  static String _initials(String name) {
-    final parts = name.trim().split(RegExp(r'\s+'));
-    if (parts.isEmpty || parts.first.isEmpty) return '?';
-    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
-    return (parts.first[0] + parts.last[0]).toUpperCase();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, icon, fg, bg) = switch (tx.status) {
-      ApiTxStatus.released ||
-      ApiTxStatus.completed =>
-        ('Released', Icons.check_rounded, AppColors.success, AppColors.successSoft),
-      ApiTxStatus.disputed => (
-          'Disputed',
-          Icons.flag_outlined,
-          AppColors.danger,
-          AppColors.surfaceMuted
-        ),
-      ApiTxStatus.refunded => (
-          'Refunded',
-          Icons.undo_rounded,
-          AppColors.textSecondary,
-          AppColors.surfaceMuted
-        ),
-      ApiTxStatus.cancelled => (
-          'Cancelled',
-          Icons.close_rounded,
-          AppColors.textSecondary,
-          AppColors.surfaceMuted
-        ),
-      ApiTxStatus.cooling => (
-          'Cooling',
-          Icons.schedule_rounded,
-          AppColors.textSecondary,
-          AppColors.surfaceMuted
-        ),
-      _ => (
-          tx.status.label,
-          Icons.bolt_rounded,
-          AppColors.textSecondary,
-          AppColors.surfaceMuted
-        ),
-    };
-    return AppCard(
-      child: Row(
-        children: [
-          InitialsAvatar(initials: _initials(tx.merchantName), size: 42),
-          const SizedBox(width: AppSizes.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(tx.merchantName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.bodyStrong),
-                const SizedBox(height: 2),
-                Text('${tx.productName} · ${Dates.medium(tx.createdAt)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.caption),
-              ],
-            ),
-          ),
-          const SizedBox(width: AppSizes.sm),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(Money.format(tx.grandTotalNaira), style: AppText.bodyStrong),
-              const SizedBox(height: 4),
-              StatusPill(
-                  label: label,
-                  icon: icon,
-                  foreground: fg,
-                  background: bg,
-                  dense: true),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 }

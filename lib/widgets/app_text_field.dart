@@ -11,6 +11,7 @@ class AppTextField extends StatefulWidget {
   const AppTextField({
     super.key,
     this.label,
+    this.required = false,
     this.hint,
     this.controller,
     this.icon,
@@ -32,6 +33,7 @@ class AppTextField extends StatefulWidget {
   });
 
   final String? label;
+  final bool required;
   final String? hint;
   final TextEditingController? controller;
   final IconData? icon;
@@ -90,7 +92,16 @@ class _AppTextFieldState extends State<AppTextField> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (widget.label != null) ...[
-          Text(widget.label!, style: AppText.label),
+          Row(
+            children: [
+              Text(widget.label!, style: AppText.label),
+              if (widget.required)
+                Text(
+                  ' *',
+                  style: AppText.label.copyWith(color: AppColors.danger),
+                ),
+            ],
+          ),
           const SizedBox(height: AppSizes.sm),
         ],
         AnimatedContainer(

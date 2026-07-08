@@ -5,6 +5,8 @@ import '../core/theme/app_sizes.dart';
 import '../core/theme/app_typography.dart';
 import '../core/utils/formatters.dart';
 import '../data/models/models.dart';
+import '../features/transaction/widgets/transaction_widgets.dart'
+    show ProductThumb;
 import 'app_card.dart';
 import 'common.dart';
 
@@ -32,10 +34,58 @@ class TransactionCard extends StatelessWidget {
   /// Position-based index so each card gets a consistent pastel tint.
   final int colorIndex;
 
+  /// Selling/Buying chip driven by the per-transaction role. Null → no chip
+  /// (legacy/demo rows with unknown role).
+  Widget? _roleChip() => switch (tx.myRole) {
+    'seller' => const StatusPill(
+      label: 'Selling',
+      icon: Icons.sell_outlined,
+      dense: true,
+      background: AppColors.ink,
+      foreground: AppColors.textOnDark,
+    ),
+    'buyer' => const StatusPill(
+      label: 'Buying',
+      icon: Icons.shopping_bag_outlined,
+      dense: true,
+      background: AppColors.successSoft,
+      foreground: AppColors.success,
+    ),
+    _ => null,
+  };
+
+  /// Buyer's short display text — shown only to the seller. The buyer's own
+  /// counterpart (the seller) is already the card's prominent top line, so
+  /// showing it again for the buyer would just be redundant clutter. Falls
+  /// back to a masked phone, then a generic label — never blank.
+  String? _buyerLine() {
+    if (tx.myRole != 'seller') return null;
+    final name = tx.buyerName?.trim();
+    if (name != null && name.isNotEmpty) return 'Buyer: $name';
+    final contact = tx.buyerContact?.trim();
+    if (contact != null && contact.isNotEmpty) {
+      return 'Buyer: ${_maskPhone(contact)}';
+    }
+    return 'Buyer: User';
+  }
+
+  static String _maskPhone(String raw) {
+    final digits = raw.replaceAll(RegExp(r'\s+'), '');
+    if (digits.length <= 6) return digits;
+    final middle = '*' * (digits.length - 7);
+    return '${digits.substring(0, 4)}$middle${digits.substring(digits.length - 3)}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final accent = AppAccent.of(context);
     final tint = _cardTints[colorIndex % _cardTints.length];
+    final roleChip = _roleChip();
+    final buyerLine = _buyerLine();
+    // Its own dedicated, full-width line — never sharing a line (and its
+    // ellipsis budget) with the buyer text, so a long buyer name can never
+    // push the date off and truncate it into "...".
+    final dateLine = Dates.createdLabel(tx.createdAt);
     // Lime: a soft pastel wash. Mono: a subtle light → grey wash.
     final gradient = accent.isLime
         ? LinearGradient(
@@ -78,80 +128,130 @@ class TransactionCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-          Row(
-            children: [
-              Hero(
-                tag: 'txn-avatar-${tx.id}',
-                child: InitialsAvatar(
-                  initials: tx.merchantInitials,
-                  size: 38,
-                  // White tile pops on the grey/pastel card in both themes.
-                  background: AppColors.surface,
-                ),
-              ),
-              const SizedBox(width: AppSizes.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(tx.merchantName,
-                              style: AppText.bodyStrong,
-                              overflow: TextOverflow.ellipsis),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // The product being sold, not a generic merchant
+                      // avatar — placeholder handled by ProductThumb itself
+                      // when there's no photo. A dedicated tag (not shared
+                      // with Transaction Details' seller-identity avatar) so
+                      // no Hero flight tries to morph a photo into initials.
+                      Hero(
+                        tag: 'txn-thumb-${tx.id}',
+                        child: ProductThumb(url: tx.productPhotoUrl, size: 44),
+                      ),
+                      const SizedBox(width: AppSizes.md),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    tx.merchantName,
+                                    style: AppText.bodyStrong,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (tx.merchantVerified) ...[
+                                  const SizedBox(width: 4),
+                                  const VerifiedBadge(size: 15),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Text(tx.code, style: AppText.caption),
+                            if (buyerLine != null) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                buyerLine,
+                                style: AppText.caption,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ],
                         ),
-                        if (tx.merchantVerified) ...[
-                          const SizedBox(width: 4),
-                          const VerifiedBadge(size: 15),
+                      ),
+                      const SizedBox(width: AppSizes.sm),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          StatusPill(
+                            label: tx.status.label,
+                            icon: tx.status.icon,
+                            background: AppColors.surface,
+                            foreground: tx.status.color,
+                            dense: true,
+                          ),
+                          if (roleChip != null) ...[
+                            const SizedBox(height: 6),
+                            roleChip,
+                          ],
                         ],
-                      ],
-                    ),
-                    const SizedBox(height: 1),
-                    Text(tx.code, style: AppText.caption),
-                  ],
-                ),
-              ),
-              StatusPill(
-                label: tx.status.label,
-                icon: tx.status.icon,
-                background: AppColors.surface,
-                foreground: tx.status.color,
-                dense: true,
-              ),
-            ],
-          ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: AppSizes.md),
-            child: Divider(height: 1),
-          ),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(tx.productName,
-                        style: AppText.title, overflow: TextOverflow.ellipsis),
-                    if (tx.variant != null) ...[
-                      const SizedBox(height: 2),
-                      Text(tx.variant!, style: AppText.caption),
+                      ),
                     ],
-                  ],
-                ),
-              ),
-              const SizedBox(width: AppSizes.sm),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(Money.format(tx.amount), style: AppText.title),
-                  const SizedBox(height: 2),
-                  Text('in escrow', style: AppText.caption),
-                ],
-              ),
-            ],
-          ),
+                  ),
+                  const SizedBox(height: AppSizes.sm),
+                  // Full card width to itself so it's always fully visible —
+                  // never squeezed/ellipsized by the header row above.
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.schedule_rounded,
+                        size: 13,
+                        color: AppColors.textTertiary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(dateLine, style: AppText.caption),
+                    ],
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: AppSizes.md),
+                    child: Divider(height: 1),
+                  ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              tx.productName,
+                              style: AppText.title,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (tx.variant != null) ...[
+                              const SizedBox(height: 2),
+                              Text(tx.variant!, style: AppText.caption),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: AppSizes.sm),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(Money.format(tx.amount), style: AppText.title),
+                          const SizedBox(height: 2),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('in escrow', style: AppText.caption),
+                              const SizedBox(width: 2),
+                              const Icon(
+                                Icons.chevron_right_rounded,
+                                size: 14,
+                                color: AppColors.textTertiary,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),

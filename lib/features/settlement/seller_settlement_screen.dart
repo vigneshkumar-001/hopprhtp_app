@@ -1,245 +1,399 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/network/api_exception.dart';
+import '../../core/network/error_messages.dart';
+import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
-import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
+import '../../data/dto/tracking_dto.dart';
+import '../../data/dto/transaction_ledger_dto.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_snackbar.dart';
+import '../../widgets/feedback/state_views.dart';
+import '../auth/application/auth_controller.dart';
+import '../transaction/application/transactions_provider.dart';
+import '../transaction/widgets/transaction_widgets.dart';
 import '../wallet/wallet_screen.dart';
 
-/// Seller Settlement - payout released after a clean cooling period.
-class SellerSettlementScreen extends StatelessWidget {
-  const SellerSettlementScreen({super.key});
+/// Seller Settlement — real backend data (Phase 7). Payout amount, cooling
+/// window, and eligibility all come from the transaction ledger + tracking
+/// endpoints; "Release Payout" calls the existing, already-hardened
+/// `POST /transactions/:id/release` (seller-only, cooling-time gated, atomic
+/// duplicate-prevention claim — see transaction.service.ts). Nothing here
+/// computes a final wallet balance; that stays entirely backend-owned.
+class SellerSettlementScreen extends ConsumerStatefulWidget {
+  const SellerSettlementScreen({super.key, this.transactionId});
+
+  /// Real backend transaction id. Left nullable so the one pre-existing call
+  /// site (`SettlementLedgerScreen`'s "View seller settlement" button, now
+  /// updated to pass a real id) keeps compiling safely if ever reached without one.
+  final String? transactionId;
 
   @override
-  Widget build(BuildContext context) {
-    final accent = AppAccent.of(context);
-    return AppScaffold(
-      title: 'Seller Settlement',
-      bottomAction: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AppButton(
-            label: 'View in wallet',
-            icon: Icons.account_balance_wallet_outlined,
-            onPressed: () => AppNav.push(context, const WalletScreen()),
-          ),
-          const SizedBox(height: AppSizes.sm),
-          GestureDetector(
-            onTap: () => Navigator.of(context).popUntil((r) => r.isFirst),
-            behavior: HitTestBehavior.opaque,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Text(
-                'Back to home',
-                style: AppText.bodyStrong.copyWith(
-                  color: AppColors.textSecondary,
-                ),
+  ConsumerState<SellerSettlementScreen> createState() =>
+      _SellerSettlementScreenState();
+}
+
+class _SellerSettlementScreenState
+    extends ConsumerState<SellerSettlementScreen> {
+  bool _releasing = false;
+
+  Future<bool> _confirmRelease() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: AppRadii.xl),
+        title: Text('Release payout?', style: AppText.h3),
+        content: Text(
+          'Release payout to your wallet? This cannot be undone.',
+          style: AppText.body,
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(
+          AppSizes.md,
+          0,
+          AppSizes.md,
+          AppSizes.md,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              'Cancel',
+              style: AppText.bodyStrong.copyWith(
+                color: AppColors.textSecondary,
               ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              'Release',
+              style: AppText.bodyStrong.copyWith(color: AppColors.success),
             ),
           ),
         ],
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: AppSizes.lg),
-          Center(
-            child: Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color:
-                    accent.isLime ? const Color(0xFF1F8A5B) : AppColors.ink,
-                shape: BoxShape.circle,
+    );
+    return result ?? false;
+  }
+
+  Future<void> _releasePayout(String id) async {
+    if (_releasing) return;
+    final confirmed = await _confirmRelease();
+    if (!confirmed || !mounted) return;
+
+    setState(() => _releasing = true);
+    try {
+      await ref.read(transactionRepositoryProvider).release(id);
+      if (!mounted) return;
+      AppSnackbar.success(context, 'Payout released to your wallet.');
+      // Real state changed everywhere — refresh every provider that could be
+      // showing stale data now. Backend remains the sole source of truth for
+      // the actual wallet balance; nothing here adds to it locally.
+      ref.invalidate(transactionDetailProvider(id));
+      ref.invalidate(transactionsProvider);
+      ref.invalidate(transactionLedgerProvider(id));
+      ref.invalidate(trackingProvider(id));
+      ref.invalidate(walletBalanceProvider);
+      ref.invalidate(walletLedgerProvider);
+      // A clean release bumps the seller's real trust score/deals count on
+      // the backend — refresh the profile so Home/Profile's dashboard stats
+      // pick it up without a full app restart. Best-effort only.
+      try {
+        await ref.read(authControllerProvider.notifier).refreshProfile();
+      } catch (_) {
+        // Non-critical — stats just keep showing the last known value.
+      }
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.userMessage);
+      // A timeout/network error here doesn't mean the release didn't happen
+      // server-side — refresh so a retry is checked against real, current
+      // eligibility rather than the cached pre-attempt ledger snapshot.
+      ref.invalidate(transactionLedgerProvider(id));
+    } catch (_) {
+      if (mounted) {
+        AppSnackbar.error(
+          context,
+          'Could not release payout. Please try again.',
+        );
+      }
+      ref.invalidate(transactionLedgerProvider(id));
+    } finally {
+      if (mounted) setState(() => _releasing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final id = widget.transactionId;
+    if (id == null) {
+      return const AppScaffold(
+        title: 'Seller Settlement',
+        body: ErrorRetryView(
+          message:
+              'Transaction reference is missing. Please go back and try again.',
+        ),
+      );
+    }
+
+    final trackingAsync = ref.watch(trackingProvider(id));
+    final ledgerAsync = ref.watch(transactionLedgerProvider(id));
+
+    void retry() {
+      ref.invalidate(trackingProvider(id));
+      ref.invalidate(transactionLedgerProvider(id));
+    }
+
+    return AppScaffold(
+      title: 'Seller Settlement',
+      body: trackingAsync.when(
+        loading: () => const _LoadingBody(),
+        error: (e, _) =>
+            ErrorRetryView(message: friendlyError(e), onRetry: retry),
+        data: (tracking) => ledgerAsync.when(
+          loading: () => const _LoadingBody(),
+          error: (e, _) =>
+              ErrorRetryView(message: friendlyError(e), onRetry: retry),
+          data: (ledger) => _SettlementBody(
+            transactionId: id,
+            tracking: tracking,
+            ledger: ledger,
+            releasing: _releasing,
+            onRelease: () => _releasePayout(id),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LoadingBody extends StatelessWidget {
+  const _LoadingBody();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: 320,
+      child: Center(child: CircularProgressIndicator()),
+    );
+  }
+}
+
+class _SettlementBody extends StatelessWidget {
+  const _SettlementBody({
+    required this.transactionId,
+    required this.tracking,
+    required this.ledger,
+    required this.releasing,
+    required this.onRelease,
+  });
+
+  final String transactionId;
+  final TransactionTracking tracking;
+  final TransactionLedger ledger;
+  final bool releasing;
+  final VoidCallback onRelease;
+
+  static const _blockedStatuses = {
+    'disputed',
+    'cancelled',
+    'refunded',
+    'returned',
+    'undeliverable',
+    'released',
+    'completed',
+  };
+
+  bool get _isReleased =>
+      ledger.status == 'released' || ledger.status == 'completed';
+
+  bool get _coolingTimeUp {
+    final endsAt = ledger.coolingPeriod?.endsAt;
+    return endsAt != null && !endsAt.isAfter(DateTime.now());
+  }
+
+  bool get _canRelease {
+    if (!tracking.isSeller) return false;
+    if (_blockedStatuses.contains(ledger.status)) return false;
+    if (ledger.status != 'cooling') return false;
+    return _coolingTimeUp;
+  }
+
+  String get _eligibilityMessage {
+    if (_isReleased) return 'Payout already released.';
+    if (ledger.status == 'disputed') return 'Payout is on hold due to dispute.';
+    if (ledger.status == 'cancelled' ||
+        ledger.status == 'refunded' ||
+        ledger.status == 'returned' ||
+        ledger.status == 'undeliverable') {
+      return 'This transaction is no longer eligible for payout.';
+    }
+    if (ledger.status == 'cooling') {
+      final endsAt = ledger.coolingPeriod?.endsAt;
+      if (endsAt == null) {
+        return 'Cooling period details are not available yet.';
+      }
+      if (!_coolingTimeUp) return 'Payout unlocks after cooling period ends.';
+      return 'Payout is ready to release.';
+    }
+    return 'This transaction has not reached cooling yet.';
+  }
+
+  DateTime? get _releasedAt {
+    for (final item in ledger.ledger) {
+      if (item.type == 'lifecycle' && item.title == 'Funds released') {
+        return item.timestamp;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reference =
+        '#${transactionId.substring(transactionId.length - 6).toUpperCase()}';
+    final cooling = ledger.coolingPeriod;
+    final releasedAt = _releasedAt;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: AppSizes.sm),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Transaction', style: AppText.caption),
+                        const SizedBox(height: 2),
+                        Text(reference, style: AppText.h3),
+                      ],
+                    ),
+                  ),
+                  StatusPill(label: ledger.settlementStatus, dense: true),
+                ],
               ),
-              child: const Icon(
-                Icons.account_balance_rounded,
-                color: AppColors.textOnDark,
-                size: 32,
+              const SizedBox(height: AppSizes.md),
+              if (_isReleased) ...[
+                Center(
+                  child: AnimatedMoney(
+                    ledger.sellerPayoutNaira,
+                    style: AppText.display.copyWith(fontSize: 34),
+                  ),
+                ),
+                const SizedBox(height: AppSizes.sm),
+                if (releasedAt != null)
+                  Center(
+                    child: Text(
+                      'Released ${Dates.relative(releasedAt)}',
+                      style: AppText.caption,
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSizes.md),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const CardSectionLabel('Payout breakdown'),
+              const SizedBox(height: AppSizes.md),
+              SummaryRow(
+                label: 'Escrow amount',
+                value: Money.format(ledger.escrowAmountNaira),
               ),
-            ).popIn(),
+              const SizedBox(height: AppSizes.sm),
+              SummaryRow(
+                label: 'Platform fee',
+                value: Money.format(ledger.platformFeeNaira),
+                badge: const StatusPill(
+                  label: 'retained',
+                  dense: true,
+                  background: AppColors.surfaceMuted,
+                  foreground: AppColors.textPrimary,
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: AppSizes.md),
+                child: Divider(height: 1),
+              ),
+              SummaryRow(
+                label: _isReleased ? 'Released to you' : 'Seller payout',
+                value: Money.format(ledger.sellerPayoutNaira),
+                emphasized: true,
+              ),
+            ],
           ),
-          const SizedBox(height: AppSizes.lg),
-          Text('Payout released', textAlign: TextAlign.center, style: AppText.h1),
-          const SizedBox(height: AppSizes.sm),
-          Text(
-            'The cooling period ended with no dispute, so your settlement has been released.',
-            textAlign: TextAlign.center,
-            style: AppText.body,
-          ),
-          const SizedBox(height: AppSizes.lg),
-          Center(
-            child: AnimatedMoney(
-              1230087,
-              style: AppText.display.copyWith(fontSize: 34),
-            ),
-          ),
+        ),
+        if (cooling != null) ...[
           const SizedBox(height: AppSizes.md),
-          const Center(
-            child: StatusPill(
-              label: 'Sent to GTBank · ····6789',
-              icon: Icons.account_balance_outlined,
-              background: AppColors.surface,
-            ),
-          ),
-          const SizedBox(height: AppSizes.lg),
           AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'SETTLEMENT SUMMARY',
-                  style: AppText.caption.copyWith(
-                    letterSpacing: 1.1,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF3F4652),
-                  ),
-                ),
+                const CardSectionLabel('Cooling period'),
                 const SizedBox(height: AppSizes.md),
-                _SettlementRow(
-                  label: 'Item value',
-                  value: Money.format(1230087),
+                SummaryRow(
+                  label: 'Started',
+                  value: cooling.startedAt != null
+                      ? Dates.relative(cooling.startedAt!)
+                      : 'Not available',
                 ),
                 const SizedBox(height: AppSizes.sm),
-                const _SettlementRow(
-                  label: 'Delivery fee → dispatcher',
-                  value: 'Paid on delivery',
-                  mutedValue: true,
-                ),
-                const SizedBox(height: AppSizes.sm),
-                const _SettlementRow(
-                  label: 'Hoppr trust fee',
-                  value: 'Retained',
-                  mutedValue: true,
-                ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: AppSizes.md),
-                  child: Divider(height: 1),
-                ),
-                _SettlementRow(
-                  label: 'Released to you',
-                  value: Money.format(1230087),
-                  emphasized: true,
+                SummaryRow(
+                  label: 'Ends',
+                  value: cooling.endsAt != null
+                      ? Dates.medium(cooling.endsAt!)
+                      : 'Not available',
                 ),
               ],
             ),
           ),
-          const SizedBox(height: AppSizes.md),
-          const _TrustScoreNote(),
         ],
-      ),
-    );
-  }
-}
-
-class _SettlementRow extends StatelessWidget {
-  const _SettlementRow({
-    required this.label,
-    required this.value,
-    this.mutedValue = false,
-    this.emphasized = false,
-  });
-
-  final String label;
-  final String value;
-  final bool mutedValue;
-  final bool emphasized;
-
-  @override
-  Widget build(BuildContext context) {
-    final labelStyle = emphasized
-        ? AppText.bodyStrong.copyWith(
-            color: AppColors.textPrimary,
-            fontWeight: FontWeight.w700,
-          )
-        : AppText.body.copyWith(
-            color: const Color(0xFF515866),
-            fontWeight: FontWeight.w400,
-          );
-    final valueStyle = emphasized
-        ? AppText.h3.copyWith(
-            color: AppColors.textPrimary,
-            fontWeight: FontWeight.w800,
-          )
-        : AppText.bodyStrong.copyWith(
-            color: mutedValue ? AppColors.textTertiary : AppColors.textPrimary,
-            fontWeight: FontWeight.w700,
-          );
-
-    return Row(
-      children: [
-        Expanded(child: Text(label, style: labelStyle)),
-        const SizedBox(width: AppSizes.md),
-        Text(value, style: valueStyle),
+        const SizedBox(height: AppSizes.md),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const CardSectionLabel('Payout eligibility'),
+              const SizedBox(height: AppSizes.sm),
+              Text(_eligibilityMessage, style: AppText.body),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSizes.lg),
+        if (tracking.isSeller)
+          AppButton(
+            label: 'Release Payout',
+            trailingIcon: Icons.arrow_forward_rounded,
+            enabled: _canRelease && !releasing,
+            loading: releasing,
+            onPressed: onRelease,
+          ),
+        const SizedBox(height: AppSizes.md),
+        AppButton(
+          label: 'View in wallet',
+          icon: Icons.account_balance_wallet_outlined,
+          variant: AppButtonVariant.outline,
+          onPressed: () => AppNav.push(context, const WalletScreen()),
+        ),
+        const SizedBox(height: AppSizes.lg),
       ],
-    );
-  }
-}
-
-class _TrustScoreNote extends StatelessWidget {
-  const _TrustScoreNote();
-
-  @override
-  Widget build(BuildContext context) {
-    final isLime = AppAccent.of(context).isLime;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSizes.md,
-        vertical: AppSizes.md,
-      ),
-      decoration: BoxDecoration(
-        color: isLime ? const Color(0xFFE4F3EA) : const Color(0xFFE9E9EA),
-        borderRadius: AppRadii.card,
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 1),
-            child: Icon(
-              Icons.check_circle_outline_rounded,
-              size: 18,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(width: AppSizes.sm),
-          Expanded(
-            child: Text.rich(
-              TextSpan(
-                style: AppText.caption.copyWith(
-                  color: isLime
-                      ? const Color(0xFF181A12)
-                      : AppColors.textSecondary,
-                  fontSize: 12.5,
-                  height: 1.35,
-                  fontWeight: FontWeight.w500,
-                ),
-                children: const [
-                  TextSpan(text: 'Trust score '),
-                  TextSpan(
-                    text: '+2',
-                    style: TextStyle(
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  TextSpan(
-                    text:
-                        ' · your HTP Verified standing improved with this clean transaction.',
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

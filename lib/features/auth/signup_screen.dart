@@ -50,6 +50,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   // Step 2 (OTP, 6 digits) & Step 3 (PIN, 6 digits)
   final _otp = TextEditingController();
   final _pin = TextEditingController();
+  // Focus nodes so the OTP / PIN field auto-focuses (and the keyboard opens)
+  // when its step becomes active — autofocus can't do this inside a PageView.
+  final _otpFocus = FocusNode();
+  final _pinFocus = FocusNode();
 
   @override
   void initState() {
@@ -65,6 +69,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   void dispose() {
     _resendTimer?.cancel();
     _pager.dispose();
+    _otpFocus.dispose();
+    _pinFocus.dispose();
     for (final c in [_name, _phone, _email, _otp, _pin]) {
       c.dispose();
     }
@@ -72,11 +78,11 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   }
 
   bool get _canContinue => switch (_step) {
-        0 => _name.text.trim().length >= 2 && _phone.text.trim().length >= 7,
-        1 => _otp.text.length == 6,
-        2 => _pin.text.length == 6,
-        _ => true,
-      };
+    0 => _name.text.trim().length >= 2 && _phone.text.trim().length >= 7,
+    1 => _otp.text.length == 6,
+    2 => _pin.text.length == 6,
+    _ => true,
+  };
 
   String get _ctaLabel =>
       _step == _totalSteps - 1 ? 'Go to my dashboard' : 'Continue';
@@ -86,15 +92,32 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
       Navigator.of(context).maybePop();
     } else {
       setState(() => _step--);
-      _pager.animateToPage(_step,
-          duration: AppDurations.normal, curve: AppDurations.easeOut);
+      _pager.animateToPage(
+        _step,
+        duration: AppDurations.normal,
+        curve: AppDurations.easeOut,
+      );
     }
   }
 
   void _goToStep(int step) {
     setState(() => _step = step);
-    _pager.animateToPage(step,
-        duration: AppDurations.normal, curve: AppDurations.easeOut);
+    _pager
+        .animateToPage(
+          step,
+          duration: AppDurations.normal,
+          curve: AppDurations.easeOut,
+        )
+        .then((_) {
+          if (!mounted) return;
+          // Auto-focus the field of the step we just landed on so its keyboard
+          // opens without an extra tap.
+          if (step == 1) {
+            _otpFocus.requestFocus();
+          } else if (step == 2) {
+            _pinFocus.requestFocus();
+          }
+        });
   }
 
   void _advance() => _goToStep(_step + 1);
@@ -122,8 +145,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
       // Step 1 → request an OTP for the entered phone, then advance.
       case 0:
         if (!ref.isOnline) {
-          AppSnackbar.error(context,
-              'No internet connection. Please check your network and try again.');
+          AppSnackbar.error(
+            context,
+            'No internet connection. Please check your network and try again.',
+          );
           return;
         }
         setState(() => _busy = true);
@@ -146,22 +171,25 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
       // Step 2 → verify the code now (123456 in dev; the real OTP when live).
       case 1:
         if (!ref.isOnline) {
-          AppSnackbar.error(context,
-              'No internet connection. Please check your network and try again.');
+          AppSnackbar.error(
+            context,
+            'No internet connection. Please check your network and try again.',
+          );
           return;
         }
         setState(() => _busy = true);
         try {
-          await ref.read(authControllerProvider.notifier).verifyOtp(
-                phone: _phone.text.trim(),
-                otp: _otp.text.trim(),
-              );
+          await ref
+              .read(authControllerProvider.notifier)
+              .verifyOtp(phone: _phone.text.trim(), otp: _otp.text.trim());
           if (mounted) _advance();
         } on ApiException catch (e) {
           if (!mounted) return;
           if (e.message.toLowerCase().contains('verification code')) {
             AppSnackbar.error(
-                context, 'The verification code entered is incorrect.');
+              context,
+              'The verification code entered is incorrect.',
+            );
           } else {
             AppSnackbar.error(context, e.userMessage);
           }
@@ -172,8 +200,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
       // Step 3 → confirm registration (verifies OTP + sets PIN), then show done.
       case 2:
         if (!ref.isOnline) {
-          AppSnackbar.error(context,
-              'No internet connection. Please check your network and try again.');
+          AppSnackbar.error(
+            context,
+            'No internet connection. Please check your network and try again.',
+          );
           return;
         }
         setState(() => _busy = true);
@@ -190,7 +220,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
           // A wrong code bounces back to the Verify step with a clear message.
           if (e.message.toLowerCase().contains('verification code')) {
             _goToStep(1);
-            AppSnackbar.error(context, 'The verification code entered is incorrect.');
+            AppSnackbar.error(
+              context,
+              'The verification code entered is incorrect.',
+            );
           } else {
             AppSnackbar.error(context, e.userMessage);
           }
@@ -208,8 +241,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   Future<void> _resendOtp() async {
     if (_busy || _resendIn > 0) return;
     if (!ref.isOnline) {
-      AppSnackbar.error(context,
-          'No internet connection. Please check your network and try again.');
+      AppSnackbar.error(
+        context,
+        'No internet connection. Please check your network and try again.',
+      );
       return;
     }
     try {
@@ -237,7 +272,11 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
               // Header: back, title, step counter
               Padding(
                 padding: const EdgeInsets.fromLTRB(
-                    AppSizes.md, AppSizes.sm, AppSizes.screenPad, AppSizes.sm),
+                  AppSizes.md,
+                  AppSizes.sm,
+                  AppSizes.screenPad,
+                  AppSizes.sm,
+                ),
                 child: SizedBox(
                   height: 44,
                   child: Stack(
@@ -253,9 +292,12 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                       ),
                       Align(
                         alignment: Alignment.centerRight,
-                        child: Text('${_step + 1}/$_totalSteps',
-                            style: AppText.label
-                                .copyWith(color: AppColors.textTertiary)),
+                        child: Text(
+                          '${_step + 1}/$_totalSteps',
+                          style: AppText.label.copyWith(
+                            color: AppColors.textTertiary,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -263,7 +305,9 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: AppSizes.screenPad, vertical: AppSizes.md),
+                  horizontal: AppSizes.screenPad,
+                  vertical: AppSizes.md,
+                ),
                 child: StepProgress(step: _step + 1, total: _totalSteps),
               ),
               Expanded(
@@ -271,15 +315,15 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                   controller: _pager,
                   physics: const NeverScrollableScrollPhysics(),
                   children: [
-                    _StepAccount(
-                        name: _name, phone: _phone, email: _email),
+                    _StepAccount(name: _name, phone: _phone, email: _email),
                     _StepOtp(
                       otp: _otp,
                       phone: _phone.text,
                       onResend: _resendOtp,
                       resendIn: _resendIn,
+                      focusNode: _otpFocus,
                     ),
-                    _StepPin(pin: _pin),
+                    _StepPin(pin: _pin, focusNode: _pinFocus),
                     _StepDone(
                       name: _name.text,
                       contact: _email.text.trim().isNotEmpty
@@ -330,11 +374,13 @@ class _SignInPrompt extends StatelessWidget {
         Text('Already have an account?', style: AppText.body),
         const SizedBox(width: 4),
         GestureDetector(
-          onTap: () => Navigator.of(context).pushReplacement(
-            AppNav.route(const SignInScreen()),
+          onTap: () => Navigator.of(
+            context,
+          ).pushReplacement(AppNav.route(const SignInScreen())),
+          child: Text(
+            'Sign in',
+            style: AppText.bodyStrong.copyWith(fontWeight: FontWeight.w800),
           ),
-          child: Text('Sign in',
-              style: AppText.bodyStrong.copyWith(fontWeight: FontWeight.w800)),
         ),
       ],
     );
@@ -359,7 +405,11 @@ class _StepAccount extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(
-          AppSizes.screenPad, AppSizes.sm, AppSizes.screenPad, AppSizes.xxl),
+        AppSizes.screenPad,
+        AppSizes.sm,
+        AppSizes.screenPad,
+        AppSizes.xxl,
+      ),
       children: [
         Text('Create your account', style: AppText.h1),
         const SizedBox(height: AppSizes.sm),
@@ -385,17 +435,19 @@ class _StepAccount extends StatelessWidget {
           keyboardType: TextInputType.phone,
           textInputAction: TextInputAction.next,
           autofillHints: const [AutofillHints.telephoneNumber],
-          readOnly: false,
-          onTap: () async {
-            final picked = await PhoneHintService.pickPhoneNumber();
-            if (picked != null && picked.isNotEmpty) {
-              phone.text = picked;
-            }
-          },
+          // Field is freely editable (tap → keyboard). The Google number
+          // picker is an opt-in trailing action, so cancelling it never blocks
+          // manual entry.
+          trailing: _GooglePickButton(
+            onPicked: (n) {
+              phone.text = n;
+              phone.selection = TextSelection.collapsed(offset: n.length);
+            },
+          ),
         ),
         const SizedBox(height: AppSizes.xs),
         Text(
-          'Tap to choose a Google number, or type your own manually.',
+          'Type your number, or tap Google to pick one from your phone.',
           style: AppText.caption.copyWith(color: AppColors.textTertiary),
         ),
         const SizedBox(height: AppSizes.lg),
@@ -420,17 +472,23 @@ class _StepOtp extends StatelessWidget {
     required this.phone,
     required this.onResend,
     required this.resendIn,
+    this.focusNode,
   });
   final TextEditingController otp;
   final String phone;
   final VoidCallback onResend;
   final int resendIn;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(
-          AppSizes.screenPad, AppSizes.sm, AppSizes.screenPad, AppSizes.xxl),
+        AppSizes.screenPad,
+        AppSizes.sm,
+        AppSizes.screenPad,
+        AppSizes.xxl,
+      ),
       children: [
         Text('Verify your number', style: AppText.h1),
         const SizedBox(height: AppSizes.sm),
@@ -443,6 +501,7 @@ class _StepOtp extends StatelessWidget {
           controller: otp,
           length: 6,
           autofocus: false,
+          focusNode: focusNode,
           autofillHints: const [AutofillHints.oneTimeCode],
         ),
         const SizedBox(height: AppSizes.xl),
@@ -450,15 +509,22 @@ class _StepOtp extends StatelessWidget {
           children: [
             Text("Didn't get it? ", style: AppText.body),
             if (resendIn > 0)
-              Text('Resend in ${resendIn}s',
-                  style: AppText.bodyStrong.copyWith(
-                      color: AppColors.textTertiary, fontWeight: FontWeight.w700))
+              Text(
+                'Resend in ${resendIn}s',
+                style: AppText.bodyStrong.copyWith(
+                  color: AppColors.textTertiary,
+                  fontWeight: FontWeight.w700,
+                ),
+              )
             else
               GestureDetector(
                 onTap: onResend,
-                child: Text('Resend code',
-                    style: AppText.bodyStrong
-                        .copyWith(fontWeight: FontWeight.w700)),
+                child: Text(
+                  'Resend code',
+                  style: AppText.bodyStrong.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
           ],
         ),
@@ -473,14 +539,19 @@ class _StepOtp extends StatelessWidget {
 // Step 3 — Secure your account (6-digit PIN)
 // ---------------------------------------------------------------------------
 class _StepPin extends StatelessWidget {
-  const _StepPin({required this.pin});
+  const _StepPin({required this.pin, this.focusNode});
   final TextEditingController pin;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(
-          AppSizes.screenPad, AppSizes.sm, AppSizes.screenPad, AppSizes.xxl),
+        AppSizes.screenPad,
+        AppSizes.sm,
+        AppSizes.screenPad,
+        AppSizes.xxl,
+      ),
       children: [
         Text('Secure your account', style: AppText.h1),
         const SizedBox(height: AppSizes.sm),
@@ -489,7 +560,13 @@ class _StepPin extends StatelessWidget {
           style: AppText.body,
         ),
         const SizedBox(height: AppSizes.xxl),
-        BoxedCodeInput(controller: pin, length: 6, obscure: true, autofocus: false),
+        BoxedCodeInput(
+          controller: pin,
+          length: 6,
+          obscure: true,
+          autofocus: false,
+          focusNode: focusNode,
+        ),
         const SizedBox(height: AppSizes.lg),
         _NoteBanner(
           icon: Icons.lock_outline_rounded,
@@ -528,7 +605,11 @@ class _StepDone extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(
-          AppSizes.screenPad, AppSizes.sm, AppSizes.screenPad, AppSizes.xxl),
+        AppSizes.screenPad,
+        AppSizes.sm,
+        AppSizes.screenPad,
+        AppSizes.xxl,
+      ),
       children: [
         Text('You\'re all set', style: AppText.h1),
         const SizedBox(height: AppSizes.sm),
@@ -545,8 +626,11 @@ class _StepDone extends StatelessWidget {
               color: AppColors.ink,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.check_rounded,
-                color: AppColors.textOnDark, size: 44),
+            child: const Icon(
+              Icons.check_rounded,
+              color: AppColors.textOnDark,
+              size: 44,
+            ),
           ).popIn(),
         ),
         const SizedBox(height: AppSizes.xxl),
@@ -559,14 +643,18 @@ class _StepDone extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(name.trim().isEmpty ? 'Your name' : name.trim(),
-                        style: AppText.bodyStrong,
-                        overflow: TextOverflow.ellipsis),
+                    Text(
+                      name.trim().isEmpty ? 'Your name' : name.trim(),
+                      style: AppText.bodyStrong,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     if (contact.isNotEmpty) ...[
                       const SizedBox(height: 2),
-                      Text(contact,
-                          style: AppText.caption,
-                          overflow: TextOverflow.ellipsis),
+                      Text(
+                        contact,
+                        style: AppText.caption,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ],
                   ],
                 ),
@@ -591,6 +679,49 @@ class _StepDone extends StatelessWidget {
   }
 }
 
+/// Opt-in "pick a Google number" chip shown as the phone field's trailing
+/// action. Tapping it opens the OS phone-number picker; cancelling leaves the
+/// field untouched and freely editable (it never locks manual entry).
+class _GooglePickButton extends StatelessWidget {
+  const _GooglePickButton({required this.onPicked});
+  final ValueChanged<String> onPicked;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () async {
+        final picked = await PhoneHintService.pickPhoneNumber();
+        if (picked != null && picked.trim().isNotEmpty) {
+          onPicked(picked.trim());
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceMuted,
+          borderRadius: AppRadii.pill,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.contacts_outlined,
+              size: 14,
+              color: AppColors.textSecondary,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              'Google',
+              style: AppText.caption.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Dashed "demo" hint pill (monospace) shown on the OTP step.
 class _DemoHint extends StatelessWidget {
   const _DemoHint(this.text);
@@ -603,12 +734,17 @@ class _DemoHint extends StatelessWidget {
       child: DottedBorderBox(
         child: Padding(
           padding: const EdgeInsets.symmetric(
-              horizontal: AppSizes.md, vertical: AppSizes.sm),
+            horizontal: AppSizes.md,
+            vertical: AppSizes.sm,
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.info_outline_rounded,
-                  size: 14, color: AppColors.textTertiary),
+              const Icon(
+                Icons.info_outline_rounded,
+                size: 14,
+                color: AppColors.textTertiary,
+              ),
               const SizedBox(width: 6),
               Text(
                 text,

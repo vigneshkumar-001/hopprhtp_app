@@ -1,25 +1,73 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
+import '../../core/network/error_messages.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
-import '../../data/app_state.dart';
 import '../../data/models/models.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
-import 'cooling_period_screen.dart';
+import '../../widgets/feedback/app_snackbar.dart';
+import 'application/transactions_provider.dart';
+import 'transaction_detail_screen.dart';
 
 /// Delivery Confirmed — fee released, item value enters cooling.
-class DeliveryConfirmedScreen extends StatelessWidget {
+class DeliveryConfirmedScreen extends ConsumerStatefulWidget {
   const DeliveryConfirmedScreen({super.key, required this.draft});
   final PaymentDraft draft;
 
   @override
+  ConsumerState<DeliveryConfirmedScreen> createState() =>
+      _DeliveryConfirmedScreenState();
+}
+
+class _DeliveryConfirmedScreenState
+    extends ConsumerState<DeliveryConfirmedScreen> {
+  bool _loading = false;
+
+  /// Opens the REAL Transaction Details for this transaction (never a
+  /// fabricated local one) and clears this whole confirm-delivery flow off
+  /// the stack, so back navigation from Details goes straight to Home —
+  /// never back through this screen or the dispatch-code entry screen.
+  Future<void> _viewTransaction() async {
+    if (_loading) return;
+    final id = widget.draft.transactionId;
+    if (id == null || id.trim().isEmpty) {
+      AppSnackbar.error(
+        context,
+        'Transaction reference is missing. Please go back and try again.',
+      );
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      final tx = await ref.read(transactionDetailProvider(id).future);
+      if (!mounted) return;
+      AppNav.pushAndClearToFirst(
+        context,
+        TransactionDetailScreen(tx: EscrowTransaction.fromApi(tx)),
+      );
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.userMessage);
+    } catch (_) {
+      if (mounted) {
+        AppSnackbar.error(
+          context,
+          'Could not load the transaction. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Record a real transaction so it shows up on Home/Wallet afterwards.
     final accent = AppAccent.of(context);
     return AppScaffold(
       showBack: false,
@@ -27,20 +75,9 @@ class DeliveryConfirmedScreen extends StatelessWidget {
       bottomAction: AppButton(
         label: 'View Transaction',
         trailingIcon: Icons.arrow_forward_rounded,
-        onPressed: () {
-          AppScope.read(context).addTransaction(
-            EscrowTransaction(
-              id: 'cool-${DateTime.now().microsecondsSinceEpoch}',
-              code: draft.sellerCode,
-              merchantName: draft.sellerName,
-              productName: draft.productName,
-              amount: draft.itemSubtotal,
-              stage: TxStage.cooling,
-              status: TxStatus.delivered,
-            ),
-          );
-          AppNav.push(context, const CoolingPeriodScreen());
-        },
+        loading: _loading,
+        enabled: !_loading,
+        onPressed: _viewTransaction,
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -53,20 +90,28 @@ class DeliveryConfirmedScreen extends StatelessWidget {
               width: 76,
               height: 76,
               decoration: BoxDecoration(
-                  color: accent.isLime
-                      ? const Color(0xFF1F8A5B)
-                      : AppColors.ink,
-                  shape: BoxShape.circle),
-              child: const Icon(Icons.verified_user_rounded,
-                  color: AppColors.textOnDark, size: 36),
+                color: accent.isLime ? const Color(0xFF1F8A5B) : AppColors.ink,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.verified_user_rounded,
+                color: AppColors.textOnDark,
+                size: 36,
+              ),
             ).popIn(),
           ),
           const SizedBox(height: AppSizes.xl),
-          Text('Delivery Confirmed!',
-              textAlign: TextAlign.center, style: AppText.h1),
+          Text(
+            'Delivery Confirmed!',
+            textAlign: TextAlign.center,
+            style: AppText.h1,
+          ),
           const SizedBox(height: AppSizes.sm),
-          Text('Transaction status updated successfully.',
-              textAlign: TextAlign.center, style: AppText.body),
+          Text(
+            'Transaction status updated successfully.',
+            textAlign: TextAlign.center,
+            style: AppText.body,
+          ),
           const SizedBox(height: AppSizes.xl),
           const _StepRow(
             icon: Icons.local_shipping_outlined,
@@ -162,7 +207,9 @@ class _StepRow extends StatelessWidget {
             width: 28,
             height: 28,
             decoration: const BoxDecoration(
-                color: AppColors.surfaceMuted, shape: BoxShape.circle),
+              color: AppColors.surfaceMuted,
+              shape: BoxShape.circle,
+            ),
             child: const Icon(Icons.check_rounded, size: 16),
           ),
           const SizedBox(width: AppSizes.md),

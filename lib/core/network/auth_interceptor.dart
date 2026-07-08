@@ -38,7 +38,8 @@ class AuthInterceptor extends Interceptor {
     ErrorInterceptorHandler handler,
   ) async {
     final path = err.requestOptions.path;
-    final isNonRetryAuthEndpoint = path.contains('/auth/login') ||
+    final isNonRetryAuthEndpoint =
+        path.contains('/auth/login') ||
         path.contains('/auth/register/') ||
         path.contains('/auth/refresh') ||
         path.contains('/auth/pin-reset/');
@@ -62,6 +63,14 @@ class AuthInterceptor extends Interceptor {
     final req = err.requestOptions;
     req.extra['retried'] = true;
     req.headers['Authorization'] = 'Bearer ${tokens.accessToken}';
+    // FormData is a single-use stream: the first (401'd) attempt already
+    // consumed it, so replaying the same instance fails instantly with an
+    // empty error (e.g. a multipart image upload on an expired token). Clone
+    // it so the retry sends fresh bytes — path-based MultipartFiles re-read
+    // from disk on clone.
+    if (req.data is FormData) {
+      req.data = (req.data as FormData).clone();
+    }
     try {
       final response = await refreshDio.fetch<dynamic>(req);
       return handler.resolve(response);

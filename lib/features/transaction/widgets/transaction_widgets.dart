@@ -33,8 +33,9 @@ class SummaryRow extends StatelessWidget {
         const Spacer(),
         Text(
           value,
-          style: (emphasized ? AppText.h3 : AppText.bodyStrong)
-              .copyWith(color: valueColor),
+          style: (emphasized ? AppText.h3 : AppText.bodyStrong).copyWith(
+            color: valueColor,
+          ),
         ),
       ],
     );
@@ -57,9 +58,13 @@ class ThumbPlaceholder extends StatelessWidget {
           width: size,
           height: size,
           child: Center(
-            child: Text(label,
-                style: AppText.caption.copyWith(
-                    color: AppColors.textTertiary, fontSize: 9)),
+            child: Text(
+              label,
+              style: AppText.caption.copyWith(
+                color: AppColors.textTertiary,
+                fontSize: 9,
+              ),
+            ),
           ),
         ),
       ),
@@ -70,7 +75,10 @@ class ThumbPlaceholder extends StatelessWidget {
 class _HatchPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, Paint()..color = AppColors.surfaceMuted);
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = AppColors.surfaceMuted,
+    );
     final line = Paint()
       ..color = const Color(0x11000000)
       ..strokeWidth = 1;
@@ -83,6 +91,56 @@ class _HatchPainter extends CustomPainter {
   bool shouldRepaint(_) => false;
 }
 
+/// Shows an uploaded product photo (network URL) as a rounded, cover-fit square.
+/// Falls back to a clean placeholder while loading, on error, or when there's
+/// no URL — the image is never stretched or distorted (BoxFit.cover).
+class ProductThumb extends StatelessWidget {
+  const ProductThumb({super.key, required this.url, this.size = 78});
+  final String? url;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final u = url?.trim() ?? '';
+    if (u.isEmpty) return _placeholder(Icons.image_outlined);
+    return ClipRRect(
+      borderRadius: AppRadii.sm,
+      child: Image.network(
+        u,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        loadingBuilder: (context, child, progress) => progress == null
+            ? child
+            : _frame(
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+        errorBuilder: (context, _, _) =>
+            _placeholder(Icons.broken_image_outlined),
+      ),
+    );
+  }
+
+  Widget _placeholder(IconData icon) =>
+      _frame(Icon(icon, size: size * 0.34, color: AppColors.textTertiary));
+
+  Widget _frame(Widget child) => Container(
+    width: size,
+    height: size,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      color: AppColors.surfaceMuted,
+      borderRadius: AppRadii.sm,
+    ),
+    child: child,
+  );
+}
+
 /// Item row card: thumbnail + product/subtitle + amount (used widely).
 class ItemSummaryCard extends StatelessWidget {
   const ItemSummaryCard({
@@ -91,6 +149,7 @@ class ItemSummaryCard extends StatelessWidget {
     required this.subtitle,
     required this.amount,
     this.thumbLabel = 'device',
+    this.imageUrl,
     this.trailing,
     this.color = AppColors.surface,
   });
@@ -99,6 +158,10 @@ class ItemSummaryCard extends StatelessWidget {
   final String subtitle;
   final double amount;
   final String thumbLabel;
+
+  /// Optional product photo URL. When provided, the real image is shown
+  /// (cover-fit, with a placeholder fallback); otherwise the hatched thumb.
+  final String? imageUrl;
   final Widget? trailing;
   final Color color;
 
@@ -108,18 +171,25 @@ class ItemSummaryCard extends StatelessWidget {
       color: color,
       child: Row(
         children: [
-          ThumbPlaceholder(label: thumbLabel),
+          imageUrl != null
+              ? ProductThumb(url: imageUrl, size: 56)
+              : ThumbPlaceholder(label: thumbLabel),
           const SizedBox(width: AppSizes.md),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(product,
-                    style: AppText.bodyStrong,
-                    overflow: TextOverflow.ellipsis),
+                Text(
+                  product,
+                  style: AppText.bodyStrong,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 const SizedBox(height: 2),
-                Text(subtitle,
-                    style: AppText.caption, overflow: TextOverflow.ellipsis),
+                Text(
+                  subtitle,
+                  style: AppText.caption,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ],
             ),
           ),

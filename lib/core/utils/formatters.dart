@@ -13,8 +13,10 @@ class Money {
     if (isWhole) {
       str = _group(value.round().toString());
     } else {
-      final cents =
-          ((value - value.floor()) * 100).round().toString().padLeft(2, '0');
+      final cents = ((value - value.floor()) * 100).round().toString().padLeft(
+        2,
+        '0',
+      );
       str = '${_group(value.floor().toString())}.$cents';
     }
     return symbol ? '$naira$str' : str;
@@ -37,8 +39,18 @@ class Dates {
   Dates._();
 
   static const _months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
 
   /// "12 May 2025".
@@ -55,16 +67,28 @@ class Dates {
     final today = DateTime(now.year, now.month, now.day);
     final that = DateTime(l.year, l.month, l.day);
     final days = today.difference(that).inDays;
-    if (days <= 0) return _time(l);
+    if (days <= 0) return time(l);
     if (days == 1) return 'Yesterday';
     if (days < 7) return '$days days ago';
     return medium(l);
   }
 
-  static String _time(DateTime l) {
+  static String time(DateTime l) {
     final h = l.hour % 12 == 0 ? 12 : l.hour % 12;
     final m = l.minute.toString().padLeft(2, '0');
     return '$h:$m ${l.hour < 12 ? 'AM' : 'PM'}';
+  }
+
+  /// "Today, 4:30 PM" for today, "Created 12 May 2025" otherwise. Treats a
+  /// null/epoch-zero date (a malformed or genuinely missing value) as
+  /// "Date not available" — never a fake/placeholder date.
+  static String createdLabel(DateTime? d) {
+    if (d == null || d.millisecondsSinceEpoch <= 0) return 'Date not available';
+    final l = d.toLocal();
+    final now = DateTime.now();
+    final isToday =
+        l.year == now.year && l.month == now.month && l.day == now.day;
+    return isToday ? 'Today, ${time(l)}' : 'Created ${medium(l)}';
   }
 }
 
@@ -79,8 +103,9 @@ class ThousandsFormatter extends TextInputFormatter {
     final digits = newValue.text.replaceAll(RegExp(r'[^0-9.]'), '');
     if (digits.isEmpty) return newValue.copyWith(text: '');
     final parts = digits.split('.');
-    final grouped =
-        Money._group(parts.first.replaceFirst(RegExp(r'^0+(?=\d)'), ''));
+    final grouped = Money._group(
+      parts.first.replaceFirst(RegExp(r'^0+(?=\d)'), ''),
+    );
     final out = parts.length > 1 ? '$grouped.${parts[1]}' : grouped;
     return TextEditingValue(
       text: out,

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'core/providers.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'data/app_state.dart';
@@ -8,18 +10,26 @@ import 'features/auth/auth_gate.dart';
 import 'widgets/theme_reveal.dart';
 
 /// Root widget. Owns the single [AppState] and shares it through [AppScope].
-class HopprApp extends StatefulWidget {
+class HopprApp extends ConsumerStatefulWidget {
   const HopprApp({super.key, this.prefs});
 
   /// Persisted preferences (may be null in tests / if storage is unavailable).
   final SharedPreferences? prefs;
 
   @override
-  State<HopprApp> createState() => _HopprAppState();
+  ConsumerState<HopprApp> createState() => _HopprAppState();
 }
 
-class _HopprAppState extends State<HopprApp> {
+class _HopprAppState extends ConsumerState<HopprApp> {
   late final AppState _state = AppState(prefs: widget.prefs);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(googleApiKeyProvider.future);
+    });
+  }
 
   @override
   void dispose() {

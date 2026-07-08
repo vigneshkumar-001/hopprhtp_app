@@ -19,18 +19,22 @@ class PayoutAccount {
   final bool verified;
 
   factory PayoutAccount.fromJson(Map<String, dynamic> j) => PayoutAccount(
-        id: asId(j['id'] ?? j['_id']),
-        bank: asString(j['bank']),
-        accountNumberLast4: asString(j['accountNumberLast4']),
-        accountName: asString(j['accountName']),
-        isDefault: asBool(j['isDefault']),
-        verified: asBool(j['verified']),
-      );
+    id: asId(j['id'] ?? j['_id']),
+    bank: asString(j['bank']),
+    accountNumberLast4: asString(j['accountNumberLast4']),
+    accountName: asString(j['accountName']),
+    isDefault: asBool(j['isDefault']),
+    verified: asBool(j['verified']),
+  );
 }
 
 /// Date of birth captured as discrete parts (mirrors the Edit Profile UI).
 class ProfileDob {
-  const ProfileDob({required this.day, required this.month, required this.year});
+  const ProfileDob({
+    required this.day,
+    required this.month,
+    required this.year,
+  });
 
   final int day;
   final int month;
@@ -100,6 +104,8 @@ class ApiUser {
     required this.disputes,
     required this.verified,
     required this.identityStatus,
+    this.identityReviewedAt,
+    this.identityRejectionReason,
     required this.escrowBalanceKobo,
     required this.walletAvailableKobo,
     required this.walletCoolingKobo,
@@ -127,6 +133,13 @@ class ApiUser {
   final bool verified;
   final String identityStatus; // unverified | pending | verified | rejected
 
+  /// When the KYC review completed (verified or rejected). Null while still
+  /// pending/unverified, or for older accounts predating this field.
+  final DateTime? identityReviewedAt;
+
+  /// Reviewer-supplied reason, set only when [identityStatus] is 'rejected'.
+  final String? identityRejectionReason;
+
   final int escrowBalanceKobo; // locked in active escrows
   final int walletAvailableKobo; // withdrawable
   final int walletCoolingKobo; // pending cooling release
@@ -137,39 +150,44 @@ class ApiUser {
   /// The default payout account (or the first, or null when none are saved).
   PayoutAccount? get defaultPayoutAccount {
     if (payoutAccounts.isEmpty) return null;
-    return payoutAccounts.firstWhere((a) => a.isDefault,
-        orElse: () => payoutAccounts.first);
+    return payoutAccounts.firstWhere(
+      (a) => a.isDefault,
+      orElse: () => payoutAccounts.first,
+    );
   }
 
   /// First name for greetings — the structured field if set, else derived.
-  String get displayFirstName =>
-      (firstName?.trim().isNotEmpty ?? false)
-          ? firstName!.trim()
-          : fullName.trim().split(RegExp(r'\s+')).first;
+  String get displayFirstName => (firstName?.trim().isNotEmpty ?? false)
+      ? firstName!.trim()
+      : fullName.trim().split(RegExp(r'\s+')).first;
 
   factory ApiUser.fromJson(Map<String, dynamic> j) => ApiUser(
-        id: asId(j['id'] ?? j['_id']),
-        fullName: asString(j['fullName']),
-        phone: asString(j['phone']),
-        email: asStringOrNull(j['email']),
-        accountType: asString(j['accountType'], 'individual'),
-        firstName: asStringOrNull(j['firstName']),
-        middleName: asStringOrNull(j['middleName']),
-        lastName: asStringOrNull(j['lastName']),
-        dob: ProfileDob.fromJson(asMap(j['dob'])),
-        phoneCountry: asStringOrNull(j['phoneCountry']),
-        address: ProfileAddress.fromJson(asMap(j['address'])),
-        trustScore: asInt(j['trustScore'], 80),
-        trustGrade: asString(j['trustGrade'], 'A'),
-        deals: asInt(j['deals']),
-        disputes: asInt(j['disputes']),
-        verified: asBool(j['verified']),
-        identityStatus: asString(asMap(j['identity'])['status'], 'unverified'),
-        escrowBalanceKobo: asInt(j['escrowBalanceKobo']),
-        walletAvailableKobo: asInt(j['walletAvailableKobo']),
-        walletCoolingKobo: asInt(j['walletCoolingKobo']),
-        payoutAccounts: asList(j['payoutAccounts'])
-            .map((e) => PayoutAccount.fromJson(asMap(e)))
-            .toList(growable: false),
-      );
+    id: asId(j['id'] ?? j['_id']),
+    fullName: asString(j['fullName']),
+    phone: asString(j['phone']),
+    email: asStringOrNull(j['email']),
+    accountType: asString(j['accountType'], 'individual'),
+    firstName: asStringOrNull(j['firstName']),
+    middleName: asStringOrNull(j['middleName']),
+    lastName: asStringOrNull(j['lastName']),
+    dob: ProfileDob.fromJson(asMap(j['dob'])),
+    phoneCountry: asStringOrNull(j['phoneCountry']),
+    address: ProfileAddress.fromJson(asMap(j['address'])),
+    trustScore: asInt(j['trustScore'], 80),
+    trustGrade: asString(j['trustGrade'], 'A'),
+    deals: asInt(j['deals']),
+    disputes: asInt(j['disputes']),
+    verified: asBool(j['verified']),
+    identityStatus: asString(asMap(j['identity'])['status'], 'unverified'),
+    identityReviewedAt: asDateTime(asMap(j['identity'])['reviewedAt']),
+    identityRejectionReason: asStringOrNull(
+      asMap(j['identity'])['rejectionReason'],
+    ),
+    escrowBalanceKobo: asInt(j['escrowBalanceKobo']),
+    walletAvailableKobo: asInt(j['walletAvailableKobo']),
+    walletCoolingKobo: asInt(j['walletCoolingKobo']),
+    payoutAccounts: asList(
+      j['payoutAccounts'],
+    ).map((e) => PayoutAccount.fromJson(asMap(e))).toList(growable: false),
+  );
 }

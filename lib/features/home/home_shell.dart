@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
@@ -14,20 +15,22 @@ import 'home_screen.dart';
 import 'transactions_tab.dart';
 
 /// The post-auth container with the bottom navigation bar (mockup 5).
-class HomeShell extends StatefulWidget {
+class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
   @override
-  State<HomeShell> createState() => _HomeShellState();
+  ConsumerState<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends ConsumerState<HomeShell> {
   int _index = 0;
   bool _navVisible = true;
 
   void _select(int i) {
-    // "Initiation" (1) opens the Create Transaction flow; "Send" (3) opens the
-    // Enter Transaction Code screen. Neither switches to a tab.
+    // "Initiation" (1) opens the Create Transaction flow — always for real;
+    // the identity-verification gate runs inside CreateTransactionScreen
+    // itself once it's on screen. "Send" (3) opens the Enter Transaction
+    // Code screen. Neither switches to a tab.
     if (i == 1) {
       AppNav.push(context, const CreateTransactionScreen());
       return;
@@ -148,7 +151,9 @@ class _BottomNav extends StatelessWidget {
           ],
         ),
         padding: const EdgeInsets.symmetric(
-            vertical: AppSizes.xs, horizontal: AppSizes.sm),
+          vertical: AppSizes.xs,
+          horizontal: AppSizes.sm,
+        ),
         child: Row(
           children: [
             for (int i = 0; i < _items.length; i++)

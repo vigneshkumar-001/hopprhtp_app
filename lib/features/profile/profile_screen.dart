@@ -14,6 +14,7 @@ import '../../widgets/premium_card.dart';
 import '../../widgets/segmented_control.dart';
 import '../../widgets/theme_reveal.dart';
 import '../auth/application/auth_controller.dart';
+import '../home/dashboard_stats.dart';
 import 'edit_profile_screen.dart';
 import 'help_support_screen.dart';
 import 'identity_verification_screen.dart';
@@ -21,16 +22,96 @@ import 'payout_accounts_screen.dart';
 import 'security_screen.dart';
 import 'transaction_history_screen.dart';
 
+/// Real initials from a full name — mirrors the legacy `HopprUser.initials`
+/// logic so the avatar reads the same, now sourced from the live `ApiUser`.
+String _initialsFor(String fullName) {
+  final parts = fullName.trim().split(RegExp(r'\s+'));
+  if (parts.isEmpty || parts.first.isEmpty) return '?';
+  if (parts.length == 1) return parts.first.characters.first.toUpperCase();
+  return (parts.first.characters.first + parts[1].characters.first)
+      .toUpperCase();
+}
+
+/// Real (never faked/hardcoded) 4-state identity display, driven entirely by
+/// the backend's `identityStatus` — mirrors the branching in
+/// [IdentityVerificationScreen].
+class _IdentityDisplay {
+  const _IdentityDisplay({
+    required this.headline,
+    required this.icon,
+    required this.menuSubtitle,
+    required this.pillLabel,
+    required this.pillIcon,
+    required this.pillBackground,
+    required this.pillForeground,
+  });
+
+  final String headline; // shown next to the top-card avatar
+  final IconData icon;
+  final String menuSubtitle;
+  final String? pillLabel; // null → no pill on the menu row
+  final IconData? pillIcon;
+  final Color pillBackground;
+  final Color pillForeground;
+
+  factory _IdentityDisplay.forStatus(String status) => switch (status) {
+    'verified' => const _IdentityDisplay(
+      headline: 'HTP Verified',
+      icon: Icons.verified_rounded,
+      menuSubtitle: 'HTP Verified badge',
+      pillLabel: 'Verified',
+      pillIcon: Icons.check_rounded,
+      pillBackground: AppColors.successSoft,
+      pillForeground: AppColors.success,
+    ),
+    'pending' => const _IdentityDisplay(
+      headline: 'Verification pending',
+      icon: Icons.schedule_rounded,
+      menuSubtitle: 'Verification under review',
+      pillLabel: 'Pending',
+      pillIcon: Icons.schedule_rounded,
+      pillBackground: AppColors.surfaceMuted,
+      pillForeground: AppColors.textSecondary,
+    ),
+    'rejected' => _IdentityDisplay(
+      headline: 'Verification rejected',
+      icon: Icons.error_outline_rounded,
+      menuSubtitle: 'Update your documents',
+      pillLabel: 'Rejected',
+      pillIcon: Icons.close_rounded,
+      pillBackground: AppColors.danger.withValues(alpha: 0.12),
+      pillForeground: AppColors.danger,
+    ),
+    _ => const _IdentityDisplay(
+      headline: 'Not verified',
+      icon: Icons.shield_outlined,
+      menuSubtitle: 'Get the HTP Verified badge',
+      pillLabel: null,
+      pillIcon: null,
+      pillBackground: AppColors.surfaceMuted,
+      pillForeground: AppColors.textSecondary,
+    ),
+  };
+}
+
 /// Profile screen (mockup 6). Works both as a pushed route and as the embedded
 /// "More" bottom-nav tab (no back button when [embedded]).
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key, this.embedded = false});
   final bool embedded;
 
   @override
-  Widget build(BuildContext context) {
-    final state = AppScope.of(context);
-    final user = state.user;
+  Widget build(BuildContext context, WidgetRef ref) {
+    // The real, live profile — never the legacy AppState snapshot (which is
+    // only hydrated once at login and never refreshed during the session).
+    final user = ref.watch(authControllerProvider).valueOrNull?.user;
+    final verified = user?.verified ?? false;
+    final identity = _IdentityDisplay.forStatus(
+      user?.identityStatus ?? 'unverified',
+    );
+    final trustLabel = user == null
+        ? 'New'
+        : trustScoreLabel(deals: user.deals, trustScore: user.trustScore);
 
     return AppScaffold(
       title: 'Profile',
@@ -50,20 +131,24 @@ class ProfileScreen extends StatelessWidget {
                     Stack(
                       children: [
                         InitialsAvatar(
-                          initials: user?.initials ?? 'A',
+                          initials: user != null
+                              ? _initialsFor(user.fullName)
+                              : '?',
                           size: 52,
                           onDark: true,
                         ),
-                        if (user?.verified ?? false)
+                        if (verified)
                           Positioned(
                             right: -2,
                             bottom: -2,
                             child: CircleAvatar(
                               radius: 9,
                               backgroundColor: AppAccent.of(context).accent,
-                              child: Icon(Icons.check_rounded,
-                                  size: 12,
-                                  color: AppAccent.of(context).onAccent),
+                              child: Icon(
+                                Icons.check_rounded,
+                                size: 12,
+                                color: AppAccent.of(context).onAccent,
+                              ),
                             ),
                           ),
                       ],
@@ -73,26 +158,26 @@ class ProfileScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(user?.fullName ?? 'Amara Okafor',
-                              style: AppText.h3
-                                  .copyWith(color: AppColors.textOnDark)),
+                          Text(
+                            user?.fullName ?? 'Your name',
+                            style: AppText.h3.copyWith(
+                              color: AppColors.textOnDark,
+                            ),
+                          ),
                           const SizedBox(height: 4),
                           Row(
                             children: [
                               Icon(
-                                (user?.verified ?? false)
-                                    ? Icons.verified_rounded
-                                    : Icons.shield_outlined,
+                                identity.icon,
                                 size: 15,
                                 color: AppColors.textOnDarkMuted,
                               ),
                               const SizedBox(width: 4),
                               Text(
-                                (user?.verified ?? false)
-                                    ? 'HTP Verified'
-                                    : 'Not verified',
+                                identity.headline,
                                 style: AppText.caption.copyWith(
-                                    color: AppColors.textOnDarkMuted),
+                                  color: AppColors.textOnDarkMuted,
+                                ),
                               ),
                             ],
                           ),
@@ -104,7 +189,7 @@ class ProfileScreen extends StatelessWidget {
                 Row(
                   children: [
                     CardStat(
-                      value: user?.trustScore ?? 'A+',
+                      value: trustLabel,
                       label: 'Trust score',
                       valueColor: AppAccent.of(context).highlight,
                     ),
@@ -112,7 +197,9 @@ class ProfileScreen extends StatelessWidget {
                     CardStat(value: '${user?.deals ?? 0}', label: 'Deals'),
                     const CardStatDivider(),
                     CardStat(
-                        value: '${user?.disputes ?? 0}', label: 'Disputes'),
+                      value: '${user?.disputes ?? 0}',
+                      label: 'Disputes',
+                    ),
                   ],
                 ),
               ],
@@ -123,35 +210,38 @@ class ProfileScreen extends StatelessWidget {
           const SizedBox(height: AppSizes.md),
           AppCard(
             padding: const EdgeInsets.symmetric(
-                horizontal: AppSizes.sm, vertical: AppSizes.xs),
+              horizontal: AppSizes.sm,
+              vertical: AppSizes.xs,
+            ),
             child: Column(
               children: [
                 MenuRow(
                   icon: Icons.person_outline_rounded,
                   title: 'Edit profile',
                   subtitle: 'Name, photo, contact',
-                  onTap: () =>
-                      AppNav.push(context, const EditProfileScreen()),
+                  onTap: () => AppNav.push(context, const EditProfileScreen()),
                 ),
                 const _RowDivider(),
                 MenuRow(
                   icon: Icons.verified_outlined,
                   title: 'Identity verification',
-                  subtitle: (user?.verified ?? false)
-                      ? 'HTP Verified badge'
-                      : 'Get the HTP Verified badge',
-                  trailing: (user?.verified ?? false)
-                      ? const StatusPill(
-                          label: 'Verified',
-                          icon: Icons.check_rounded,
-                          background: AppColors.successSoft,
-                          foreground: AppColors.success,
+                  subtitle: identity.menuSubtitle,
+                  trailing: identity.pillLabel == null
+                      ? null
+                      : StatusPill(
+                          label: identity.pillLabel!,
+                          icon: identity.pillIcon,
+                          background: identity.pillBackground,
+                          foreground: identity.pillForeground,
                           dense: true,
-                        )
-                      : null,
-                  showChevron: !(user?.verified ?? false),
-                  onTap: () => AppNav.push(
-                      context, const IdentityVerificationScreen()),
+                        ),
+                  showChevron: !verified,
+                  // The screen itself refetches the real status and routes
+                  // to the correct view (verified/pending/rejected/start) —
+                  // a single source of truth instead of duplicating the
+                  // branching here.
+                  onTap: () =>
+                      AppNav.push(context, const IdentityVerificationScreen()),
                 ),
                 const _RowDivider(),
                 MenuRow(
@@ -220,8 +310,10 @@ class ProfileScreen extends StatelessWidget {
           children: [
             Text('Log out?', style: AppText.h2),
             const SizedBox(height: AppSizes.sm),
-            Text('You\'ll need your PIN or biometrics to sign back in.',
-                style: AppText.body),
+            Text(
+              'You\'ll need your PIN or biometrics to sign back in.',
+              style: AppText.body,
+            ),
             const SizedBox(height: AppSizes.xl),
             Consumer(
               builder: (context, ref, _) => AppButton(

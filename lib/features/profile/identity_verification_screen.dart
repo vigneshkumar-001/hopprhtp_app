@@ -10,12 +10,15 @@ import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/utils/formatters.dart';
 import '../auth/application/auth_controller.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/app_snackbar.dart';
+import '../../widgets/feedback/state_views.dart';
 
 /// Mutable draft carried through the KYC steps (doc type + 3 captured images).
 class KycDraft {
@@ -25,15 +28,15 @@ class KycDraft {
   XFile? selfie;
 
   String get docType => switch (docIndex) {
-        1 => 'drivers_license',
-        2 => 'passport',
-        _ => 'nin',
-      };
+    1 => 'drivers_license',
+    2 => 'passport',
+    _ => 'nin',
+  };
   String get docLabel => switch (docIndex) {
-        1 => "Driver's licence",
-        2 => 'International passport',
-        _ => 'National ID (NIN)',
-      };
+    1 => "Driver's licence",
+    2 => 'International passport',
+    _ => 'National ID (NIN)',
+  };
 
   /// Passports are single-sided (data page); other IDs need a back too.
   bool get needsBack => docType != 'passport';
@@ -42,9 +45,87 @@ class KycDraft {
       docIndex != null && front != null && (!needsBack || back != null);
 }
 
-/// Identity verification intro (mockup 7).
-class IdentityVerificationScreen extends StatelessWidget {
+/// Identity verification entry point. The backend's `identity.status` is the
+/// only source of truth for what's shown here — never faked/hardcoded:
+/// - `verified` → [_VerifiedIdentityView], no way to restart the flow.
+/// - `pending` → [_PendingIdentityView], no way to restart (no resubmission
+///   endpoint while a review is in flight).
+/// - `rejected` → [_RejectedIdentityView], with "Update Documents" — the
+///   backend's submit endpoint doesn't block resubmission after a rejection.
+/// - `unverified` (or anything else) → [_StartVerificationView] (mockup 7).
+class IdentityVerificationScreen extends ConsumerStatefulWidget {
   const IdentityVerificationScreen({super.key});
+
+  @override
+  ConsumerState<IdentityVerificationScreen> createState() =>
+      _IdentityVerificationScreenState();
+}
+
+class _IdentityVerificationScreenState
+    extends ConsumerState<IdentityVerificationScreen> {
+  bool _loading = true;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  /// Always refetches on open (rather than trusting a possibly-stale cached
+  /// profile) so a status that changed server-side — e.g. a review that
+  /// completed since this user last opened the app — is reflected here.
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await ref.read(authControllerProvider.notifier).refreshProfile();
+      if (mounted) setState(() => _loading = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = e;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const AppScaffold(
+        title: 'Identity verification',
+        scrollable: false,
+        body: Center(child: AppCircularLoader()),
+      );
+    }
+    if (_error != null) {
+      return AppScaffold(
+        title: 'Identity verification',
+        scrollable: false,
+        body: ErrorRetryView(message: friendlyError(_error!), onRetry: _load),
+      );
+    }
+
+    final user = ref.watch(authControllerProvider).valueOrNull?.user;
+    return switch (user?.identityStatus) {
+      'verified' => _VerifiedIdentityView(reviewedAt: user?.identityReviewedAt),
+      'pending' => const _PendingIdentityView(),
+      'rejected' => _RejectedIdentityView(
+        reason: user?.identityRejectionReason,
+      ),
+      _ => const _StartVerificationView(),
+    };
+  }
+}
+
+/// The original "start verification" intro (mockup 7) — shown only when
+/// `identityStatus` is `unverified` (or unknown).
+class _StartVerificationView extends StatelessWidget {
+  const _StartVerificationView();
 
   @override
   Widget build(BuildContext context) {
@@ -62,8 +143,9 @@ class IdentityVerificationScreen extends StatelessWidget {
         children: [
           const SizedBox(height: AppSizes.sm),
           AppCard(
-            color:
-                accent.isLime ? const Color(0xFFE2DDF8) : AppColors.surfaceMuted,
+            color: accent.isLime
+                ? const Color(0xFFE2DDF8)
+                : AppColors.surfaceMuted,
             padding: const EdgeInsets.all(AppSizes.xl),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -73,12 +155,16 @@ class IdentityVerificationScreen extends StatelessWidget {
                   height: 52,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                      color: AppColors.ink, borderRadius: AppRadii.md),
-                  child: Icon(Icons.verified_outlined,
-                      color: accent.isLime
-                          ? const Color(0xFFCBF24A)
-                          : AppColors.textOnDark,
-                      size: 26),
+                    color: AppColors.ink,
+                    borderRadius: AppRadii.md,
+                  ),
+                  child: Icon(
+                    Icons.verified_outlined,
+                    color: accent.isLime
+                        ? const Color(0xFFCBF24A)
+                        : AppColors.textOnDark,
+                    size: 26,
+                  ),
                 ),
                 const SizedBox(height: AppSizes.lg),
                 Text('Get the HTP Verified badge', style: AppText.h2),
@@ -105,6 +191,260 @@ class IdentityVerificationScreen extends StatelessWidget {
             icon: Icons.camera_alt_outlined,
             title: 'A quick selfie',
             subtitle: 'To match your face to the ID',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown when `identityStatus == 'verified'` — informational only, no way to
+/// restart the flow.
+class _VerifiedIdentityView extends StatelessWidget {
+  const _VerifiedIdentityView({this.reviewedAt});
+  final DateTime? reviewedAt;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppAccent.of(context);
+    final circle = accent.isLime ? accent.accent : AppColors.ink;
+    final onCircle = accent.isLime ? accent.onAccent : AppColors.textOnDark;
+    return AppScaffold(
+      title: 'Identity verification',
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: AppSizes.xl),
+          Center(
+            child: Container(
+              width: 84,
+              height: 84,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: circle,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: circle.withValues(alpha: 0.45),
+                    blurRadius: 28,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: Icon(Icons.verified_rounded, size: 40, color: onCircle),
+            ),
+          ),
+          const SizedBox(height: AppSizes.xl),
+          Text(
+            'Identity Verified',
+            textAlign: TextAlign.center,
+            style: AppText.h1,
+          ),
+          const SizedBox(height: AppSizes.sm),
+          Text(
+            'Your identity verification is complete.',
+            textAlign: TextAlign.center,
+            style: AppText.body,
+          ),
+          const SizedBox(height: AppSizes.xl),
+          AppCard(
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: accent.isLime
+                        ? const Color(0xFFD0EEDB)
+                        : AppColors.surfaceMuted,
+                    borderRadius: AppRadii.sm,
+                  ),
+                  child: const Icon(
+                    Icons.verified_outlined,
+                    size: 20,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(width: AppSizes.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('HTP Verified badge', style: AppText.bodyStrong),
+                      const SizedBox(height: 2),
+                      Text(
+                        reviewedAt != null
+                            ? 'Verified ${Dates.medium(reviewedAt!)}'
+                            : 'Your account is fully verified',
+                        style: AppText.caption,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSizes.sm),
+                const StatusPill(
+                  label: 'Verified',
+                  icon: Icons.check_rounded,
+                  background: AppColors.successSoft,
+                  foreground: AppColors.success,
+                  dense: true,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown when `identityStatus == 'pending'` — no restart affordance; the
+/// backend has no resubmission path while a review is already in flight.
+class _PendingIdentityView extends StatelessWidget {
+  const _PendingIdentityView();
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppAccent.of(context);
+    return AppScaffold(
+      title: 'Identity verification',
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: AppSizes.xl),
+          Center(
+            child: Container(
+              width: 84,
+              height: 84,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.warning.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.schedule_rounded,
+                size: 38,
+                color: AppColors.warning,
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSizes.xl),
+          Text(
+            'Verification under review',
+            textAlign: TextAlign.center,
+            style: AppText.h1,
+          ),
+          const SizedBox(height: AppSizes.sm),
+          Text(
+            'We will notify you once approved.',
+            textAlign: TextAlign.center,
+            style: AppText.body,
+          ),
+          const SizedBox(height: AppSizes.xl),
+          AppCard(
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: accent.isLime
+                        ? const Color(0xFFF7EBB0)
+                        : AppColors.surfaceMuted,
+                    borderRadius: AppRadii.sm,
+                  ),
+                  child: const Icon(
+                    Icons.hourglass_top_rounded,
+                    size: 20,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(width: AppSizes.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Status: Pending', style: AppText.bodyStrong),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Documents received, awaiting review',
+                        style: AppText.caption,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSizes.sm),
+                StatusPill(
+                  label: 'In review',
+                  icon: Icons.refresh_rounded,
+                  background: accent.isLime
+                      ? const Color(0xFFFBF2C6)
+                      : AppColors.surfaceMuted,
+                  dense: true,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown when `identityStatus == 'rejected'` — offers "Update Documents",
+/// which resubmits (the backend's `/me/identity` endpoint allows resubmission
+/// after a rejection; it only blocks nothing explicitly, but the product
+/// intent is: rejected → may retry, pending → may not).
+class _RejectedIdentityView extends StatelessWidget {
+  const _RejectedIdentityView({this.reason});
+  final String? reason;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppScaffold(
+      title: 'Identity verification',
+      bottomAction: AppButton(
+        label: 'Update Documents',
+        icon: Icons.upload_outlined,
+        trailingIcon: Icons.arrow_forward_rounded,
+        onPressed: () =>
+            AppNav.push(context, ChooseDocumentScreen(draft: KycDraft())),
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: AppSizes.xl),
+          Center(
+            child: Container(
+              width: 84,
+              height: 84,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.danger.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.gpp_maybe_outlined,
+                size: 38,
+                color: AppColors.danger,
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSizes.xl),
+          Text(
+            'Verification rejected',
+            textAlign: TextAlign.center,
+            style: AppText.h1,
+          ),
+          const SizedBox(height: AppSizes.sm),
+          Text(
+            (reason != null && reason!.trim().isNotEmpty)
+                ? reason!.trim()
+                : 'Verification was rejected. Please update your documents.',
+            textAlign: TextAlign.center,
+            style: AppText.body,
           ),
         ],
       ),
@@ -140,14 +480,16 @@ class _ChooseDocumentScreenState extends State<ChooseDocumentScreen> {
 
   Future<void> _pick({required bool front}) async {
     final f = await _picker.pickImage(
-        source: ImageSource.gallery, imageQuality: 80, maxWidth: 1600);
+      source: ImageSource.gallery,
+      imageQuality: 80,
+      maxWidth: 1600,
+    );
     if (f != null && mounted) {
       setState(() => front ? _d.front = f : _d.back = f);
     }
   }
 
-  void _continue() =>
-      AppNav.push(context, TakeSelfieScreen(draft: _d));
+  void _continue() => AppNav.push(context, TakeSelfieScreen(draft: _d));
 
   @override
   Widget build(BuildContext context) {
@@ -167,8 +509,10 @@ class _ChooseDocumentScreenState extends State<ChooseDocumentScreen> {
           const SizedBox(height: AppSizes.sm),
           Text('Choose a document', style: AppText.h1),
           const SizedBox(height: AppSizes.xs),
-          Text('Select the ID type, then add clear photos.',
-              style: AppText.body),
+          Text(
+            'Select the ID type, then add clear photos.',
+            style: AppText.body,
+          ),
           const SizedBox(height: AppSizes.lg),
           for (int i = 0; i < _docs.length; i++) ...[
             _DocOption(
@@ -205,7 +549,11 @@ class _ChooseDocumentScreenState extends State<ChooseDocumentScreen> {
 
 /// A labelled dashed upload area showing the picked image (or a prompt).
 class _UploadBox extends StatelessWidget {
-  const _UploadBox({required this.label, required this.file, required this.onTap});
+  const _UploadBox({
+    required this.label,
+    required this.file,
+    required this.onTap,
+  });
   final String label;
   final XFile? file;
   final VoidCallback onTap;
@@ -222,13 +570,19 @@ class _UploadBox extends StatelessWidget {
             if (file != null)
               Row(
                 children: [
-                  const Icon(Icons.check_circle_rounded,
-                      size: 14, color: AppColors.success),
+                  const Icon(
+                    Icons.check_circle_rounded,
+                    size: 14,
+                    color: AppColors.success,
+                  ),
                   const SizedBox(width: 4),
-                  Text('Added',
-                      style: AppText.caption.copyWith(
-                          color: AppColors.success,
-                          fontWeight: FontWeight.w700)),
+                  Text(
+                    'Added',
+                    style: AppText.caption.copyWith(
+                      color: AppColors.success,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ],
               ),
           ],
@@ -249,8 +603,11 @@ class _UploadBox extends StatelessWidget {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.add_a_photo_outlined,
-                              size: 28, color: AppColors.textTertiary),
+                          Icon(
+                            Icons.add_a_photo_outlined,
+                            size: 28,
+                            color: AppColors.textTertiary,
+                          ),
                           SizedBox(height: 8),
                           Text('Tap to add photo', style: AppText.caption),
                         ],
@@ -299,8 +656,10 @@ class _DocOption extends StatelessWidget {
               width: 40,
               height: 40,
               alignment: Alignment.center,
-              decoration:
-                  BoxDecoration(color: tileColor, borderRadius: AppRadii.sm),
+              decoration: BoxDecoration(
+                color: tileColor,
+                borderRadius: AppRadii.sm,
+              ),
               child: Icon(data.icon, size: 20, color: iconColor),
             ),
             const SizedBox(width: AppSizes.md),
@@ -327,11 +686,16 @@ class _Radio extends StatelessWidget {
         color: selected ? AppColors.ink : Colors.transparent,
         shape: BoxShape.circle,
         border: Border.all(
-            color: selected ? AppColors.ink : AppColors.border, width: 1.6),
+          color: selected ? AppColors.ink : AppColors.border,
+          width: 1.6,
+        ),
       ),
       child: selected
-          ? const Icon(Icons.check_rounded,
-              size: 14, color: AppColors.textOnDark)
+          ? const Icon(
+              Icons.check_rounded,
+              size: 14,
+              color: AppColors.textOnDark,
+            )
           : null,
     );
   }
@@ -360,8 +724,9 @@ class _RequirementCard extends StatelessWidget {
             height: 44,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-                color: iconBg ?? AppColors.surfaceMuted,
-                borderRadius: AppRadii.sm),
+              color: iconBg ?? AppColors.surfaceMuted,
+              borderRadius: AppRadii.sm,
+            ),
             child: Icon(icon, size: 22, color: AppColors.textPrimary),
           ),
           const SizedBox(width: AppSizes.md),
@@ -461,7 +826,8 @@ class _SelfieCircle extends StatelessWidget {
       height: 200,
       child: CustomPaint(
         painter: _DashedCirclePainter(
-            color: added ? AppColors.success : AppColors.border),
+          color: added ? AppColors.success : AppColors.border,
+        ),
         child: added
             ? Padding(
                 padding: const EdgeInsets.all(6),
@@ -471,8 +837,11 @@ class _SelfieCircle extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.camera_alt_outlined,
-                        size: 30, color: AppColors.textTertiary),
+                    Icon(
+                      Icons.camera_alt_outlined,
+                      size: 30,
+                      color: AppColors.textTertiary,
+                    ),
                     SizedBox(height: 8),
                     Text('Add selfie', style: AppText.caption),
                   ],
@@ -518,13 +887,18 @@ class _PickedImageState extends State<_PickedImage> {
     if (b == null) {
       return const Center(
         child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2)),
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
       );
     }
-    return Image.memory(b,
-        fit: BoxFit.cover, width: double.infinity, height: double.infinity);
+    return Image.memory(
+      b,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+    );
   }
 }
 
@@ -535,8 +909,11 @@ class _DashedCirclePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    canvas.drawCircle(center, size.width / 2,
-        Paint()..color = AppColors.surfaceMuted.withValues(alpha: 0.4));
+    canvas.drawCircle(
+      center,
+      size.width / 2,
+      Paint()..color = AppColors.surfaceMuted.withValues(alpha: 0.4),
+    );
 
     final paint = Paint()
       ..color = color
@@ -574,9 +951,14 @@ class _SelfieCheck extends StatelessWidget {
           height: 34,
           alignment: Alignment.center,
           decoration: const BoxDecoration(
-              color: AppColors.successSoft, shape: BoxShape.circle),
-          child: const Icon(Icons.check_rounded,
-              size: 16, color: AppColors.success),
+            color: AppColors.successSoft,
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.check_rounded,
+            size: 16,
+            color: AppColors.success,
+          ),
         ),
         const SizedBox(height: 6),
         Text(label, style: AppText.caption),
@@ -603,10 +985,13 @@ class _ReviewSubmitScreenState extends ConsumerState<ReviewSubmitScreen> {
     try {
       final upload = ref.read(uploadRepositoryProvider);
       final frontUrl = await upload.uploadImage(d.front!.path);
-      final backUrl =
-          d.back != null ? await upload.uploadImage(d.back!.path) : null;
+      final backUrl = d.back != null
+          ? await upload.uploadImage(d.back!.path)
+          : null;
       final selfieUrl = await upload.uploadImage(d.selfie!.path);
-      await ref.read(authControllerProvider.notifier).submitIdentity(
+      await ref
+          .read(authControllerProvider.notifier)
+          .submitIdentity(
             docType: d.docType,
             documentFrontUrl: frontUrl,
             documentBackUrl: backUrl,
@@ -647,14 +1032,17 @@ class _ReviewSubmitScreenState extends ConsumerState<ReviewSubmitScreen> {
           const SizedBox(height: AppSizes.sm),
           Text('Review & submit', style: AppText.h1),
           const SizedBox(height: AppSizes.xs),
-          Text('Confirm everything is clear and readable before submitting.',
-              style: AppText.body),
+          Text(
+            'Confirm everything is clear and readable before submitting.',
+            style: AppText.body,
+          ),
           const SizedBox(height: AppSizes.lg),
           _ReviewRow(
             title: '${d.docLabel} — front',
             file: d.front,
-            tile:
-                accent.isLime ? const Color(0xFFD0EEDB) : AppColors.surfaceMuted,
+            tile: accent.isLime
+                ? const Color(0xFFD0EEDB)
+                : AppColors.surfaceMuted,
           ),
           if (d.back != null) ...[
             const SizedBox(height: AppSizes.md),
@@ -670,8 +1058,9 @@ class _ReviewSubmitScreenState extends ConsumerState<ReviewSubmitScreen> {
           _ReviewRow(
             title: 'Selfie',
             file: d.selfie,
-            tile:
-                accent.isLime ? const Color(0xFFF7EBB0) : AppColors.surfaceMuted,
+            tile: accent.isLime
+                ? const Color(0xFFF7EBB0)
+                : AppColors.surfaceMuted,
           ),
           const SizedBox(height: AppSizes.md),
           Container(
@@ -685,15 +1074,19 @@ class _ReviewSubmitScreenState extends ConsumerState<ReviewSubmitScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.info_outline_rounded,
-                    size: 18, color: AppColors.textSecondary),
+                Icon(
+                  Icons.info_outline_rounded,
+                  size: 18,
+                  color: AppColors.textSecondary,
+                ),
                 const SizedBox(width: AppSizes.sm),
                 Expanded(
                   child: Text(
                     'By submitting you confirm these documents are genuine and '
                     'belong to you.',
-                    style: AppText.caption
-                        .copyWith(color: AppColors.textSecondary),
+                    style: AppText.caption.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ),
               ],
@@ -706,7 +1099,11 @@ class _ReviewSubmitScreenState extends ConsumerState<ReviewSubmitScreen> {
 }
 
 class _ReviewRow extends StatelessWidget {
-  const _ReviewRow({required this.title, required this.file, required this.tile});
+  const _ReviewRow({
+    required this.title,
+    required this.file,
+    required this.tile,
+  });
 
   final String title;
   final XFile? file;
@@ -735,13 +1132,18 @@ class _ReviewRow extends StatelessWidget {
               children: [
                 Text(title, style: AppText.bodyStrong),
                 const SizedBox(height: 2),
-                Text('Captured',
-                    style: AppText.caption.copyWith(color: AppColors.success)),
+                Text(
+                  'Captured',
+                  style: AppText.caption.copyWith(color: AppColors.success),
+                ),
               ],
             ),
           ),
-          const Icon(Icons.check_circle_outline_rounded,
-              size: 22, color: AppColors.success),
+          const Icon(
+            Icons.check_circle_outline_rounded,
+            size: 22,
+            color: AppColors.success,
+          ),
         ],
       ),
     );
@@ -780,17 +1182,21 @@ class SubmittedForReviewScreen extends StatelessWidget {
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                      color: circle.withValues(alpha: 0.45),
-                      blurRadius: 28,
-                      spreadRadius: 2),
+                    color: circle.withValues(alpha: 0.45),
+                    blurRadius: 28,
+                    spreadRadius: 2,
+                  ),
                 ],
               ),
               child: Icon(Icons.verified_rounded, size: 40, color: onCircle),
             ),
           ),
           const SizedBox(height: AppSizes.xl),
-          Text('Submitted for review',
-              textAlign: TextAlign.center, style: AppText.h1),
+          Text(
+            'Submitted for review',
+            textAlign: TextAlign.center,
+            style: AppText.h1,
+          ),
           const SizedBox(height: AppSizes.sm),
           Text(
             'We\'re reviewing your documents. Most verifications complete within '
@@ -812,8 +1218,11 @@ class SubmittedForReviewScreen extends StatelessWidget {
                         : AppColors.surfaceMuted,
                     borderRadius: AppRadii.sm,
                   ),
-                  child: const Icon(Icons.schedule_rounded,
-                      size: 20, color: AppColors.textPrimary),
+                  child: const Icon(
+                    Icons.schedule_rounded,
+                    size: 20,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
                 const SizedBox(width: AppSizes.md),
                 Expanded(
@@ -822,8 +1231,10 @@ class SubmittedForReviewScreen extends StatelessWidget {
                     children: [
                       Text('Status: Pending', style: AppText.bodyStrong),
                       const SizedBox(height: 2),
-                      Text('$docLabel + selfie received',
-                          style: AppText.caption),
+                      Text(
+                        '$docLabel + selfie received',
+                        style: AppText.caption,
+                      ),
                     ],
                   ),
                 ),

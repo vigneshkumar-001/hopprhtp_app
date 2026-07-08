@@ -7,16 +7,16 @@ enum ApiTxStage {
   done;
 
   static ApiTxStage fromApi(String? s) => switch (s) {
-        'cooling' => ApiTxStage.cooling,
-        'done' => ApiTxStage.done,
-        _ => ApiTxStage.active,
-      };
+    'cooling' => ApiTxStage.cooling,
+    'done' => ApiTxStage.done,
+    _ => ApiTxStage.active,
+  };
 
   String get label => switch (this) {
-        ApiTxStage.active => 'Active',
-        ApiTxStage.cooling => 'Cooling',
-        ApiTxStage.done => 'Done',
-      };
+    ApiTxStage.active => 'Active',
+    ApiTxStage.cooling => 'Cooling',
+    ApiTxStage.done => 'Done',
+  };
 }
 
 /// The canonical 16-state lifecycle status — a 1:1 mirror of the backend
@@ -42,61 +42,65 @@ enum ApiTxStatus {
   unknown;
 
   static ApiTxStatus fromApi(String? s) => switch (s) {
-        'draft' => ApiTxStatus.draft,
-        'awaiting_agreement' => ApiTxStatus.awaitingAgreement,
-        'awaiting_payment' => ApiTxStatus.awaitingPayment,
-        'payment_received' => ApiTxStatus.paymentReceived,
-        'awaiting_dispatch' => ApiTxStatus.awaitingDispatch,
-        'in_transit' => ApiTxStatus.inTransit,
-        'out_for_delivery' => ApiTxStatus.outForDelivery,
-        'delivered' => ApiTxStatus.delivered,
-        'cooling' => ApiTxStatus.cooling,
-        'released' => ApiTxStatus.released,
-        'completed' => ApiTxStatus.completed,
-        'disputed' => ApiTxStatus.disputed,
-        'refunded' => ApiTxStatus.refunded,
-        'returned' => ApiTxStatus.returned,
-        'cancelled' => ApiTxStatus.cancelled,
-        'undeliverable' => ApiTxStatus.undeliverable,
-        _ => ApiTxStatus.unknown,
-      };
+    'draft' => ApiTxStatus.draft,
+    'awaiting_agreement' => ApiTxStatus.awaitingAgreement,
+    'awaiting_payment' => ApiTxStatus.awaitingPayment,
+    'payment_received' => ApiTxStatus.paymentReceived,
+    'awaiting_dispatch' => ApiTxStatus.awaitingDispatch,
+    'in_transit' => ApiTxStatus.inTransit,
+    'out_for_delivery' => ApiTxStatus.outForDelivery,
+    'delivered' => ApiTxStatus.delivered,
+    'cooling' => ApiTxStatus.cooling,
+    'released' => ApiTxStatus.released,
+    'completed' => ApiTxStatus.completed,
+    'disputed' => ApiTxStatus.disputed,
+    'refunded' => ApiTxStatus.refunded,
+    'returned' => ApiTxStatus.returned,
+    'cancelled' => ApiTxStatus.cancelled,
+    'undeliverable' => ApiTxStatus.undeliverable,
+    _ => ApiTxStatus.unknown,
+  };
 
   String get label => switch (this) {
-        ApiTxStatus.draft => 'Draft',
-        ApiTxStatus.awaitingAgreement => 'Awaiting agreement',
-        ApiTxStatus.awaitingPayment => 'Awaiting payment',
-        ApiTxStatus.paymentReceived => 'Payment received',
-        ApiTxStatus.awaitingDispatch => 'Awaiting dispatch',
-        ApiTxStatus.inTransit => 'In transit',
-        ApiTxStatus.outForDelivery => 'Out for delivery',
-        ApiTxStatus.delivered => 'Delivered',
-        ApiTxStatus.cooling => 'Cooling',
-        ApiTxStatus.released => 'Funds released',
-        ApiTxStatus.completed => 'Completed',
-        ApiTxStatus.disputed => 'In dispute',
-        ApiTxStatus.refunded => 'Refunded',
-        ApiTxStatus.returned => 'Returned',
-        ApiTxStatus.cancelled => 'Cancelled',
-        ApiTxStatus.undeliverable => 'Undeliverable',
-        ApiTxStatus.unknown => 'Unknown',
-      };
+    ApiTxStatus.draft => 'Draft',
+    ApiTxStatus.awaitingAgreement => 'Awaiting agreement',
+    ApiTxStatus.awaitingPayment => 'Awaiting payment',
+    ApiTxStatus.paymentReceived => 'Payment received',
+    ApiTxStatus.awaitingDispatch => 'Awaiting dispatch',
+    ApiTxStatus.inTransit => 'In transit',
+    ApiTxStatus.outForDelivery => 'Out for delivery',
+    ApiTxStatus.delivered => 'Delivered',
+    ApiTxStatus.cooling => 'Cooling',
+    ApiTxStatus.released => 'Funds released',
+    ApiTxStatus.completed => 'Completed',
+    ApiTxStatus.disputed => 'In dispute',
+    ApiTxStatus.refunded => 'Refunded',
+    ApiTxStatus.returned => 'Returned',
+    ApiTxStatus.cancelled => 'Cancelled',
+    ApiTxStatus.undeliverable => 'Undeliverable',
+    ApiTxStatus.unknown => 'Unknown',
+  };
 }
 
 /// A page of transactions for the infinite-scroll history.
 class TxPage {
-  const TxPage({required this.items, required this.page, required this.hasMore});
+  const TxPage({
+    required this.items,
+    required this.page,
+    required this.hasMore,
+  });
 
   final List<ApiTransaction> items;
   final int page;
   final bool hasMore;
 
   factory TxPage.fromJson(Map<String, dynamic> j) => TxPage(
-        items: asList(j['items'])
-            .map((e) => ApiTransaction.fromJson(asMap(e)))
-            .toList(growable: false),
-        page: asInt(j['page'], 1),
-        hasMore: asBool(j['hasMore']),
-      );
+    items: asList(
+      j['items'],
+    ).map((e) => ApiTransaction.fromJson(asMap(e))).toList(growable: false),
+    page: asInt(j['page'], 1),
+    hasMore: asBool(j['hasMore']),
+  );
 }
 
 /// One entry from a transaction's audit timeline.
@@ -106,10 +110,8 @@ class TxTimelineEvent {
   final String event;
   final DateTime? at;
 
-  factory TxTimelineEvent.fromJson(Map<String, dynamic> j) => TxTimelineEvent(
-        event: asString(j['event']),
-        at: asDateTime(j['at']),
-      );
+  factory TxTimelineEvent.fromJson(Map<String, dynamic> j) =>
+      TxTimelineEvent(event: asString(j['event']), at: asDateTime(j['at']));
 }
 
 /// An escrow transaction. Parses both the lean list shape (`_id`, no `id`
@@ -138,6 +140,17 @@ class ApiTransaction {
     this.timeline = const [],
     this.trackingCarrier,
     this.trackingNumber,
+    this.buyerContact,
+    this.buyerName,
+    this.deliveryAddress,
+    this.deliveryLat,
+    this.deliveryLng,
+    this.estimatedDeliveryDate,
+    this.estimatedDeliveryTime,
+    this.productPhotoUrl,
+    this.myRole,
+    this.isSeller = false,
+    this.isBuyer = false,
   });
 
   final String id;
@@ -165,13 +178,42 @@ class ApiTransaction {
   final List<TxTimelineEvent> timeline;
   final String? trackingCarrier;
   final String? trackingNumber;
+  final String? buyerContact;
+  final String? buyerName;
+  final String? deliveryAddress;
+  final double? deliveryLat;
+  final double? deliveryLng;
+  final String? estimatedDeliveryDate;
+  final String? estimatedDeliveryTime;
+
+  /// The product photo (the item being sold), from `consignments[].productPhotoUrl`.
+  /// For older records created before that field existed, it falls back to the
+  /// dispatch/waybill photo — new records always carry `productPhotoUrl`, so
+  /// those three remain separate fields and are never conflated going forward.
+  final String? productPhotoUrl;
+
+  /// Per-transaction role of the signed-in user, computed by the backend from
+  /// this transaction only (there is no global buyer/seller account type). The
+  /// same user can be seller on one transaction and buyer on another.
+  final String? myRole; // 'seller' | 'buyer' | null
+  final bool isSeller;
+  final bool isBuyer;
 
   double get itemSubtotalNaira => itemSubtotalKobo / 100;
   double get deliveryFeeNaira => deliveryFeeKobo / 100;
   double get grandTotalNaira => grandTotalKobo / 100;
 
+  /// True once the buyer's delivery address has real coordinates (set from the
+  /// map picker at creation). Screens must gate any map/tracking UI on this —
+  /// older transactions created before this field existed will have neither.
+  bool get hasDeliveryLocation => deliveryLat != null && deliveryLng != null;
+
   factory ApiTransaction.fromJson(Map<String, dynamic> j) {
     final delivery = asMap(j['delivery']);
+    final consignments = asList(j['consignments']);
+    final firstConsignment = consignments.isNotEmpty
+        ? asMap(consignments.first)
+        : const <String, dynamic>{};
     return ApiTransaction(
       id: asId(j['id'] ?? j['_id']),
       code: asString(j['code']),
@@ -189,14 +231,46 @@ class ApiTransaction {
       currency: asString(j['currency'], 'NGN'),
       inspectionPeriodSeconds: asInt(j['inspectionPeriodSeconds'], 86400),
       coolingEndsAt: asDateTime(j['coolingEndsAt']),
-      createdAt: asDateTime(j['createdAt']) ??
-          DateTime.fromMillisecondsSinceEpoch(0),
+      createdAt:
+          asDateTime(j['createdAt']) ?? DateTime.fromMillisecondsSinceEpoch(0),
       updatedAt: asDateTime(j['updatedAt']),
-      timeline: asList(j['timeline'])
-          .map((e) => TxTimelineEvent.fromJson(asMap(e)))
-          .toList(growable: false),
+      timeline: asList(
+        j['timeline'],
+      ).map((e) => TxTimelineEvent.fromJson(asMap(e))).toList(growable: false),
       trackingCarrier: asStringOrNull(delivery['trackingCarrier']),
       trackingNumber: asStringOrNull(delivery['trackingNumber']),
+      buyerContact:
+          asStringOrNull(j['buyerContact']) ??
+          asStringOrNull(firstConsignment['buyerContact']),
+      buyerName: asStringOrNull(firstConsignment['buyerName']),
+      deliveryAddress: asStringOrNull(firstConsignment['deliveryAddress']),
+      deliveryLat: firstConsignment['deliveryLat'] == null
+          ? null
+          : asDouble(firstConsignment['deliveryLat']),
+      deliveryLng: firstConsignment['deliveryLng'] == null
+          ? null
+          : asDouble(firstConsignment['deliveryLng']),
+      estimatedDeliveryDate: asStringOrNull(
+        firstConsignment['estimatedDeliveryDate'],
+      ),
+      estimatedDeliveryTime: asStringOrNull(
+        firstConsignment['estimatedDeliveryTime'],
+      ),
+      // New records use productPhotoUrl; dispatch/waybill are only a fallback
+      // for older records that predate the dedicated product-photo field.
+      productPhotoUrl:
+          asStringOrNull(firstConsignment['productPhotoUrl']) ??
+          asStringOrNull(firstConsignment['dispatchPhotoUrl']) ??
+          asStringOrNull(firstConsignment['waybillImageUrl']),
+      myRole: asStringOrNull(j['myRole']),
+      // Prefer explicit booleans; fall back to deriving them from myRole so the
+      // DTO is correct whichever shape the backend sends.
+      isSeller: j['isSeller'] != null
+          ? asBool(j['isSeller'])
+          : asStringOrNull(j['myRole']) == 'seller',
+      isBuyer: j['isBuyer'] != null
+          ? asBool(j['isBuyer'])
+          : asStringOrNull(j['myRole']) == 'buyer',
     );
   }
 }

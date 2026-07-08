@@ -17,6 +17,7 @@ class BoxedCodeInput extends StatefulWidget {
     this.autofillHints,
     this.onChanged,
     this.onCompleted,
+    this.focusNode,
   });
 
   final TextEditingController controller;
@@ -29,13 +30,19 @@ class BoxedCodeInput extends StatefulWidget {
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onCompleted;
 
+  /// Optional external focus node so a parent can focus the field on demand
+  /// (e.g. auto-focusing the OTP/PIN step of a wizard). When null, an internal
+  /// node is created and disposed here.
+  final FocusNode? focusNode;
+
   @override
   State<BoxedCodeInput> createState() => _BoxedCodeInputState();
 }
 
 class _BoxedCodeInputState extends State<BoxedCodeInput>
     with SingleTickerProviderStateMixin {
-  final FocusNode _focus = FocusNode();
+  late final bool _ownsFocus = widget.focusNode == null;
+  late final FocusNode _focus = widget.focusNode ?? FocusNode();
   late final AnimationController _blink = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 600),
@@ -51,15 +58,16 @@ class _BoxedCodeInputState extends State<BoxedCodeInput>
   @override
   void dispose() {
     _blink.dispose();
-    _focus.dispose();
+    if (_ownsFocus) _focus.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final value = widget.controller.text;
-    final activeIndex =
-        _focused && value.length < widget.length ? value.length : -1;
+    final activeIndex = _focused && value.length < widget.length
+        ? value.length
+        : -1;
 
     return Stack(
       children: [
@@ -71,7 +79,8 @@ class _BoxedCodeInputState extends State<BoxedCodeInput>
                 Expanded(
                   child: Padding(
                     padding: EdgeInsets.only(
-                        right: i == widget.length - 1 ? 0 : AppSizes.sm),
+                      right: i == widget.length - 1 ? 0 : AppSizes.sm,
+                    ),
                     child: _Box(
                       filled: i < value.length,
                       digit: i < value.length ? value[i] : '',

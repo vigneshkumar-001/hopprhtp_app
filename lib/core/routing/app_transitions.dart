@@ -94,9 +94,18 @@ class AppNav {
 
   /// Replace the whole stack — used for auth → home and log out.
   static Future<T?> replaceAll<T>(BuildContext context, Widget page) {
-    return Navigator.of(context).pushAndRemoveUntil<T>(
-      route<T>(page),
-      (r) => false,
-    );
+    return Navigator.of(
+      context,
+    ).pushAndRemoveUntil<T>(route<T>(page), (r) => false);
+  }
+
+  /// Push [page], removing every route above the first (e.g. Home) so back
+  /// navigation from it goes straight to Home instead of back through
+  /// whatever flow led here. Used after a terminal step (e.g. delivery
+  /// confirmation) whose intermediate screens should never be reachable again.
+  static Future<T?> pushAndClearToFirst<T>(BuildContext context, Widget page) {
+    return Navigator.of(
+      context,
+    ).pushAndRemoveUntil<T>(route<T>(page), (r) => r.isFirst);
   }
 }

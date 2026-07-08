@@ -55,8 +55,10 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
   @override
   void initState() {
     super.initState();
-    final subtotal = widget.consignments
-        .fold<double>(0, (sum, c) => sum + _parse(c.amount));
+    final subtotal = widget.consignments.fold<double>(
+      0,
+      (sum, c) => sum + _parse(c.amount),
+    );
     _primary = widget.consignments.isNotEmpty
         ? widget.consignments.first
         : Consignment(product: 'Item', amount: '0');
@@ -69,7 +71,9 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
       variant: 'Yemi Stores',
       feeSplit: widget.feeSplit,
     );
-    _deliveryCtrl = TextEditingController(text: Money.format(_draft.deliveryFee, symbol: false));
+    _deliveryCtrl = TextEditingController(
+      text: Money.format(_draft.deliveryFee, symbol: false),
+    );
   }
 
   @override
@@ -104,7 +108,11 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
       shape: RoundedRectangleBorder(borderRadius: AppRadii.xl),
       builder: (ctx) => Padding(
         padding: const EdgeInsets.fromLTRB(
-            AppSizes.xl, AppSizes.xl, AppSizes.xl, AppSizes.xl),
+          AppSizes.xl,
+          AppSizes.xl,
+          AppSizes.xl,
+          AppSizes.xl,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -119,8 +127,10 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
                     color: AppColors.successSoft,
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.verified_user_outlined,
-                      color: AppColors.success),
+                  child: const Icon(
+                    Icons.verified_user_outlined,
+                    color: AppColors.success,
+                  ),
                 ),
                 const SizedBox(width: AppSizes.md),
                 Expanded(
@@ -159,32 +169,40 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
   /// Create the transaction on the backend, then open the payment-link screen.
   Future<void> _generate() async {
     if (_busy) return;
-    if (widget.consignments.isEmpty ||
-        widget.consignments.any(_isIncomplete)) {
-      AppSnackbar.error(context,
-          'Some consignment details are missing. Go back and complete them first.');
+    if (widget.consignments.isEmpty || widget.consignments.any(_isIncomplete)) {
+      AppSnackbar.error(
+        context,
+        'Some consignment details are missing. Go back and complete them first.',
+      );
       return;
     }
     if (!ref.isOnline) {
-      AppSnackbar.error(context,
-          'No internet connection. Please check your network and try again.');
+      AppSnackbar.error(
+        context,
+        'No internet connection. Please check your network and try again.',
+      );
       return;
     }
     // Confirm with the transaction PIN (verified server-side, never stored).
-    final pin = await showPinSheet(context,
-        subtitle: 'Confirm with your PIN to create this transaction.');
+    final pin = await showPinSheet(
+      context,
+      subtitle: 'Confirm with your PIN to create this transaction.',
+    );
     if (pin == null || !mounted) return;
 
     setState(() => _busy = true);
     try {
-      final tx =
-          await ref.read(transactionRepositoryProvider).create(_buildBody(pin));
+      final tx = await ref
+          .read(transactionRepositoryProvider)
+          .create(_buildBody(pin));
       if (!mounted) return;
       // Land it on the dashboard (demo bridge) + refresh the provider-backed list.
       AppScope.read(context).addFromApi(tx);
       ref.invalidate(transactionsProvider);
       AppNav.push(
-          context, PaymentLinkReadyScreen(draft: _draft, code: tx.code));
+        context,
+        PaymentLinkReadyScreen(draft: _draft, code: tx.code),
+      );
     } on ApiException catch (e) {
       if (mounted) AppSnackbar.error(context, e.userMessage);
     } finally {
@@ -193,38 +211,46 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
   }
 
   Map<String, dynamic> _buildBody(String pin) => {
-        'pin': pin,
-        'consignments': [
-          for (final c in widget.consignments)
-            {
-              'product': c.product,
-              if (c.quantity.trim().isNotEmpty) 'quantity': c.quantity,
-              if (c.weight.trim().isNotEmpty) 'weight': c.weight,
-              'amountNaira': _parse(c.amount),
-              if (c.buyerName.trim().isNotEmpty) 'buyerName': c.buyerName,
-              'buyerContact': c.buyerContact,
-              if (c.deliveryAddress.trim().isNotEmpty) 'deliveryAddress': c.deliveryAddress,
-              if (c.waybillTrackingNumber.trim().isNotEmpty)
-                'waybillTrackingNumber': c.waybillTrackingNumber,
-              if (c.payout.isComplete)
-                'payout': {
-                  'dispatcherName': c.payout.dispatcherName,
-                  'dispatcherPhone': c.payout.dispatcherPhone,
-                  'bank': c.payout.bank,
-                  'accountNumber': c.payout.accountNumber,
-                  'accountName': c.payout.accountName,
-                },
-              if (c.dispatcherAddress.trim().isNotEmpty)
-                'dispatcherAddress': c.dispatcherAddress,
-              if (c.specialInstructions.trim().isNotEmpty)
-                'specialInstructions': c.specialInstructions,
-              'dispatchPhotoUrl': ?c.dispatchPhotoUrl,
-              'waybillImageUrl': ?c.waybillImageUrl,
+    'pin': pin,
+    'consignments': [
+      for (final c in widget.consignments)
+        {
+          'product': c.product,
+          if (c.quantity.trim().isNotEmpty) 'quantity': c.quantity,
+          if (c.weight.trim().isNotEmpty) 'weight': c.weight,
+          'amountNaira': _parse(c.amount),
+          if (c.buyerName.trim().isNotEmpty) 'buyerName': c.buyerName,
+          'buyerContact': c.buyerContact,
+          if (c.deliveryAddress.trim().isNotEmpty)
+            'deliveryAddress': c.deliveryAddress,
+          if (c.deliveryLat != null) 'deliveryLat': c.deliveryLat,
+          if (c.deliveryLng != null) 'deliveryLng': c.deliveryLng,
+          if (c.waybillTrackingNumber.trim().isNotEmpty)
+            'waybillTrackingNumber': c.waybillTrackingNumber,
+          if (c.payout.isComplete)
+            'payout': {
+              'dispatcherName': c.payout.dispatcherName,
+              'dispatcherPhone': c.payout.dispatcherPhone,
+              'bank': c.payout.bank,
+              'accountNumber': c.payout.accountNumber,
+              'accountName': c.payout.accountName,
             },
-        ],
-        'feeSplit': _draft.feeSplit.name,
-        'deliveryFeeNaira': _draft.deliveryFee,
-      };
+          if (c.dispatcherAddress.trim().isNotEmpty)
+            'dispatcherAddress': c.dispatcherAddress,
+          if (c.specialInstructions.trim().isNotEmpty)
+            'specialInstructions': c.specialInstructions,
+          // Three independent, optional photos — each to its own backend field.
+          if ((c.productPhotoUrl ?? '').trim().isNotEmpty)
+            'productPhotoUrl': c.productPhotoUrl,
+          if ((c.dispatchPhotoUrl ?? '').trim().isNotEmpty)
+            'dispatchPhotoUrl': c.dispatchPhotoUrl,
+          if ((c.waybillImageUrl ?? '').trim().isNotEmpty)
+            'waybillImageUrl': c.waybillImageUrl,
+        },
+    ],
+    'feeSplit': _draft.feeSplit.name,
+    'deliveryFeeNaira': _draft.deliveryFee,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -241,6 +267,48 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: AppSizes.sm),
+          AppCard(
+            color: AppColors.ink,
+            shadow: true,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: AppColors.lime,
+                    borderRadius: AppRadii.md,
+                  ),
+                  child: const Icon(
+                    Icons.payments_outlined,
+                    color: AppColors.ink,
+                  ),
+                ),
+                const SizedBox(width: AppSizes.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Payment Setup',
+                        style: AppText.h2.copyWith(color: Colors.white),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Review the delivery fee, trust split, and buyer total before generating the link.',
+                        style: AppText.body.copyWith(
+                          color: AppColors.textOnDarkMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSizes.lg),
           Text(
             'Set the delivery fee and confirm the trust protection fee. We\'ll total it up and create a payment link for the buyer.',
             style: AppText.body,
@@ -250,6 +318,7 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
             product: _draft.productName,
             subtitle: '${_draft.sellerName} · ${_draft.sellerCode}',
             amount: _draft.itemSubtotal,
+            imageUrl: _primary.productPhotoUrl,
           ),
           const SizedBox(height: AppSizes.md),
           _DispatcherCard(
@@ -268,12 +337,17 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
               children: [
                 Text('Delivery fee', style: AppText.h3),
                 const SizedBox(height: AppSizes.md),
-                _AmountField(controller: _deliveryCtrl, onChanged: (v) {
-                  setState(() => _draft.deliveryFee = _parse(v));
-                }),
+                _AmountField(
+                  controller: _deliveryCtrl,
+                  onChanged: (v) {
+                    setState(() => _draft.deliveryFee = _parse(v));
+                  },
+                ),
                 const SizedBox(height: AppSizes.sm),
-                Text('Enter any amount — up to ${Money.format(999999)}',
-                    style: AppText.caption),
+                Text(
+                  'Enter any amount — up to ${Money.format(999999)}',
+                  style: AppText.caption,
+                ),
               ],
             ),
           ),
@@ -328,8 +402,11 @@ class _DispatcherCard extends StatelessWidget {
               color: accent.accentSoft,
               borderRadius: AppRadii.md,
             ),
-            child: Icon(Icons.person_outline_rounded,
-                size: 22, color: accent.onAccentSoft),
+            child: Icon(
+              Icons.person_outline_rounded,
+              size: 22,
+              color: accent.onAccentSoft,
+            ),
           ),
           const SizedBox(width: AppSizes.md),
           Expanded(
@@ -338,8 +415,11 @@ class _DispatcherCard extends StatelessWidget {
               children: [
                 Text('Dispatcher', style: AppText.caption),
                 const SizedBox(height: 3),
-                Text(name.isEmpty ? 'Not provided' : name,
-                    style: AppText.bodyStrong, overflow: TextOverflow.ellipsis),
+                Text(
+                  name.isEmpty ? 'Not provided' : name,
+                  style: AppText.bodyStrong,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 if (phone.isNotEmpty) ...[
                   const SizedBox(height: 2),
                   Text(phone, style: AppText.caption),
@@ -379,8 +459,10 @@ class _DeliveryAddressCard extends StatelessWidget {
               GestureDetector(
                 onTap: onEdit,
                 behavior: HitTestBehavior.opaque,
-                child: Text('Edit',
-                    style: AppText.bodyStrong.copyWith(color: linkColor)),
+                child: Text(
+                  'Edit',
+                  style: AppText.bodyStrong.copyWith(color: linkColor),
+                ),
               ),
             ],
           ),
@@ -419,15 +501,20 @@ class _TrustProtocolBanner extends StatelessWidget {
       onTap: onTap,
       child: Row(
         children: [
-          const Icon(Icons.verified_user_outlined,
-              size: 24, color: AppColors.success),
+          const Icon(
+            Icons.verified_user_outlined,
+            size: 24,
+            color: AppColors.success,
+          ),
           const SizedBox(width: AppSizes.md),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Protected by Hoppr Trust Protocol',
-                    style: AppText.bodyStrong),
+                Text(
+                  'Protected by Hoppr Trust Protocol',
+                  style: AppText.bodyStrong,
+                ),
                 const SizedBox(height: 2),
                 Text(
                   'Funds are securely held in escrow until delivery '
@@ -439,8 +526,10 @@ class _TrustProtocolBanner extends StatelessWidget {
           ),
           if (onTap != null) ...[
             const SizedBox(width: AppSizes.sm),
-            const Icon(Icons.chevron_right_rounded,
-                color: AppColors.textTertiary),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: AppColors.textTertiary,
+            ),
           ],
         ],
       ),
@@ -457,10 +546,10 @@ class _BuyerBreakdownCard extends StatelessWidget {
   final PaymentDraft draft;
 
   String get _trustNote => switch (draft.feeSplit) {
-        FeeSplit.buyer => 'Buyer pays',
-        FeeSplit.split => 'Split 50 : 50',
-        FeeSplit.seller => 'Seller pays',
-      };
+    FeeSplit.buyer => 'Buyer pays',
+    FeeSplit.split => 'Split 50 : 50',
+    FeeSplit.seller => 'Seller pays',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -480,10 +569,14 @@ class _BuyerBreakdownCard extends StatelessWidget {
           ),
           const SizedBox(height: AppSizes.lg),
           SummaryRow(
-              label: 'Item value', value: Money.format(draft.itemSubtotal)),
+            label: 'Item value',
+            value: Money.format(draft.itemSubtotal),
+          ),
           const SizedBox(height: AppSizes.md),
           SummaryRow(
-              label: 'Delivery fee', value: Money.format(draft.deliveryFee)),
+            label: 'Delivery fee',
+            value: Money.format(draft.deliveryFee),
+          ),
           const SizedBox(height: AppSizes.md),
           // Trust line: label + a lighter "(who pays)" note, then the value.
           Row(
@@ -491,12 +584,17 @@ class _BuyerBreakdownCard extends StatelessWidget {
               Text('Trust protection fee', style: AppText.body),
               const SizedBox(width: 6),
               Flexible(
-                child: Text('($_trustNote)',
-                    style: AppText.caption, overflow: TextOverflow.ellipsis),
+                child: Text(
+                  '($_trustNote)',
+                  style: AppText.caption,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               const Spacer(),
-              Text(Money.format(draft.buyerTrustShare),
-                  style: AppText.bodyStrong),
+              Text(
+                Money.format(draft.buyerTrustShare),
+                style: AppText.bodyStrong,
+              ),
             ],
           ),
           const Padding(
@@ -506,12 +604,16 @@ class _BuyerBreakdownCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text('Grand total payable by buyer',
-                    style: AppText.bodyStrong),
+                child: Text(
+                  'Grand total payable by buyer',
+                  style: AppText.bodyStrong,
+                ),
               ),
               const SizedBox(width: AppSizes.sm),
-              Text(Money.format(draft.grandTotal),
-                  style: AppText.h2.copyWith(color: accent.ring)),
+              Text(
+                Money.format(draft.grandTotal),
+                style: AppText.h2.copyWith(color: accent.ring),
+              ),
             ],
           ),
         ],
@@ -531,8 +633,9 @@ class _EditAddressSheet extends StatefulWidget {
 }
 
 class _EditAddressSheetState extends State<_EditAddressSheet> {
-  late final TextEditingController _ctrl =
-      TextEditingController(text: widget.initial);
+  late final TextEditingController _ctrl = TextEditingController(
+    text: widget.initial,
+  );
 
   @override
   void dispose() {
@@ -557,8 +660,10 @@ class _EditAddressSheetState extends State<_EditAddressSheet> {
         children: [
           Text('Edit delivery address', style: AppText.h2),
           const SizedBox(height: AppSizes.sm),
-          Text('Where should the courier deliver this order?',
-              style: AppText.body),
+          Text(
+            'Where should the courier deliver this order?',
+            style: AppText.body,
+          ),
           const SizedBox(height: AppSizes.xl),
           AppTextField(
             label: 'Delivery address',

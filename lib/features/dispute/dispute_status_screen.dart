@@ -1,192 +1,332 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/network/api_exception.dart';
+import '../../core/network/error_messages.dart';
+import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
-import '../../widgets/animations.dart';
+import '../../core/utils/formatters.dart';
+import '../../data/dto/dispute_dto.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
-import '../../widgets/common.dart';
-import '../../widgets/premium_card.dart';
-import '../../widgets/segmented_control.dart';
+import '../../widgets/app_text_field.dart';
+import '../../widgets/feedback/app_snackbar.dart';
+import '../../widgets/feedback/state_views.dart';
+import '../transaction/application/transactions_provider.dart';
 import '../transaction/widgets/transaction_widgets.dart';
 import '../wallet/wallet_screen.dart';
 
-class DisputeStatusScreen extends StatefulWidget {
-  const DisputeStatusScreen({super.key});
+/// Dispute Status — real backend data (Phase 9). Shows the actual dispute
+/// record end to end; the counter-party's response form is gated on the real
+/// `raisedByRole` (backend re-enforces this on submit regardless).
+class DisputeStatusScreen extends ConsumerStatefulWidget {
+  const DisputeStatusScreen({super.key, this.disputeId});
+
+  final String? disputeId;
 
   @override
-  State<DisputeStatusScreen> createState() => _DisputeStatusScreenState();
+  ConsumerState<DisputeStatusScreen> createState() =>
+      _DisputeStatusScreenState();
 }
 
-class _DisputeStatusScreenState extends State<DisputeStatusScreen> {
-  int _outcome = 0; // 0 buyer favoured, 1 seller favoured
+class _DisputeStatusScreenState extends ConsumerState<DisputeStatusScreen> {
+  final _responseController = TextEditingController();
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _responseController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submitResponse(Dispute dispute) async {
+    if (_submitting) return;
+    final message = _responseController.text.trim();
+    if (message.length < 5) {
+      AppSnackbar.error(
+        context,
+        'Please enter a response (at least 5 characters).',
+      );
+      return;
+    }
+    setState(() => _submitting = true);
+    try {
+      await ref.read(disputeRepositoryProvider).respond(dispute.id, message);
+      if (!mounted) return;
+      AppSnackbar.success(context, 'Response submitted.');
+      ref.invalidate(disputeDetailProvider(dispute.id));
+      ref.invalidate(transactionLedgerProvider(dispute.transactionId));
+      // Also refresh what Dispute Center / Transaction Details show, so
+      // backing out doesn't leave either on stale pre-response data.
+      ref.invalidate(transactionDisputesProvider(dispute.transactionId));
+      ref.invalidate(transactionDetailProvider(dispute.transactionId));
+      ref.invalidate(transactionsProvider);
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.userMessage);
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final buyerFavoured = _outcome == 0;
+    final id = widget.disputeId;
+    if (id == null) {
+      return const AppScaffold(
+        title: 'Dispute Status',
+        body: ErrorRetryView(
+          message:
+              'Dispute reference is missing. Please go back and try again.',
+        ),
+      );
+    }
+
+    final disputeAsync = ref.watch(disputeDetailProvider(id));
+
     return AppScaffold(
       title: 'Dispute Status',
-      bottomAction: AppButton(
-        label: 'View in wallet',
-        icon: Icons.account_balance_wallet_outlined,
-        onPressed: () => AppNav.push(context, const WalletScreen()),
-      ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: AppSizes.sm),
-          AppCard(
-            color: AppColors.surfaceMuted,
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: const BoxDecoration(
-                      color: AppColors.ink, shape: BoxShape.circle),
-                  child: const Icon(Icons.check_rounded,
-                      color: AppColors.textOnDark, size: 20),
-                ),
-                const SizedBox(width: AppSizes.md),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Dispute resolved', style: AppText.h3),
-                    const SizedBox(height: 2),
-                    Text('Case #DSP-4471 · HTP-7Q2K', style: AppText.caption),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: AppSizes.md),
-          ItemSummaryCard(
-            product: 'MacBook Pro M2',
-            subtitle: 'Category · Item not as described',
-            amount: 0,
-            trailing: const StatusPill(
-              label: 'Closed',
-              icon: Icons.check_rounded,
-              dense: true,
-            ),
-          ),
-          const SizedBox(height: AppSizes.md),
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const CardSectionLabel('Resolution timeline'),
-                const SizedBox(height: AppSizes.md),
-                const _TimelineRow(
-                  icon: Icons.flag_outlined,
-                  title: 'Dispute raised',
-                  subtitle: 'Item not as described',
-                ),
-                const _TimelineRow(
-                  icon: Icons.add_rounded,
-                  title: 'Evidence under review',
-                  subtitle: 'Hoppr Vision pre-screened · ops reviewing',
-                ),
-                _TimelineRow(
-                  icon: Icons.verified_outlined,
-                  title: 'Decision issued',
-                  subtitle: buyerFavoured
-                      ? 'Resolved in buyer\'s favour'
-                      : 'Resolved in seller\'s favour',
-                  isLast: true,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: AppSizes.md),
-          SegmentedControl(
-            segments: const ['Buyer favoured', 'Seller favoured'],
-            selected: _outcome,
-            onChanged: (i) => setState(() => _outcome = i),
-          ),
-          const SizedBox(height: AppSizes.md),
-          // Same premium dark card used on Home / Wallet / Profile.
-          PremiumCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  buyerFavoured
-                      ? 'Refunded to buyer wallet'
-                      : 'Released to seller wallet',
-                  style: AppText.caption
-                      .copyWith(color: AppColors.textOnDarkMuted),
-                ),
-                const SizedBox(height: AppSizes.xs),
-                AnimatedMoney(1237587, style: AppText.numeral),
-                const SizedBox(height: AppSizes.sm),
-                Text(
-                  buyerFavoured
-                      ? 'Escrow status FROZEN → SETTLED · item value + delivery returned to buyer'
-                      : 'Escrow status FROZEN → SETTLED · funds released to the seller',
-                  style: AppText.caption
-                      .copyWith(color: AppColors.textOnDarkMuted),
-                ),
-              ],
-            ),
-          ),
-        ],
+      scrollable: true,
+      body: AsyncValueView(
+        value: disputeAsync,
+        onRetry: () => ref.invalidate(disputeDetailProvider(id)),
+        data: (dispute) => _DisputeBody(
+          dispute: dispute,
+          responseController: _responseController,
+          submitting: _submitting,
+          onSubmitResponse: () => _submitResponse(dispute),
+        ),
       ),
     );
   }
 }
 
-class _TimelineRow extends StatelessWidget {
-  const _TimelineRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    this.isLast = false,
+class _DisputeBody extends ConsumerWidget {
+  const _DisputeBody({
+    required this.dispute,
+    required this.responseController,
+    required this.submitting,
+    required this.onSubmitResponse,
   });
 
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final bool isLast;
+  final Dispute dispute;
+  final TextEditingController responseController;
+  final bool submitting;
+  final VoidCallback onSubmitResponse;
+
+  String _escrowImpact(DisputeResolution r) => r.outcome == 'buyer_favored'
+      ? 'Escrow refunded to the buyer.'
+      : 'Escrow released to the seller.';
 
   @override
-  Widget build(BuildContext context) {
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Column(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final trackingAsync = ref.watch(trackingProvider(dispute.transactionId));
+    final myRole = trackingAsync.maybeWhen(
+      data: (t) => t.isSeller ? 'seller' : 'buyer',
+      orElse: () => null,
+    );
+    final canRespond =
+        myRole != null &&
+        myRole != dispute.raisedByRole &&
+        !dispute.hasResponse &&
+        !dispute.isResolved;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: AppSizes.sm),
+        AppCard(
+          color: AppColors.surfaceMuted,
+          child: Row(
             children: [
               Container(
-                width: 28,
-                height: 28,
+                width: 40,
+                height: 40,
                 decoration: const BoxDecoration(
-                    color: AppColors.ink, shape: BoxShape.circle),
-                child: Icon(icon, size: 15, color: AppColors.textOnDark),
-              ),
-              if (!isLast)
-                Expanded(
-                  child: Container(width: 2, color: AppColors.border),
+                  color: AppColors.ink,
+                  shape: BoxShape.circle,
                 ),
+                child: Icon(
+                  dispute.isResolved
+                      ? Icons.check_rounded
+                      : Icons.flag_outlined,
+                  color: AppColors.textOnDark,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: AppSizes.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(dispute.displayStatus, style: AppText.h3),
+                    const SizedBox(height: 2),
+                    Text('Case ${dispute.code}', style: AppText.caption),
+                  ],
+                ),
+              ),
             ],
           ),
-          const SizedBox(width: AppSizes.md),
-          Padding(
-            padding: EdgeInsets.only(top: 2, bottom: isLast ? 0 : AppSizes.lg),
+        ),
+        const SizedBox(height: AppSizes.md),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const CardSectionLabel('Dispute details'),
+              const SizedBox(height: AppSizes.md),
+              SummaryRow(label: 'Category', value: dispute.categoryLabel),
+              const SizedBox(height: AppSizes.sm),
+              SummaryRow(
+                label: 'Raised by',
+                value: dispute.raisedByRole == 'buyer' ? 'Buyer' : 'Seller',
+              ),
+              const SizedBox(height: AppSizes.sm),
+              SummaryRow(
+                label: 'Raised',
+                value: Dates.relative(dispute.createdAt),
+              ),
+              if ((dispute.reason ?? '').isNotEmpty) ...[
+                const SizedBox(height: AppSizes.md),
+                Text(dispute.reason!, style: AppText.body),
+              ],
+            ],
+          ),
+        ),
+        if (dispute.evidence.isNotEmpty) ...[
+          const SizedBox(height: AppSizes.md),
+          AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: AppText.bodyStrong),
-                const SizedBox(height: 2),
-                Text(subtitle, style: AppText.caption),
+                const CardSectionLabel('Evidence'),
+                const SizedBox(height: AppSizes.md),
+                for (final e in dispute.evidence)
+                  if ((e.url ?? '').isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: AppSizes.sm),
+                      child: ClipRRect(
+                        borderRadius: AppRadii.md,
+                        child: Image.network(
+                          e.url!,
+                          height: 140,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                        ),
+                      ),
+                    )
+                  else if ((e.note ?? '').isNotEmpty)
+                    Text(e.note!, style: AppText.body),
               ],
             ),
           ),
         ],
-      ),
+        if (dispute.ai != null) ...[
+          const SizedBox(height: AppSizes.md),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const CardSectionLabel('Automated first-pass review'),
+                const SizedBox(height: AppSizes.sm),
+                Text(
+                  dispute.ai!.summary,
+                  style: AppText.body.copyWith(color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'This is an automated pre-screen, not the final decision.',
+                  style: AppText.caption,
+                ),
+              ],
+            ),
+          ),
+        ],
+        if (dispute.response != null) ...[
+          const SizedBox(height: AppSizes.md),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CardSectionLabel(
+                  dispute.response!.respondedByRole == 'seller'
+                      ? "Seller's response"
+                      : "Buyer's response",
+                ),
+                const SizedBox(height: AppSizes.sm),
+                Text(dispute.response!.message, style: AppText.body),
+                if (dispute.response!.respondedAt != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    Dates.relative(dispute.response!.respondedAt!),
+                    style: AppText.caption,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+        if (canRespond) ...[
+          const SizedBox(height: AppSizes.md),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const CardSectionLabel('Submit your response'),
+                const SizedBox(height: AppSizes.md),
+                AppTextField(
+                  controller: responseController,
+                  hint: 'Share your side of the story',
+                  maxLines: 4,
+                ),
+                const SizedBox(height: AppSizes.md),
+                AppButton(
+                  label: 'Submit Response',
+                  loading: submitting,
+                  enabled: !submitting,
+                  onPressed: onSubmitResponse,
+                ),
+              ],
+            ),
+          ),
+        ],
+        if (dispute.resolution != null) ...[
+          const SizedBox(height: AppSizes.md),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const CardSectionLabel('Resolution'),
+                const SizedBox(height: AppSizes.sm),
+                Text(_escrowImpact(dispute.resolution!), style: AppText.body),
+                if ((dispute.resolution!.note ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(dispute.resolution!.note!, style: AppText.caption),
+                ],
+                if (dispute.resolution!.at != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    Dates.relative(dispute.resolution!.at!),
+                    style: AppText.caption,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: AppSizes.lg),
+        AppButton(
+          label: 'View in wallet',
+          icon: Icons.account_balance_wallet_outlined,
+          variant: AppButtonVariant.outline,
+          onPressed: () => AppNav.push(context, const WalletScreen()),
+        ),
+        const SizedBox(height: AppSizes.lg),
+      ],
     );
   }
 }

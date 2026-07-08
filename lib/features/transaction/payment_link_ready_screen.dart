@@ -319,10 +319,10 @@ class _PaymentLinkReadyScreenState extends State<PaymentLinkReadyScreen> {
                   // Real WhatsApp logo; its badge green matches the button fill
                   // so it reads as a crisp white glyph on green.
                   leading: Image.asset(
-                    'assets/images/Whatsapp_Image.png',
+                    'assets/images/Whatsapp_Image.png',color:  Colors.white,
                     width: 21,
                     height: 21,
-                    filterQuality: FilterQuality.medium,
+              
                   ),
                   label: 'WhatsApp',
                   fill: const Color(0xFF25D366),

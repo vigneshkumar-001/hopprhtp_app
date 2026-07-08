@@ -21,28 +21,43 @@ import '../../widgets/common.dart';
 import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/app_snackbar.dart';
 import '../../widgets/segmented_control.dart';
+import 'address_picker_screen.dart';
+import 'create_transaction_gate.dart';
 import 'payment_setup_screen.dart';
 import 'scan_vision_screen.dart';
 
 /// Create Transaction (mockup 8). Supports multiple consignments, a "Hoppr
 /// Vision" auto-fill shortcut, image-upload placeholders and courier payout.
-class CreateTransactionScreen extends StatefulWidget {
+class CreateTransactionScreen extends ConsumerStatefulWidget {
   const CreateTransactionScreen({super.key});
 
   @override
-  State<CreateTransactionScreen> createState() =>
+  ConsumerState<CreateTransactionScreen> createState() =>
       _CreateTransactionScreenState();
 }
 
-class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
+class _CreateTransactionScreenState
+    extends ConsumerState<CreateTransactionScreen> {
   final List<_ConsignmentForm> _forms = [_ConsignmentForm()];
   FeeSplit _feeSplit = FeeSplit.split;
 
   static const _feeHelp = {
     FeeSplit.buyer: 'Buyer covers all fees on top of the item price.',
     FeeSplit.split: 'Fees are shared equally between buyer and seller.',
-    FeeSplit.seller: 'Seller absorbs all fees — buyer pays the item price only.',
+    FeeSplit.seller:
+        'Seller absorbs all fees — buyer pays the item price only.',
   };
+
+  @override
+  void initState() {
+    super.initState();
+    // Run after the first real frame so the screen is genuinely on-screen
+    // (never a blank placeholder) before the gate can show its blur sheet
+    // on top of it.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) runCreateTransactionVerificationGate(context, ref);
+    });
+  }
 
   @override
   void dispose() {
@@ -52,8 +67,9 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
     super.dispose();
   }
 
-  bool get _anyUploading =>
-      _forms.any((f) => f.uploadingDispatch || f.uploadingWaybill);
+  bool get _anyUploading => _forms.any(
+    (f) => f.uploadingProduct || f.uploadingDispatch || f.uploadingWaybill,
+  );
 
   // New consignment appears stacked below the existing ones.
   void _addConsignment() {
@@ -71,7 +87,11 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
       shape: RoundedRectangleBorder(borderRadius: AppRadii.xl),
       builder: (ctx) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(
-            AppSizes.xl, AppSizes.xl, AppSizes.xl, AppSizes.lg),
+          AppSizes.xl,
+          AppSizes.xl,
+          AppSizes.xl,
+          AppSizes.lg,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -108,8 +128,64 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
   /// Open Hoppr Vision; if the user confirms a scan, pre-fill the form.
   Future<void> _openVisionScan() async {
     final confirmed = await AppNav.push<bool>(
-        context, const ScanVisionScreen());
+      context,
+      const ScanVisionScreen(),
+    );
     if (confirmed == true && mounted) _autofill();
+  }
+
+  Future<void> _pickDeliveryAddress(_ConsignmentForm form) async {
+    final picked = await AppNav.push<AddressPickResult>(
+      context,
+      AddressPickerScreen(initialAddress: form.deliveryAddress.text.trim()),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      form.deliveryAddress.text = picked.address;
+      form.deliveryLat = picked.location.latitude;
+      form.deliveryLng = picked.location.longitude;
+    });
+  }
+
+  Future<void> _pickDispatcherAddress(_ConsignmentForm form) async {
+    final picked = await AppNav.push<AddressPickResult>(
+      context,
+      AddressPickerScreen(initialAddress: form.dispatcherAddress.text.trim()),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      form.dispatcherAddress.text = picked.address;
+    });
+  }
+
+  Future<void> _pickEstimatedDeliveryDate(_ConsignmentForm form) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: DateTime(now.year + 2),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      form.estimatedDeliveryDate.text =
+          '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+    });
+  }
+
+  Future<void> _pickEstimatedDeliveryTime(_ConsignmentForm form) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    if (picked == null || !mounted) return;
+    final localizations = MaterialLocalizations.of(context);
+    setState(() {
+      form.estimatedDeliveryTime.text = localizations.formatTimeOfDay(
+        picked,
+        alwaysUse24HourFormat: false,
+      );
+    });
   }
 
   void _autofill() {
@@ -122,6 +198,11 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
       f.buyerName.text = 'Amara Okafor';
       f.buyerContact.text = '0901234 5678';
       f.deliveryAddress.text = '12 Bode Thomas Street, Surulere, Lagos';
+      // Real coordinates for the demo address so Track Package works on
+      // demo-scan transactions (a map-picked address sets these itself). Without
+      // them the transaction has no buyer lat/lng and tracking is unavailable.
+      f.deliveryLat = 6.4969;
+      f.deliveryLng = 3.3619;
       f.waybillTrackingNumber.text = 'TRK-8839201';
       f.dispatcherName.text = 'Tunde Bello';
       f.dispatcherPhone.text = '+234 706 740 8881';
@@ -133,7 +214,9 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
       f.payoutExpanded = true;
     });
     AppSnackbar.info(
-        context, 'Demo scan — sample details filled. Review & edit each field.');
+      context,
+      'Demo scan — sample details filled. Review & edit each field.',
+    );
   }
 
   void _continue() {
@@ -204,6 +287,12 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
               total: _forms.length,
               onChanged: () => setState(() {}),
               onContinue: _continue,
+              onPickDeliveryAddress: (form) => _pickDeliveryAddress(form),
+              onPickDispatcherAddress: (form) => _pickDispatcherAddress(form),
+              onPickEstimatedDeliveryDate: (form) =>
+                  _pickEstimatedDeliveryDate(form),
+              onPickEstimatedDeliveryTime: (form) =>
+                  _pickEstimatedDeliveryTime(form),
               onRemove: canRemove ? () => _confirmRemove(i) : null,
             ),
             const SizedBox(height: AppSizes.lg),
@@ -269,43 +358,55 @@ class _VisionBanner extends StatelessWidget {
     // Lilac in the Lime theme; neutral accent tint in Mono.
     final accent = AppAccent.of(context);
     return AppCard(
-      onTap: onTap,
-      color: accent.isLime ? const Color(0xFFDFD9F8) : accent.accentSoft,
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: AppRadii.sm,
-            ),
-            child: Icon(Icons.auto_awesome_rounded,
-                size: 20, color: accent.onAccentSoft),
+          onTap: onTap,
+          color: accent.isLime ? const Color(0xFFDFD9F8) : accent.accentSoft,
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: AppRadii.sm,
+                ),
+                child: Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 20,
+                  color: accent.onAccentSoft,
+                ),
+              ),
+              const SizedBox(width: AppSizes.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Scan with Hoppr Vision', style: AppText.bodyStrong),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Upload a waybill — we auto-fill the fields',
+                      style: AppText.caption,
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.textTertiary,
+              ),
+            ],
           ),
-          const SizedBox(width: AppSizes.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Scan with Hoppr Vision', style: AppText.bodyStrong),
-                const SizedBox(height: 2),
-                Text('Upload a waybill — we auto-fill the fields',
-                    style: AppText.caption),
-              ],
-            ),
-          ),
-          const Icon(Icons.chevron_right_rounded,
-              color: AppColors.textTertiary),
-        ],
-      ),
-    )
+        )
         // Continuous "scan sweep" shimmer hints at the AI capability.
         .animate(onPlay: (c) => c.repeat())
         .shimmer(duration: 1800.ms, delay: 1400.ms, color: Colors.white);
   }
 }
+
+/// The three independent photo slots on a consignment. Each maps to its own
+/// backend field: product → productPhotoUrl, dispatch → dispatchPhotoUrl,
+/// waybill → waybillImageUrl.
+enum _PhotoSlot { product, dispatch, waybill }
 
 class _ConsignmentEditor extends ConsumerWidget {
   const _ConsignmentEditor({
@@ -315,6 +416,10 @@ class _ConsignmentEditor extends ConsumerWidget {
     required this.total,
     required this.onChanged,
     required this.onContinue,
+    required this.onPickDeliveryAddress,
+    required this.onPickDispatcherAddress,
+    required this.onPickEstimatedDeliveryDate,
+    required this.onPickEstimatedDeliveryTime,
     this.onRemove,
   });
 
@@ -323,59 +428,158 @@ class _ConsignmentEditor extends ConsumerWidget {
   final int total;
   final VoidCallback onChanged;
   final VoidCallback onContinue;
+  final Future<void> Function(_ConsignmentForm form) onPickDeliveryAddress;
+  final Future<void> Function(_ConsignmentForm form) onPickDispatcherAddress;
+  final Future<void> Function(_ConsignmentForm form)
+  onPickEstimatedDeliveryDate;
+  final Future<void> Function(_ConsignmentForm form)
+  onPickEstimatedDeliveryTime;
   final VoidCallback? onRemove;
 
-  /// Pick an image from the gallery and upload it; store the returned URL on the
-  /// form. On failure the picked file is dropped so the user can retry.
-  Future<void> _pickPhoto(
-      BuildContext context, WidgetRef ref, bool isDispatch) async {
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 80,
-      maxWidth: 1600,
+  /// Bottom sheet to pick the image source: Take Photo / Choose from Gallery /
+  /// Cancel. Returns null when cancelled/dismissed.
+  Future<ImageSource?> _chooseImageSource(BuildContext context) {
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.all(AppSizes.sm),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: AppRadii.xl,
+          ),
+          padding: const EdgeInsets.symmetric(vertical: AppSizes.sm),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: Text('Take Photo', style: AppText.bodyStrong),
+                onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: Text('Choose from Gallery', style: AppText.bodyStrong),
+                onTap: () => Navigator.of(ctx).pop(ImageSource.gallery),
+              ),
+              ListTile(
+                leading: const Icon(Icons.close_rounded),
+                title: Text(
+                  'Cancel',
+                  style: AppText.body.copyWith(color: AppColors.textSecondary),
+                ),
+                onTap: () => Navigator.of(ctx).pop(),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
+  }
+
+  /// Pick an image (camera or gallery) and upload it; store the returned URL on
+  /// the form for the given [slot]. On failure the picked file is dropped so the
+  /// user can retry, and a clear error is shown — never a false success.
+  Future<void> _pickPhoto(
+    BuildContext context,
+    WidgetRef ref,
+    _PhotoSlot slot,
+  ) async {
+    final source = await _chooseImageSource(context);
+    if (source == null) return; // cancelled
+
+    XFile? picked;
+    try {
+      picked = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 80,
+        maxWidth: 1600,
+      );
+    } catch (_) {
+      if (context.mounted) {
+        AppSnackbar.error(
+          context,
+          source == ImageSource.camera
+              ? 'Could not open the camera. Please try again.'
+              : 'Could not open the gallery. Please try again.',
+        );
+      }
+      return;
+    }
     if (picked == null) return;
 
-    if (isDispatch) {
-      form.dispatchPhoto = picked;
-      form.uploadingDispatch = true;
-    } else {
-      form.waybillImage = picked;
-      form.uploadingWaybill = true;
+    switch (slot) {
+      case _PhotoSlot.product:
+        form.productPhoto = picked;
+        form.uploadingProduct = true;
+      case _PhotoSlot.dispatch:
+        form.dispatchPhoto = picked;
+        form.uploadingDispatch = true;
+      case _PhotoSlot.waybill:
+        form.waybillImage = picked;
+        form.uploadingWaybill = true;
     }
     onChanged();
 
     try {
-      final url =
-          await ref.read(uploadRepositoryProvider).uploadImage(picked.path);
-      if (isDispatch) {
-        form.dispatchPhotoUrl = url;
-      } else {
-        form.waybillImageUrl = url;
+      final url = await ref
+          .read(uploadRepositoryProvider)
+          .uploadImage(picked.path);
+      switch (slot) {
+        case _PhotoSlot.product:
+          form.productPhotoUrl = url;
+        case _PhotoSlot.dispatch:
+          form.dispatchPhotoUrl = url;
+        case _PhotoSlot.waybill:
+          form.waybillImageUrl = url;
       }
     } on ApiException catch (e) {
-      if (isDispatch) {
-        form.dispatchPhoto = null;
-      } else {
-        form.waybillImage = null;
+      switch (slot) {
+        case _PhotoSlot.product:
+          form.productPhoto = null;
+        case _PhotoSlot.dispatch:
+          form.dispatchPhoto = null;
+        case _PhotoSlot.waybill:
+          form.waybillImage = null;
       }
       if (context.mounted) AppSnackbar.error(context, e.userMessage);
     } finally {
-      if (isDispatch) {
-        form.uploadingDispatch = false;
-      } else {
-        form.uploadingWaybill = false;
+      switch (slot) {
+        case _PhotoSlot.product:
+          form.uploadingProduct = false;
+        case _PhotoSlot.dispatch:
+          form.uploadingDispatch = false;
+        case _PhotoSlot.waybill:
+          form.uploadingWaybill = false;
       }
       onChanged();
     }
   }
 
+  /// One labelled photo card: persistent title + helper text above the upload
+  /// box (which itself carries the preview / check / remove states).
+  Widget _photoField({
+    required String title,
+    required String helper,
+    required Widget box,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: AppText.bodyStrong),
+        const SizedBox(height: 2),
+        Text(helper, style: AppText.caption),
+        const SizedBox(height: AppSizes.sm),
+        box,
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    Widget ordered(double order, Widget child) => FocusTraversalOrder(
-          order: NumericFocusOrder(order),
-          child: child,
-        );
+    Widget ordered(double order, Widget child) =>
+        FocusTraversalOrder(order: NumericFocusOrder(order), child: child);
     void focusNext(FocusNode node) => FocusScope.of(context).requestFocus(node);
 
     return AppCard(
@@ -387,47 +591,85 @@ class _ConsignmentEditor extends ConsumerWidget {
           Row(
             children: [
               Expanded(
-                child: Text('Consignment ${index + 1} of $total',
-                    style: AppText.h3),
+                child: Text(
+                  'Consignment ${index + 1} of $total',
+                  style: AppText.h3,
+                ),
               ),
               if (onRemove != null)
                 GestureDetector(
                   onTap: onRemove,
-                  child: const Icon(Icons.delete_outline_rounded,
-                      size: 20, color: AppColors.textTertiary),
+                  child: const Icon(
+                    Icons.delete_outline_rounded,
+                    size: 20,
+                    color: AppColors.textTertiary,
+                  ),
                 ),
               const SizedBox(width: AppSizes.sm),
               StatusPill(label: '#${index + 1}', dense: true),
             ],
           ),
           const SizedBox(height: AppSizes.lg),
+          // Product photo — the item being sold — as its own large top card.
+          _SectionHeader(title: 'Product Photo'),
+          const SizedBox(height: AppSizes.sm),
+          Text(
+            'Upload clear photos of the item you are selling.',
+            style: AppText.caption,
+          ),
+          const SizedBox(height: AppSizes.sm),
+          _UploadBox(
+            label: 'Product Photo',
+            file: form.productPhoto,
+            uploading: form.uploadingProduct,
+            onTap: () => _pickPhoto(context, ref, _PhotoSlot.product),
+            onClear: () {
+              form.productPhoto = null;
+              form.productPhotoUrl = null;
+              onChanged();
+            },
+          ),
+          const SizedBox(height: AppSizes.lg),
+          // Dispatch + Waybill proof photos, side by side. Each is optional and
+          // saved to its own backend field (dispatchPhotoUrl / waybillImageUrl).
+          _SectionHeader(title: 'Proof Photos'),
+          const SizedBox(height: AppSizes.md),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: _UploadBox(
-                  label: 'Dispatch photo',
-                  file: form.dispatchPhoto,
-                  uploading: form.uploadingDispatch,
-                  onTap: () => _pickPhoto(context, ref, true),
-                  onClear: () {
-                    form.dispatchPhoto = null;
-                    form.dispatchPhotoUrl = null;
-                    onChanged();
-                  },
+                child: _photoField(
+                  title: 'Dispatch Photo',
+                  helper: 'Package/dispatch proof.',
+                  box: _UploadBox(
+                    label: 'Dispatch Photo',
+                    file: form.dispatchPhoto,
+                    uploading: form.uploadingDispatch,
+                    onTap: () => _pickPhoto(context, ref, _PhotoSlot.dispatch),
+                    onClear: () {
+                      form.dispatchPhoto = null;
+                      form.dispatchPhotoUrl = null;
+                      onChanged();
+                    },
+                  ),
                 ),
               ),
               const SizedBox(width: AppSizes.md),
               Expanded(
-                child: _UploadBox(
-                  label: 'Waybill image',
-                  file: form.waybillImage,
-                  uploading: form.uploadingWaybill,
-                  onTap: () => _pickPhoto(context, ref, false),
-                  onClear: () {
-                    form.waybillImage = null;
-                    form.waybillImageUrl = null;
-                    onChanged();
-                  },
+                child: _photoField(
+                  title: 'Waybill Photo',
+                  helper: 'Courier receipt or label.',
+                  box: _UploadBox(
+                    label: 'Waybill Photo',
+                    file: form.waybillImage,
+                    uploading: form.uploadingWaybill,
+                    onTap: () => _pickPhoto(context, ref, _PhotoSlot.waybill),
+                    onClear: () {
+                      form.waybillImage = null;
+                      form.waybillImageUrl = null;
+                      onChanged();
+                    },
+                  ),
                 ),
               ),
             ],
@@ -439,6 +681,7 @@ class _ConsignmentEditor extends ConsumerWidget {
             1,
             AppTextField(
               label: 'Product / item',
+              required: true,
               hint: 'MacBook Pro M2',
               icon: Icons.inventory_2_outlined,
               controller: form.product,
@@ -449,31 +692,31 @@ class _ConsignmentEditor extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: AppSizes.md),
+          ordered(
+            2,
+            AppTextField(
+              label: 'Amount',
+              required: true,
+              prefixText: Money.naira,
+              controller: form.amount,
+              focusNode: form.amountFocus,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.next,
+              inputFormatters: [ThousandsFormatter()],
+              onSubmitted: (_) => focusNext(form.quantityFocus),
+              onChanged: (_) => onChanged(),
+            ),
+          ),
+          const SizedBox(height: AppSizes.md),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: ordered(
-                  2,
-                  AppTextField(
-                    label: 'Amount',
-                    prefixText: Money.naira,
-                    controller: form.amount,
-                    focusNode: form.amountFocus,
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.next,
-                    inputFormatters: [ThousandsFormatter()],
-                    onSubmitted: (_) => focusNext(form.quantityFocus),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSizes.md),
-              Expanded(
-                child: ordered(
                   3,
                   AppTextField(
                     label: 'Quantity',
+                    required: true,
                     controller: form.quantity,
                     focusNode: form.quantityFocus,
                     keyboardType: TextInputType.number,
@@ -490,9 +733,10 @@ class _ConsignmentEditor extends ConsumerWidget {
                   4,
                   AppTextField(
                     label: 'Weight',
+                    required: false,
                     controller: form.weight,
                     focusNode: form.weightFocus,
-                    keyboardType: TextInputType.text,
+                    keyboardType: TextInputType.number,
                     textInputAction: TextInputAction.next,
                     onSubmitted: (_) => focusNext(form.buyerNameFocus),
                     onChanged: (_) => onChanged(),
@@ -504,56 +748,68 @@ class _ConsignmentEditor extends ConsumerWidget {
           const SizedBox(height: AppSizes.lg),
           _SectionHeader(title: 'Buyer Information'),
           const SizedBox(height: AppSizes.md),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: ordered(
-                  5,
-                  AppTextField(
-                    label: 'Buyer name',
-                    icon: Icons.person_outline_rounded,
-                    controller: form.buyerName,
-                    focusNode: form.buyerNameFocus,
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => focusNext(form.buyerContactFocus),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSizes.md),
-              Expanded(
-                child: ordered(
-                  6,
-                  AppTextField(
-                    label: 'Buyer contact',
-                    icon: Icons.phone_outlined,
-                    controller: form.buyerContact,
-                    focusNode: form.buyerContactFocus,
-                    keyboardType: TextInputType.phone,
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => focusNext(form.deliveryAddressFocus),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-              ),
-            ],
+          ordered(
+            5,
+            AppTextField(
+              label: 'Buyer name',
+              required: true,
+              icon: Icons.person_outline_rounded,
+              controller: form.buyerName,
+              focusNode: form.buyerNameFocus,
+              textInputAction: TextInputAction.next,
+              onSubmitted: (_) => focusNext(form.buyerContactFocus),
+              onChanged: (_) => onChanged(),
+            ),
+          ),
+          const SizedBox(height: AppSizes.md),
+          ordered(
+            6,
+            AppTextField(
+              label: 'Buyer contact',
+              required: true,
+              icon: Icons.phone_outlined,
+              controller: form.buyerContact,
+              focusNode: form.buyerContactFocus,
+              keyboardType: TextInputType.phone,
+              textInputAction: TextInputAction.next,
+              onSubmitted: (_) => focusNext(form.deliveryAddressFocus),
+              onChanged: (_) => onChanged(),
+            ),
           ),
           const SizedBox(height: AppSizes.lg),
           _SectionHeader(title: 'Delivery Information'),
           const SizedBox(height: AppSizes.md),
           ordered(
             7,
-            AppTextField(
+            _LargeAddressField(
               label: 'Delivery address',
-              hint: '12 Bode Thomas Street, Surulere, Lagos',
+              required: true,
               icon: Icons.location_on_outlined,
-              controller: form.deliveryAddress,
-              focusNode: form.deliveryAddressFocus,
-              textInputAction: TextInputAction.next,
-              onSubmitted: (_) => focusNext(form.waybillTrackingFocus),
-              onChanged: (_) => onChanged(),
+              value: form.deliveryAddress.text.trim(),
+              hint: 'Tap to select delivery address on map',
+              onTap: () => onPickDeliveryAddress(form),
             ),
+          ),
+          const SizedBox(height: AppSizes.md),
+          const SizedBox(height: AppSizes.md),
+          AppTextField(
+            label: 'Estimated delivery date',
+            hint: 'Tap to pick a date',
+            controller: form.estimatedDeliveryDate,
+            focusNode: form.estimatedDeliveryDateFocus,
+            required: true,
+            readOnly: true,
+            onTap: () => onPickEstimatedDeliveryDate(form),
+          ),
+          const SizedBox(height: AppSizes.md),
+          AppTextField(
+            label: 'Estimated delivery time',
+            hint: 'Optional - tap to pick a time',
+            controller: form.estimatedDeliveryTime,
+            focusNode: form.estimatedDeliveryTimeFocus,
+            required: false,
+            readOnly: true,
+            onTap: () => onPickEstimatedDeliveryTime(form),
           ),
           const SizedBox(height: AppSizes.md),
           ordered(
@@ -576,6 +832,7 @@ class _ConsignmentEditor extends ConsumerWidget {
             9,
             AppTextField(
               label: 'Dispatcher name',
+              required: true,
               icon: Icons.person_outline_rounded,
               controller: form.dispatcherName,
               focusNode: form.dispatcherNameFocus,
@@ -585,39 +842,31 @@ class _ConsignmentEditor extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: AppSizes.md),
-          Row(
-            children: [
-              Expanded(
-                child: ordered(
-                  10,
-                  AppTextField(
-                    label: 'Dispatcher phone number',
-                    icon: Icons.phone_outlined,
-                    controller: form.dispatcherPhone,
-                    focusNode: form.dispatcherPhoneFocus,
-                    keyboardType: TextInputType.phone,
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => focusNext(form.dispatcherAddressFocus),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSizes.md),
-              Expanded(
-                child: ordered(
-                  11,
-                  AppTextField(
-                    label: 'Dispatcher address',
-                    icon: Icons.map_outlined,
-                    controller: form.dispatcherAddress,
-                    focusNode: form.dispatcherAddressFocus,
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => focusNext(form.specialInstructionsFocus),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-              ),
-            ],
+          ordered(
+            10,
+            AppTextField(
+              label: 'Dispatcher phone number',
+              required: true,
+              icon: Icons.phone_outlined,
+              controller: form.dispatcherPhone,
+              focusNode: form.dispatcherPhoneFocus,
+              keyboardType: TextInputType.phone,
+              textInputAction: TextInputAction.next,
+              onSubmitted: (_) => focusNext(form.dispatcherAddressFocus),
+              onChanged: (_) => onChanged(),
+            ),
+          ),
+          const SizedBox(height: AppSizes.md),
+          ordered(
+            11,
+            _LargeAddressField(
+              label: 'Dispatcher address',
+              required: true,
+              icon: Icons.map_outlined,
+              value: form.dispatcherAddress.text.trim(),
+              hint: 'Tap to select dispatcher address on map',
+              onTap: () => onPickDispatcherAddress(form),
+            ),
           ),
           const SizedBox(height: AppSizes.lg),
           _SectionHeader(title: 'Additional Information (optional)'),
@@ -664,6 +913,90 @@ class _SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(title, style: AppText.h3);
+  }
+}
+
+class _LargeAddressField extends StatelessWidget {
+  const _LargeAddressField({
+    required this.label,
+    required this.icon,
+    required this.value,
+    required this.hint,
+    required this.onTap,
+    this.required = false,
+  });
+
+  final String label;
+  final IconData icon;
+  final String value;
+  final String hint;
+  final VoidCallback onTap;
+  final bool required;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasValue = value.trim().isNotEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(label, style: AppText.label),
+            if (required)
+              Text(
+                ' *',
+                style: AppText.label.copyWith(color: AppColors.danger),
+              ),
+          ],
+        ),
+        const SizedBox(height: AppSizes.sm),
+        AppCard(
+          onTap: onTap,
+          padding: const EdgeInsets.all(AppSizes.md),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceMuted,
+                  borderRadius: AppRadii.sm,
+                ),
+                child: Icon(icon, size: 20, color: AppColors.textSecondary),
+              ),
+              const SizedBox(width: AppSizes.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      hasValue ? value : hint,
+                      style: AppText.bodyStrong.copyWith(
+                        color: hasValue
+                            ? AppColors.textPrimary
+                            : AppColors.textTertiary,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      hasValue ? 'Tap to change on map' : 'Tap to open map',
+                      style: AppText.caption,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSizes.sm),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.textTertiary,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -740,15 +1073,15 @@ class _UploadBoxState extends State<_UploadBox> {
                             child: SizedBox(
                               width: 18,
                               height: 18,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2),
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             ),
                           ),
                         if (widget.uploading)
                           Container(
                             color: Colors.black.withValues(alpha: 0.4),
                             child: const Center(
-                                child: AppButtonLoader(color: Colors.white)),
+                              child: AppButtonLoader(color: Colors.white),
+                            ),
                           ),
                         Positioned(
                           top: 6,
@@ -761,8 +1094,11 @@ class _UploadBoxState extends State<_UploadBox> {
                                 color: Colors.black.withValues(alpha: 0.5),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(Icons.close_rounded,
-                                  size: 14, color: Colors.white),
+                              child: const Icon(
+                                Icons.close_rounded,
+                                size: 14,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
                         ),
@@ -772,8 +1108,11 @@ class _UploadBoxState extends State<_UploadBox> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.image_outlined,
-                              size: 26, color: AppColors.textTertiary),
+                          const Icon(
+                            Icons.image_outlined,
+                            size: 26,
+                            color: AppColors.textTertiary,
+                          ),
                           const SizedBox(height: 6),
                           Text(
                             widget.label,
@@ -793,8 +1132,9 @@ class _UploadBoxState extends State<_UploadBox> {
         // both turn green together once a photo is attached.
         Builder(
           builder: (_) {
-            final captionColor =
-                has ? AppColors.success : AppColors.textTertiary;
+            final captionColor = has
+                ? AppColors.success
+                : AppColors.textTertiary;
             return Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -840,10 +1180,8 @@ class _CourierPayoutSection extends StatelessWidget {
     final payout = form.payoutModel;
     // Accent circle behind the truck icon follows the theme (lime / mono).
     final accent = AppAccent.of(context);
-    Widget ordered(double order, Widget child) => FocusTraversalOrder(
-          order: NumericFocusOrder(order),
-          child: child,
-        );
+    Widget ordered(double order, Widget child) =>
+        FocusTraversalOrder(order: NumericFocusOrder(order), child: child);
     void focusNext(FocusNode node) => FocusScope.of(context).requestFocus(node);
 
     return AppCard(
@@ -868,19 +1206,23 @@ class _CourierPayoutSection extends StatelessWidget {
                     color: accent.accentSoft,
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(Icons.local_shipping_outlined,
-                      size: 20, color: accent.onAccentSoft),
+                  child: Icon(
+                    Icons.local_shipping_outlined,
+                    size: 20,
+                    color: accent.onAccentSoft,
+                  ),
                 ),
                 const SizedBox(width: AppSizes.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Courier Payout Details',
-                          style: AppText.h3),
+                      Text('Courier Payout Details', style: AppText.h3),
                       const SizedBox(height: 4),
                       Text(
-                        payout.isComplete ? payout.summary : 'Add dispatcher payout',
+                        payout.isComplete
+                            ? payout.summary
+                            : 'Add dispatcher payout',
                         style: AppText.caption,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -926,51 +1268,45 @@ class _CourierPayoutSection extends StatelessWidget {
               padding: const EdgeInsets.only(top: AppSizes.md),
               child: Column(
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ordered(
-                          13,
-                          AppTextField(
-                            label: 'Bank name',
-                            hint: 'GTBank',
-                            icon: Icons.account_balance_outlined,
-                            controller: form.bank,
-                            focusNode: form.bankFocus,
-                            textInputAction: TextInputAction.next,
-                            onSubmitted: (_) => focusNext(form.accountFocus),
-                            onChanged: (_) => onChanged(),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: AppSizes.md),
-                      Expanded(
-                        child: ordered(
-                          14,
-                          AppTextField(
-                            label: 'Account number',
-                            hint: '0000000000',
-                            controller: form.account,
-                            focusNode: form.accountFocus,
-                            keyboardType: TextInputType.number,
-                            textInputAction: TextInputAction.next,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                              LengthLimitingTextInputFormatter(10),
-                            ],
-                            onSubmitted: (_) =>
-                                focusNext(form.accountNameFocus),
-                            onChanged: (_) => onChanged(),
-                          ),
-                        ),
-                      ),
-                    ],
+                  ordered(
+                    13,
+                    AppTextField(
+                      label: 'Bank name',
+                      required: true,
+                      hint: 'GTBank',
+                      icon: Icons.account_balance_outlined,
+                      controller: form.bank,
+                      focusNode: form.bankFocus,
+                      textInputAction: TextInputAction.next,
+                      onSubmitted: (_) => focusNext(form.accountFocus),
+                      onChanged: (_) => onChanged(),
+                    ),
+                  ),
+                  const SizedBox(height: AppSizes.md),
+                  ordered(
+                    14,
+                    AppTextField(
+                      label: 'Account number',
+                      required: true,
+                      hint: '0000000000',
+                      controller: form.account,
+                      focusNode: form.accountFocus,
+                      keyboardType: TextInputType.number,
+                      textInputAction: TextInputAction.next,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(10),
+                      ],
+                      onSubmitted: (_) => focusNext(form.accountNameFocus),
+                      onChanged: (_) => onChanged(),
+                    ),
                   ),
                   const SizedBox(height: AppSizes.md),
                   ordered(
                     15,
                     AppTextField(
                       label: 'Account name',
+                      required: true,
                       hint: 'As shown on the account',
                       icon: Icons.verified_user_outlined,
                       controller: form.accountName,
@@ -987,7 +1323,9 @@ class _CourierPayoutSection extends StatelessWidget {
                   // flush with the inputs above it.
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: AppSizes.lg, vertical: AppSizes.md),
+                      horizontal: AppSizes.lg,
+                      vertical: AppSizes.md,
+                    ),
                     decoration: BoxDecoration(
                       // Lilac in the Lime theme; soft grey in Mono.
                       color: accent.isLime
@@ -999,8 +1337,11 @@ class _CourierPayoutSection extends StatelessWidget {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        const Icon(Icons.lock_outline_rounded,
-                            size: 15, color: AppColors.textTertiary),
+                        const Icon(
+                          Icons.lock_outline_rounded,
+                          size: 15,
+                          color: AppColors.textTertiary,
+                        ),
                         const SizedBox(width: AppSizes.sm),
                         Expanded(
                           child: Text(
@@ -1031,6 +1372,10 @@ class _ConsignmentForm {
   final buyerName = TextEditingController();
   final buyerContact = TextEditingController();
   final deliveryAddress = TextEditingController();
+  double? deliveryLat;
+  double? deliveryLng;
+  final estimatedDeliveryDate = TextEditingController();
+  final estimatedDeliveryTime = TextEditingController();
   final waybillTrackingNumber = TextEditingController();
   final dispatcherName = TextEditingController();
   final dispatcherPhone = TextEditingController();
@@ -1039,10 +1384,13 @@ class _ConsignmentForm {
   final account = TextEditingController();
   final accountName = TextEditingController();
   final specialInstructions = TextEditingController();
+  XFile? productPhoto;
   XFile? dispatchPhoto;
   XFile? waybillImage;
-  String? dispatchPhotoUrl; // backend URL once the upload completes
+  String? productPhotoUrl; // backend URL once the upload completes
+  String? dispatchPhotoUrl;
   String? waybillImageUrl;
+  bool uploadingProduct = false;
   bool uploadingDispatch = false;
   bool uploadingWaybill = false;
   bool payoutExpanded = false;
@@ -1053,6 +1401,8 @@ class _ConsignmentForm {
   final buyerNameFocus = FocusNode();
   final buyerContactFocus = FocusNode();
   final deliveryAddressFocus = FocusNode();
+  final estimatedDeliveryDateFocus = FocusNode();
+  final estimatedDeliveryTimeFocus = FocusNode();
   final waybillTrackingFocus = FocusNode();
   final dispatcherNameFocus = FocusNode();
   final dispatcherPhoneFocus = FocusNode();
@@ -1075,8 +1425,10 @@ class _ConsignmentForm {
   /// a value can never slip through to a server-side 422.
   ({FocusNode focus, String message, bool inPayout})? firstInvalid() {
     ({FocusNode focus, String message, bool inPayout}) err(
-            FocusNode f, String m, {bool payout = false}) =>
-        (focus: f, message: m, inPayout: payout);
+      FocusNode f,
+      String m, {
+      bool payout = false,
+    }) => (focus: f, message: m, inPayout: payout);
 
     final productText = product.text.trim();
     if (productText.isEmpty) {
@@ -1109,54 +1461,81 @@ class _ConsignmentForm {
 
     final bContact = buyerContact.text.trim();
     if (bContact.length < 3) {
-      return err(buyerContactFocus,
-          'Enter a valid buyer contact (at least 3 characters).');
+      return err(
+        buyerContactFocus,
+        'Enter a valid buyer contact (at least 3 characters).',
+      );
     }
     if (bContact.length > 120) {
       return err(
-          buyerContactFocus, 'Buyer contact must be 120 characters or fewer.');
+        buyerContactFocus,
+        'Buyer contact must be 120 characters or fewer.',
+      );
     }
 
     final addr = deliveryAddress.text.trim();
-    if (addr.isEmpty) return err(deliveryAddressFocus, 'Enter the delivery address.');
+    final estDate = estimatedDeliveryDate.text.trim();
+    if (estDate.isEmpty)
+      return err(
+        estimatedDeliveryDateFocus,
+        "Enter the estimated delivery date.",
+      );
+    if (addr.isEmpty)
+      return err(deliveryAddressFocus, 'Enter the delivery address.');
     if (addr.length > 240) {
-      return err(deliveryAddressFocus,
-          'Delivery address must be 240 characters or fewer.');
+      return err(
+        deliveryAddressFocus,
+        'Delivery address must be 240 characters or fewer.',
+      );
     }
 
     if (waybillTrackingNumber.text.trim().length > 80) {
-      return err(waybillTrackingFocus,
-          'Waybill / tracking number must be 80 characters or fewer.');
+      return err(
+        waybillTrackingFocus,
+        'Waybill / tracking number must be 80 characters or fewer.',
+      );
     }
 
     final dName = dispatcherName.text.trim();
     if (dName.length < 2) {
-      return err(dispatcherNameFocus,
-          "Enter the dispatcher's name (at least 2 characters).");
+      return err(
+        dispatcherNameFocus,
+        "Enter the dispatcher's name (at least 2 characters).",
+      );
     }
     if (dName.length > 80) {
       return err(
-          dispatcherNameFocus, 'Dispatcher name must be 80 characters or fewer.');
+        dispatcherNameFocus,
+        'Dispatcher name must be 80 characters or fewer.',
+      );
     }
 
     final dPhone = dispatcherPhone.text.trim();
     if (dPhone.length < 7) {
-      return err(dispatcherPhoneFocus,
-          'Enter a valid dispatcher phone (at least 7 digits).');
+      return err(
+        dispatcherPhoneFocus,
+        'Enter a valid dispatcher phone (at least 7 digits).',
+      );
     }
     if (dPhone.length > 20) {
-      return err(dispatcherPhoneFocus,
-          'Dispatcher phone must be 20 characters or fewer.');
+      return err(
+        dispatcherPhoneFocus,
+        'Dispatcher phone must be 20 characters or fewer.',
+      );
     }
 
     if (dispatcherAddress.text.trim().length > 240) {
-      return err(dispatcherAddressFocus,
-          'Dispatcher address must be 240 characters or fewer.');
+      return err(
+        dispatcherAddressFocus,
+        'Dispatcher address must be 240 characters or fewer.',
+      );
     }
 
     if (specialInstructions.text.trim().length > 500) {
-      return err(specialInstructionsFocus,
-          'Notes must be 500 characters or fewer.');
+      return err(
+        specialInstructionsFocus,
+        'Notes must be 500 characters or fewer.',
+      );
     }
 
     final bankText = bank.text.trim();
@@ -1164,53 +1543,70 @@ class _ConsignmentForm {
       return err(bankFocus, "Enter the courier's bank name.", payout: true);
     }
     if (bankText.length > 60) {
-      return err(bankFocus, 'Bank name must be 60 characters or fewer.',
-          payout: true);
+      return err(
+        bankFocus,
+        'Bank name must be 60 characters or fewer.',
+        payout: true,
+      );
     }
 
     if (!RegExp(r'^\d{10}$').hasMatch(account.text.trim())) {
-      return err(accountFocus, 'Account number must be exactly 10 digits.',
-          payout: true);
+      return err(
+        accountFocus,
+        'Account number must be exactly 10 digits.',
+        payout: true,
+      );
     }
 
     final acctName = accountName.text.trim();
     if (acctName.length < 2) {
-      return err(accountNameFocus, "Enter the courier's account name.",
-          payout: true);
+      return err(
+        accountNameFocus,
+        "Enter the courier's account name.",
+        payout: true,
+      );
     }
     if (acctName.length > 80) {
-      return err(accountNameFocus, 'Account name must be 80 characters or fewer.',
-          payout: true);
+      return err(
+        accountNameFocus,
+        'Account name must be 80 characters or fewer.',
+        payout: true,
+      );
     }
 
     return null;
   }
 
   CourierPayout get payoutModel => CourierPayout(
-        dispatcherName: dispatcherName.text.trim(),
-        dispatcherPhone: dispatcherPhone.text.trim(),
-        bank: bank.text.trim(),
-        accountNumber: account.text.trim(),
-        accountName: accountName.text.trim(),
-      );
+    dispatcherName: dispatcherName.text.trim(),
+    dispatcherPhone: dispatcherPhone.text.trim(),
+    bank: bank.text.trim(),
+    accountNumber: account.text.trim(),
+    accountName: accountName.text.trim(),
+  );
 
   Consignment toModel() => Consignment(
-        product: product.text.trim(),
-        amount: amount.text.trim(),
-        quantity: quantity.text.trim(),
-        weight: weight.text.trim(),
-        buyerName: buyerName.text.trim(),
-        buyerContact: buyerContact.text.trim(),
-        deliveryAddress: deliveryAddress.text.trim(),
-        waybillTrackingNumber: waybillTrackingNumber.text.trim(),
-        dispatcherAddress: dispatcherAddress.text.trim(),
-        specialInstructions: specialInstructions.text.trim(),
-        payout: payoutModel,
-        hasDispatchPhoto: hasDispatchPhoto,
-        hasWaybillImage: hasWaybill,
-        dispatchPhotoUrl: dispatchPhotoUrl,
-        waybillImageUrl: waybillImageUrl,
-      );
+    product: product.text.trim(),
+    amount: amount.text.trim(),
+    quantity: quantity.text.trim(),
+    weight: weight.text.trim(),
+    buyerName: buyerName.text.trim(),
+    buyerContact: buyerContact.text.trim(),
+    deliveryAddress: deliveryAddress.text.trim(),
+    deliveryLat: deliveryLat,
+    deliveryLng: deliveryLng,
+    estimatedDeliveryDate: estimatedDeliveryDate.text.trim(),
+    estimatedDeliveryTime: estimatedDeliveryTime.text.trim(),
+    waybillTrackingNumber: waybillTrackingNumber.text.trim(),
+    dispatcherAddress: dispatcherAddress.text.trim(),
+    specialInstructions: specialInstructions.text.trim(),
+    payout: payoutModel,
+    hasDispatchPhoto: hasDispatchPhoto,
+    hasWaybillImage: hasWaybill,
+    productPhotoUrl: productPhotoUrl,
+    dispatchPhotoUrl: dispatchPhotoUrl,
+    waybillImageUrl: waybillImageUrl,
+  );
 
   void dispose() {
     for (final c in [
@@ -1221,6 +1617,8 @@ class _ConsignmentForm {
       buyerName,
       buyerContact,
       deliveryAddress,
+      estimatedDeliveryDate,
+      estimatedDeliveryTime,
       waybillTrackingNumber,
       dispatcherName,
       dispatcherPhone,
@@ -1240,6 +1638,8 @@ class _ConsignmentForm {
       buyerNameFocus,
       buyerContactFocus,
       deliveryAddressFocus,
+      estimatedDeliveryDateFocus,
+      estimatedDeliveryTimeFocus,
       waybillTrackingFocus,
       dispatcherNameFocus,
       dispatcherPhoneFocus,

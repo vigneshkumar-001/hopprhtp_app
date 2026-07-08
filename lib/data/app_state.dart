@@ -126,28 +126,37 @@ class AppState extends ChangeNotifier {
         merchantName: t.merchantName,
         productName: t.productName,
         variant: t.variant,
+        buyerName: t.buyerName,
+        buyerContact: t.buyerContact,
+        deliveryAddress: t.deliveryAddress,
+        estimatedDeliveryDate: t.estimatedDeliveryDate,
+        estimatedDeliveryTime: t.estimatedDeliveryTime,
         amount: t.grandTotalNaira,
         stage: _stageFromApi(t.stage),
         status: _statusFromApi(t.status),
+        myRole: t.myRole,
+        apiStatus: t.status,
+        productPhotoUrl: t.productPhotoUrl,
+        createdAt: t.createdAt,
       ),
     );
     notifyListeners();
   }
 
   static TxStage _stageFromApi(ApiTxStage s) => switch (s) {
-        ApiTxStage.cooling => TxStage.cooling,
-        ApiTxStage.done => TxStage.done,
-        ApiTxStage.active => TxStage.active,
-      };
+    ApiTxStage.cooling => TxStage.cooling,
+    ApiTxStage.done => TxStage.done,
+    ApiTxStage.active => TxStage.active,
+  };
 
   static TxStatus _statusFromApi(ApiTxStatus s) => switch (s) {
-        ApiTxStatus.outForDelivery => TxStatus.outForDelivery,
-        ApiTxStatus.inTransit => TxStatus.inTransit,
-        ApiTxStatus.delivered => TxStatus.delivered,
-        ApiTxStatus.released || ApiTxStatus.completed => TxStatus.released,
-        ApiTxStatus.disputed => TxStatus.disputed,
-        _ => TxStatus.awaitingDispatch,
-      };
+    ApiTxStatus.outForDelivery => TxStatus.outForDelivery,
+    ApiTxStatus.inTransit => TxStatus.inTransit,
+    ApiTxStatus.delivered => TxStatus.delivered,
+    ApiTxStatus.released || ApiTxStatus.completed => TxStatus.released,
+    ApiTxStatus.disputed => TxStatus.disputed,
+    _ => TxStatus.awaitingDispatch,
+  };
 
   EscrowTransaction? findByCode(String code) {
     final normalized = code.trim().toUpperCase();
@@ -158,65 +167,62 @@ class AppState extends ChangeNotifier {
   }
 
   static List<EscrowTransaction> _seedTransactions() => [
-        EscrowTransaction(
-          id: 't1',
-          code: 'HTP-7Q2K',
-          merchantName: 'Mira Atelier',
-          productName: 'Linen Two-Piece Set',
-          variant: 'Size M · Sand beige',
-          amount: 51220,
-          stage: TxStage.active,
-          status: TxStatus.outForDelivery,
-        ),
-        EscrowTransaction(
-          id: 't2',
-          code: 'HTP-3M8X',
-          merchantName: 'TechHub NG',
-          productName: 'Anker 737 Power Bank',
-          variant: '24,000mAh · Black',
-          amount: 86208,
-          stage: TxStage.active,
-          status: TxStatus.inTransit,
-        ),
-        EscrowTransaction(
-          id: 't3',
-          code: 'HTP-9K4P',
-          merchantName: 'Lagos Kicks',
-          productName: 'Retro Hi-Top Sneakers',
-          variant: 'Size 43 · Off-white',
-          amount: 42500,
-          stage: TxStage.cooling,
-          status: TxStatus.delivered,
-        ),
-        EscrowTransaction(
-          id: 't4',
-          code: 'HTP-1A0Z',
-          merchantName: 'Bloom & Co',
-          productName: 'Ceramic Vase Bundle',
-          amount: 18900,
-          stage: TxStage.done,
-          status: TxStatus.released,
-        ),
-        EscrowTransaction(
-          id: 't5',
-          code: 'HTP-6T5R',
-          merchantName: 'Gadget Plug',
-          productName: 'AirPods Pro (2nd gen)',
-          variant: 'USB-C',
-          amount: 168000,
-          stage: TxStage.done,
-          status: TxStatus.released,
-        ),
-      ];
+    EscrowTransaction(
+      id: 't1',
+      code: 'HTP-7Q2K',
+      merchantName: 'Mira Atelier',
+      productName: 'Linen Two-Piece Set',
+      variant: 'Size M · Sand beige',
+      amount: 51220,
+      stage: TxStage.active,
+      status: TxStatus.outForDelivery,
+    ),
+    EscrowTransaction(
+      id: 't2',
+      code: 'HTP-3M8X',
+      merchantName: 'TechHub NG',
+      productName: 'Anker 737 Power Bank',
+      variant: '24,000mAh · Black',
+      amount: 86208,
+      stage: TxStage.active,
+      status: TxStatus.inTransit,
+    ),
+    EscrowTransaction(
+      id: 't3',
+      code: 'HTP-9K4P',
+      merchantName: 'Lagos Kicks',
+      productName: 'Retro Hi-Top Sneakers',
+      variant: 'Size 43 · Off-white',
+      amount: 42500,
+      stage: TxStage.cooling,
+      status: TxStatus.delivered,
+    ),
+    EscrowTransaction(
+      id: 't4',
+      code: 'HTP-1A0Z',
+      merchantName: 'Bloom & Co',
+      productName: 'Ceramic Vase Bundle',
+      amount: 18900,
+      stage: TxStage.done,
+      status: TxStatus.released,
+    ),
+    EscrowTransaction(
+      id: 't5',
+      code: 'HTP-6T5R',
+      merchantName: 'Gadget Plug',
+      productName: 'AirPods Pro (2nd gen)',
+      variant: 'USB-C',
+      amount: 168000,
+      stage: TxStage.done,
+      status: TxStatus.released,
+    ),
+  ];
 }
 
 /// Shares [AppState] down the tree and rebuilds dependents on change.
 class AppScope extends InheritedNotifier<AppState> {
-  const AppScope({
-    super.key,
-    required AppState state,
-    required super.child,
-  }) : super(notifier: state);
+  const AppScope({super.key, required AppState state, required super.child})
+    : super(notifier: state);
 
   static AppState of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<AppScope>();

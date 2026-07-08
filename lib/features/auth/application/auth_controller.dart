@@ -68,6 +68,9 @@ class AuthController extends AsyncNotifier<AuthState> {
     final session = await _repo.login(identifier: identifier, pin: pin);
     await _tokens.save(
         access: session.accessToken, refresh: session.refreshToken);
+    // Drop any cached data from a previous session before the new one's screens
+    // mount, so they fetch fresh with the new token (no flash of stale data).
+    resetUserScopedProviders(ref);
     state = AsyncData(AuthState.authenticated(session.user));
   }
 
@@ -97,6 +100,7 @@ class AuthController extends AsyncNotifier<AuthState> {
     final session = await _repo.confirmRegister(phone: phone, otp: otp, pin: pin);
     await _tokens.save(
         access: session.accessToken, refresh: session.refreshToken);
+    resetUserScopedProviders(ref);
     state = AsyncData(AuthState.authenticated(session.user));
   }
 
@@ -136,12 +140,14 @@ class AuthController extends AsyncNotifier<AuthState> {
       // Best-effort; we sign out locally regardless.
     }
     await _tokens.clear();
+    resetUserScopedProviders(ref);
     state = const AsyncData(AuthState.unauthenticated());
   }
 
   /// Invoked by the auth interceptor when a refresh fails — drop the session.
   void forceLogout() {
     unawaited(_tokens.clear());
+    resetUserScopedProviders(ref);
     state = const AsyncData(AuthState.unauthenticated());
   }
 

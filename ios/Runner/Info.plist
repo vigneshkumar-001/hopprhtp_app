@@ -4,6 +4,12 @@
 <dict>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Use Face ID to quickly and securely unlock Hoppr.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Hoppr needs camera access so you can take photos of your product, dispatch, and waybill for a transaction.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Hoppr needs photo library access so you can attach product, dispatch, and waybill photos to a transaction.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Hoppr uses your location to update delivery tracking and to confirm you are within 200m of the buyer's delivery address when verifying delivery.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

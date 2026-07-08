@@ -14,6 +14,16 @@ import 'package_tracking_screen.dart';
 import 'widgets/transaction_widgets.dart';
 
 /// After Payment Confirmation — funds locked, OTP issued to dispatcher.
+EscrowTransaction _draftToTx(PaymentDraft draft) => EscrowTransaction(
+      id: draft.sellerCode,
+      code: draft.sellerCode,
+      merchantName: draft.sellerName,
+      productName: draft.productName,
+      amount: draft.grandTotal,
+      stage: TxStage.active,
+      status: TxStatus.awaitingDispatch,
+    );
+
 class AfterPaymentScreen extends StatelessWidget {
   const AfterPaymentScreen({super.key, required this.draft});
   final PaymentDraft draft;
@@ -30,7 +40,7 @@ class AfterPaymentScreen extends StatelessWidget {
         variant: AppButtonVariant.outline,
         accentInLime: true,
         onPressed: () =>
-            AppNav.push(context, PackageTrackingScreen(draft: draft)),
+            AppNav.push(context, PackageTrackingScreen(tx: _draftToTx(draft))),
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -129,3 +139,12 @@ class AfterPaymentScreen extends StatelessWidget {
     );
   }
 }
+
+
+
+
+
+
+
+
+
