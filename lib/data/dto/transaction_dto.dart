@@ -154,6 +154,7 @@ class ApiTransaction {
     this.myRole,
     this.isSeller = false,
     this.isBuyer = false,
+    this.sellerId,
   });
 
   final String id;
@@ -215,6 +216,11 @@ class ApiTransaction {
   final String? myRole; // 'seller' | 'buyer' | null
   final bool isSeller;
   final bool isBuyer;
+
+  /// The transaction creator's user id — lets the buyer's side navigate to a
+  /// real Merchant Profile. Null on shapes that don't carry it (defensive
+  /// only; every live transaction has a sellerId).
+  final String? sellerId;
 
   double get itemSubtotalNaira => itemSubtotalKobo / 100;
   double get deliveryFeeNaira => deliveryFeeKobo / 100;
@@ -302,6 +308,7 @@ class ApiTransaction {
       isBuyer: j['isBuyer'] != null
           ? asBool(j['isBuyer'])
           : asStringOrNull(j['myRole']) == 'buyer',
+      sellerId: j['sellerId'] == null ? null : asId(j['sellerId']),
     );
   }
 }

@@ -4,7 +4,9 @@ import 'package:logger/logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/repositories/auth_repository.dart';
 import '../data/repositories/dispute_repository.dart';
+import '../data/repositories/merchant_repository.dart';
 import '../data/repositories/public_config_repository.dart';
+import '../data/dto/merchant_dto.dart';
 import '../data/dto/wallet_dto.dart';
 import '../data/repositories/notification_repository.dart';
 import '../data/repositories/support_repository.dart';
@@ -82,6 +84,18 @@ final disputeRepositoryProvider = Provider<DisputeRepository>(
   (ref) => DisputeRepository(ref.watch(dioProvider)),
 );
 
+final merchantRepositoryProvider = Provider<MerchantRepository>(
+  (ref) => MerchantRepository(ref.watch(dioProvider)),
+);
+
+/// A merchant's public-safe profile, keyed by merchant id. Auto-disposed so
+/// re-opening a Merchant Profile always shows fresh stats.
+final merchantProfileProvider = FutureProvider.autoDispose
+    .family<MerchantProfile, String>(
+      (ref, merchantId) =>
+          ref.watch(merchantRepositoryProvider).getProfile(merchantId),
+    );
+
 final uploadRepositoryProvider = Provider<UploadRepository>(
   (ref) => UploadRepository(ref.watch(dioProvider)),
 );
@@ -158,6 +172,7 @@ void resetUserScopedProviders(Ref ref) {
   ref.invalidate(transactionDetailProvider);
   ref.invalidate(transactionDisputesProvider);
   ref.invalidate(disputeDetailProvider);
+  ref.invalidate(merchantProfileProvider);
   ref.invalidate(walletBalanceProvider);
   ref.invalidate(walletLedgerProvider);
   ref.invalidate(unreadNotificationsProvider);

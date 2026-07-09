@@ -18,6 +18,7 @@ import '../../core/theme/app_typography.dart';
 import '../../core/utils/app_logger.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/dto/dispute_dto.dart';
+import '../../data/dto/merchant_dto.dart';
 import '../../data/dto/transaction_dto.dart';
 import '../../data/models/models.dart';
 import '../../widgets/app_button.dart';
@@ -166,6 +167,10 @@ class _TransactionDetailScreenState
     ref.invalidate(transactionLedgerProvider(tx.id));
     ref.invalidate(transactionDisputesProvider(tx.id));
     ref.invalidate(transactionsProvider);
+    // The seller's stats (completed/active/cooling/disputes) can shift on
+    // any lifecycle event on this transaction — keep the whole merchant
+    // profile family fresh rather than tracking which merchantId to target.
+    ref.invalidate(merchantProfileProvider);
   }
 
   /// Seller starts delivery (payment_received/awaiting_dispatch → in_transit).
@@ -444,11 +449,6 @@ class _TransactionDetailScreenState
     transactionId: tx.id,
   );
 
-  // The transaction model doesn't carry seller reputation yet, so show
-  // representative values until the merchant profile is wired to the API.
-  String get _trustScore => 'A+';
-  int get _successfulTx => 128;
-
   // Product category isn't on the model yet; keep the Escrow badge for now.
   String get _category => 'Escrow';
 
@@ -480,6 +480,14 @@ class _TransactionDetailScreenState
     // instead of reverting to nothing/stale mid-screen.
     final detailAsync = ref.watch(transactionDetailProvider(tx.id));
     final liveStatus = detailAsync.valueOrNull?.status;
+    // The real seller identity only exists on the live detail (never the
+    // demo/legacy tx snapshot) — the Seller Card's trust badge and the
+    // Merchant Profile navigation both wait on this instead of showing a
+    // placeholder trust score.
+    final sellerId = detailAsync.valueOrNull?.sellerId;
+    final merchantAsync = sellerId == null
+        ? null
+        : ref.watch(merchantProfileProvider(sellerId));
     // A refetch is in flight but we still have a previous value — surface the
     // small "Updating…" indicator rather than silently swapping data under
     // the user, or blocking the screen with a full-page spinner.
@@ -576,10 +584,13 @@ class _TransactionDetailScreenState
                 ),
                 _SellerCard(
                   tx: tx,
-                  trustScore: _trustScore,
-                  successfulTx: _successfulTx,
-                  onTap: () =>
-                      AppNav.push(context, const MerchantProfileScreen()),
+                  merchantAsync: merchantAsync,
+                  onTap: sellerId == null
+                      ? () {}
+                      : () => AppNav.push(
+                          context,
+                          MerchantProfileScreen(merchantId: sellerId),
+                        ),
                 ),
                 const SizedBox(height: AppSizes.md),
                 _ProductCard(tx: tx, category: _category),
@@ -895,19 +906,20 @@ class _CoolingPeriodCard extends StatelessWidget {
 class _SellerCard extends StatelessWidget {
   const _SellerCard({
     required this.tx,
-    required this.trustScore,
-    required this.successfulTx,
+    required this.merchantAsync,
     required this.onTap,
   });
 
   final EscrowTransaction tx;
-  final String trustScore;
-  final int successfulTx;
+  // Null while the sellerId isn't known yet (first paint, before the live
+  // transaction detail resolves) — never a fabricated trust/verified value.
+  final AsyncValue<MerchantProfile>? merchantAsync;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final accent = AppAccent.of(context);
+    final profile = merchantAsync?.valueOrNull;
+    final verified = profile?.isVerified ?? false;
     return AppCard(
       onTap: onTap,
       child: Row(
@@ -930,43 +942,50 @@ class _SellerCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    const SizedBox(width: 5),
-                    Icon(Icons.verified_rounded, size: 16, color: accent.ring),
+                    if (verified) ...[
+                      const SizedBox(width: 5),
+                      const VerifiedBadge(size: 16),
+                    ],
                   ],
                 ),
-                const SizedBox(height: 3),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.verified_user_outlined,
-                      size: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                    const SizedBox(width: 4),
-                    Text('HTP Verified Seller', style: AppText.caption),
-                  ],
-                ),
-                const SizedBox(height: 7),
-                Row(
-                  children: [
-                    Text('Trust score', style: AppText.caption),
-                    const SizedBox(width: 6),
-                    StatusPill(
-                      label: trustScore,
-                      dense: true,
-                      background: AppColors.successSoft,
-                      foreground: AppColors.success,
-                    ),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        '· $successfulTx successful transactions',
-                        style: AppText.caption,
-                        overflow: TextOverflow.ellipsis,
+                if (verified) ...[
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.verified_user_outlined,
+                        size: 13,
+                        color: AppColors.textSecondary,
                       ),
-                    ),
-                  ],
-                ),
+                      const SizedBox(width: 4),
+                      Text('HTP Verified Seller', style: AppText.caption),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 7),
+                if (profile == null)
+                  const AppShimmerBox(width: 140, height: 14)
+                else
+                  Row(
+                    children: [
+                      Text('Trust score', style: AppText.caption),
+                      const SizedBox(width: 6),
+                      StatusPill(
+                        label: profile.stats.trustLabel,
+                        dense: true,
+                        background: AppColors.successSoft,
+                        foreground: AppColors.success,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          '· ${profile.stats.completedTransactions} successful transactions',
+                          style: AppText.caption,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),
