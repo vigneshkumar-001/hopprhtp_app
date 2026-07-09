@@ -18,7 +18,6 @@ import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
 import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/app_snackbar.dart';
-import '../../widgets/feedback/state_views.dart';
 
 /// Mutable draft carried through the KYC steps (doc type + 3 captured images).
 class KycDraft {
@@ -64,7 +63,6 @@ class IdentityVerificationScreen extends ConsumerStatefulWidget {
 class _IdentityVerificationScreenState
     extends ConsumerState<IdentityVerificationScreen> {
   bool _loading = true;
-  Object? _error;
 
   @override
   void initState() {
@@ -74,21 +72,18 @@ class _IdentityVerificationScreenState
 
   /// Always refetches on open (rather than trusting a possibly-stale cached
   /// profile) so a status that changed server-side — e.g. a review that
-  /// completed since this user last opened the app — is reflected here.
+  /// completed since this user last opened the app — is reflected here. A
+  /// failure just falls back to whatever status was last known (see build())
+  /// instead of blocking the screen — the snackbar is the only error signal.
   Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    setState(() => _loading = true);
     try {
       await ref.read(authControllerProvider.notifier).refreshProfile();
       if (mounted) setState(() => _loading = false);
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = e;
-        });
+        setState(() => _loading = false);
+        AppSnackbar.error(context, friendlyError(e), onRetry: _load);
       }
     }
   }
@@ -100,13 +95,6 @@ class _IdentityVerificationScreenState
         title: 'Identity verification',
         scrollable: false,
         body: Center(child: AppCircularLoader()),
-      );
-    }
-    if (_error != null) {
-      return AppScaffold(
-        title: 'Identity verification',
-        scrollable: false,
-        body: ErrorRetryView(message: friendlyError(_error!), onRetry: _load),
       );
     }
 

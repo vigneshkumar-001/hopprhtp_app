@@ -99,7 +99,7 @@ class ApiUser {
     this.phoneCountry,
     this.address,
     required this.trustScore,
-    required this.trustGrade,
+    required this.trustCategory,
     required this.deals,
     required this.disputes,
     required this.verified,
@@ -126,8 +126,9 @@ class ApiUser {
   final String? phoneCountry; // ISO-3166 alpha-2
   final ProfileAddress? address;
 
-  final int trustScore; // 0..100
-  final String trustGrade; // "A+", "A", ...
+  final int trustScore; // 0..1000 — the Hoppr Trust Score
+  final String
+  trustCategory; // "Exceptional" | "Excellent" | "Good" | "Fair" | "Needs Improvement"
   final int deals;
   final int disputes;
   final bool verified;
@@ -173,8 +174,8 @@ class ApiUser {
     dob: ProfileDob.fromJson(asMap(j['dob'])),
     phoneCountry: asStringOrNull(j['phoneCountry']),
     address: ProfileAddress.fromJson(asMap(j['address'])),
-    trustScore: asInt(j['trustScore'], 80),
-    trustGrade: asString(j['trustGrade'], 'A'),
+    trustScore: asInt(j['trustScore'], 600),
+    trustCategory: asString(j['trustCategory'], 'Fair'),
     deals: asInt(j['deals']),
     disputes: asInt(j['disputes']),
     verified: asBool(j['verified']),

@@ -10,6 +10,14 @@
 	<string>Hoppr needs photo library access so you can attach product, dispatch, and waybill photos to a transaction.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Hoppr uses your location to update delivery tracking and to confirm you are within 200m of the buyer's delivery address when verifying delivery.</string>
+	<!-- Lets FCM deliver background/silent push while the app isn't in the
+	     foreground. The permission prompt itself is requested at runtime via
+	     FirebaseMessaging.requestPermission() (push_notification_service.dart) —
+	     no usage-description string is required for push specifically. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
@@ -42,7 +50,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.fenizotechnologies.escrow.hopprpay</string>
+			<string>com.fenizotechnologies.hopptHtp.hopprpay</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>hopprpay</string>

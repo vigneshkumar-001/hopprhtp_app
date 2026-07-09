@@ -8,6 +8,7 @@ import '../../widgets/app_scaffold.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/blur_sheet.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_snackbar.dart';
 import '../transaction/widgets/transaction_widgets.dart';
 
 class PayoutAccountsScreen extends StatefulWidget {
@@ -49,9 +50,7 @@ class _PayoutAccountsScreenState extends State<PayoutAccountsScreen> {
             onTap: () => setState(() => _default = 1),
           ),
           const SizedBox(height: AppSizes.md),
-          _AddAccountButton(
-            onTap: () => _showAddBankSheet(context),
-          ),
+          _AddAccountButton(onTap: () => _showAddBankSheet(context)),
           const SizedBox(height: AppSizes.lg),
           const NoteBanner(
             text:
@@ -69,7 +68,11 @@ void _showAddBankSheet(BuildContext context) {
     context,
     builder: (ctx) => Padding(
       padding: const EdgeInsets.fromLTRB(
-          AppSizes.xl, AppSizes.md, AppSizes.xl, AppSizes.lg),
+        AppSizes.xl,
+        AppSizes.md,
+        AppSizes.xl,
+        AppSizes.lg,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -100,9 +103,7 @@ void _showAddBankSheet(BuildContext context) {
             variant: AppButtonVariant.outline,
             onPressed: () {
               Navigator.of(ctx).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Bank account added')),
-              );
+              AppSnackbar.success(context, 'Bank account added');
             },
           ),
         ],
@@ -153,16 +154,21 @@ class _AccountCard extends StatelessWidget {
               children: [
                 Text(bank, style: AppText.bodyStrong),
                 const SizedBox(height: 2),
-                Text('$account · $name',
-                    style: AppText.caption.copyWith(fontFamily: 'monospace')),
+                Text(
+                  '$account · $name',
+                  style: AppText.caption.copyWith(fontFamily: 'monospace'),
+                ),
               ],
             ),
           ),
           if (isDefault)
             const StatusPill(label: 'Default', dense: true)
           else
-            const Icon(Icons.radio_button_unchecked_rounded,
-                color: AppColors.textTertiary, size: 22),
+            const Icon(
+              Icons.radio_button_unchecked_rounded,
+              color: AppColors.textTertiary,
+              size: 22,
+            ),
         ],
       ),
     );

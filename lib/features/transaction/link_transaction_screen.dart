@@ -9,6 +9,7 @@ import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_snackbar.dart';
 import '../home/home_shell.dart';
 import 'widgets/transaction_widgets.dart';
 
@@ -27,9 +28,7 @@ class LinkTransactionScreen extends StatelessWidget {
         variant: AppButtonVariant.outline,
         accentInLime: true,
         onPressed: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Transaction linked to your account')),
-          );
+          AppSnackbar.success(context, 'Transaction linked to your account');
           AppNav.replaceAll(context, const HomeShell());
         },
       ),
@@ -41,9 +40,13 @@ class LinkTransactionScreen extends StatelessWidget {
             children: [
               const BrandMark(pill: true, fontSize: 16),
               const SizedBox(width: AppSizes.sm),
-              Text('WELCOME BACK',
-                  style: AppText.caption.copyWith(
-                      letterSpacing: 1.2, fontWeight: FontWeight.w700)),
+              Text(
+                'WELCOME BACK',
+                style: AppText.caption.copyWith(
+                  letterSpacing: 1.2,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: AppSizes.lg),
@@ -61,9 +64,12 @@ class LinkTransactionScreen extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Secured in escrow',
-                        style: AppText.caption
-                            .copyWith(color: AppColors.textOnDarkMuted)),
+                    Text(
+                      'Secured in escrow',
+                      style: AppText.caption.copyWith(
+                        color: AppColors.textOnDarkMuted,
+                      ),
+                    ),
                     const StatusPill(
                       label: 'LOCKED',
                       icon: Icons.lock_outline_rounded,
@@ -87,19 +93,28 @@ class LinkTransactionScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Yemi Stores',
-                              style: AppText.bodyStrong
-                                  .copyWith(color: AppColors.textOnDark)),
+                          Text(
+                            'Yemi Stores',
+                            style: AppText.bodyStrong.copyWith(
+                              color: AppColors.textOnDark,
+                            ),
+                          ),
                           const SizedBox(height: 2),
-                          Text('HTP-LGS-8881 · MacBook Pro M2',
-                              style: AppText.caption.copyWith(
-                                  color: AppColors.textOnDarkMuted,
-                                  fontFamily: 'monospace')),
+                          Text(
+                            'HTP-LGS-8881 · MacBook Pro M2',
+                            style: AppText.caption.copyWith(
+                              color: AppColors.textOnDarkMuted,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                    Icon(Icons.check_circle_rounded,
-                        color: accent.highlight, size: 20),
+                    Icon(
+                      Icons.check_circle_rounded,
+                      color: accent.highlight,
+                      size: 20,
+                    ),
                   ],
                 ),
               ],
@@ -141,8 +156,11 @@ class LinkTransactionScreen extends StatelessWidget {
 }
 
 class _MatchRow extends StatelessWidget {
-  const _MatchRow(
-      {required this.icon, required this.title, required this.value});
+  const _MatchRow({
+    required this.icon,
+    required this.title,
+    required this.value,
+  });
   final IconData icon;
   final String title;
   final String value;
@@ -169,13 +187,18 @@ class _MatchRow extends StatelessWidget {
             children: [
               Text(title, style: AppText.bodyStrong),
               const SizedBox(height: 2),
-              Text(value,
-                  style: AppText.caption.copyWith(fontFamily: 'monospace')),
+              Text(
+                value,
+                style: AppText.caption.copyWith(fontFamily: 'monospace'),
+              ),
             ],
           ),
         ),
-        const Icon(Icons.check_circle_rounded,
-            color: AppColors.success, size: 20),
+        const Icon(
+          Icons.check_circle_rounded,
+          color: AppColors.success,
+          size: 20,
+        ),
       ],
     );
   }

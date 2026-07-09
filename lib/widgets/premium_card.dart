@@ -71,11 +71,17 @@ class PremiumCard extends StatelessWidget {
               right: -34,
               child: ImageFiltered(
                 imageFilter: ImageFilter.blur(
-                    sigmaX: 4, sigmaY: 4, tileMode: TileMode.decal),
+                  sigmaX: 4,
+                  sigmaY: 4,
+                  tileMode: TileMode.decal,
+                ),
                 child: Container(
                   width: 152,
                   height: 152,
-                  decoration: BoxDecoration(shape: BoxShape.circle, gradient: orb),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: orb,
+                  ),
                 ),
               ),
             ),
@@ -106,21 +112,33 @@ class CardStat extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(value,
+        // Some values are longer than a short number/letter-grade (e.g. the
+        // Hoppr Trust Score's "600 Fair"/"1000 Exceptional") — shrink to fit
+        // its allotted share of the row instead of overflowing, same pattern
+        // as the balance amount above.
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
             style: TextStyle(
               fontSize: 22,
               height: 1.0,
               fontWeight: FontWeight.w800,
               letterSpacing: -0.4,
               color: valueColor ?? Colors.white,
-            )),
+            ),
+          ),
+        ),
         const SizedBox(height: 5),
-        Text(label,
-            style: TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w500,
-              color: Colors.white.withValues(alpha: 0.55),
-            )),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w500,
+            color: Colors.white.withValues(alpha: 0.55),
+          ),
+        ),
       ],
     );
   }

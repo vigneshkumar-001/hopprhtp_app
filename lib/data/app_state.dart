@@ -69,7 +69,7 @@ class AppState extends ChangeNotifier {
       fullName: u.fullName,
       phone: u.phone,
       email: u.email,
-      trustScore: u.trustGrade,
+      trustScore: u.trustCategory,
       deals: u.deals,
       disputes: u.disputes,
       verified: u.verified,

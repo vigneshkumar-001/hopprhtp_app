@@ -132,7 +132,10 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         _error = null;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e);
+      if (mounted) {
+        setState(() => _error = e);
+        AppSnackbar.error(context, friendlyError(e), onRetry: _loadFirst);
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -240,12 +243,6 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   Widget _list() {
     if (_firstLoad && _loading) {
       return const Center(child: AppCircularLoader());
-    }
-    if (_error != null && _items.isEmpty) {
-      return ErrorRetryView(
-        message: friendlyError(_error!),
-        onRetry: _loadFirst,
-      );
     }
     if (_items.isEmpty) {
       return const EmptyStateView(

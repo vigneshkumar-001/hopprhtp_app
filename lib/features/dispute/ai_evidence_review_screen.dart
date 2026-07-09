@@ -7,6 +7,7 @@ import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_snackbar.dart';
 import '../../widgets/segmented_control.dart' show LabeledBar;
 import '../transaction/widgets/transaction_widgets.dart';
 import 'dispute_status_screen.dart';
@@ -26,17 +27,15 @@ class AiEvidenceReviewScreen extends StatelessWidget {
           AppButton(
             label: 'Open admin decision',
             icon: Icons.swap_horiz_rounded,
-            onPressed: () =>
-                AppNav.push(context, const DisputeStatusScreen()),
+            onPressed: () => AppNav.push(context, const DisputeStatusScreen()),
           ),
           const SizedBox(height: AppSizes.sm),
           AppButton(
             label: 'Request missing evidence',
             icon: Icons.chat_bubble_outline_rounded,
             variant: AppButtonVariant.soft,
-            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Evidence request sent to seller')),
-            ),
+            onPressed: () =>
+                AppSnackbar.success(context, 'Evidence request sent to seller'),
           ),
         ],
       ),
@@ -50,8 +49,7 @@ class AiEvidenceReviewScreen extends StatelessWidget {
               const SizedBox(width: 6),
               Text('Hoppr Vision', style: AppText.bodyStrong),
               const SizedBox(width: 6),
-              Text('First-layer automated assessment',
-                  style: AppText.caption),
+              Text('First-layer automated assessment', style: AppText.caption),
             ],
           ),
           const SizedBox(height: AppSizes.md),
@@ -79,9 +77,10 @@ class AiEvidenceReviewScreen extends StatelessWidget {
                 LabeledBar(label: 'Evidence completeness', value: 0.78),
                 SizedBox(height: AppSizes.lg),
                 LabeledBar(
-                    label: 'Fraud-risk score',
-                    value: 0.41,
-                    color: AppColors.danger),
+                  label: 'Fraud-risk score',
+                  value: 0.41,
+                  color: AppColors.danger,
+                ),
               ],
             ),
           ),
@@ -152,13 +151,18 @@ class _EvidenceRow extends StatelessWidget {
         Expanded(child: Text(label, style: AppText.bodyStrong)),
         Row(
           children: [
-            Icon(present ? Icons.check_rounded : Icons.close_rounded,
-                size: 15,
-                color: present ? AppColors.success : AppColors.danger),
+            Icon(
+              present ? Icons.check_rounded : Icons.close_rounded,
+              size: 15,
+              color: present ? AppColors.success : AppColors.danger,
+            ),
             const SizedBox(width: 4),
-            Text(present ? 'Present' : 'Missing',
-                style: AppText.caption.copyWith(
-                    color: present ? AppColors.success : AppColors.danger)),
+            Text(
+              present ? 'Present' : 'Missing',
+              style: AppText.caption.copyWith(
+                color: present ? AppColors.success : AppColors.danger,
+              ),
+            ),
           ],
         ),
       ],

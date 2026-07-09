@@ -6,6 +6,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
 import '../app_button.dart';
+import 'app_snackbar.dart';
 
 /// A single shimmering skeleton block. Compose several to mock a loading layout.
 /// Defaults suit a light card (muted-grey bone, white shimmer sweep); pass
@@ -126,9 +127,13 @@ class EmptyStateView extends StatelessWidget {
   }
 }
 
-/// Renders an [AsyncValue] as one of: loading (skeleton) / error (retry) /
-/// empty / data. The single reusable bridge between Riverpod and the UI states
-/// every data screen needs.
+/// Renders an [AsyncValue] as one of: loading (skeleton) / error (snackbar,
+/// page stays empty) / empty / data. The single reusable bridge between
+/// Riverpod and the UI states every data screen needs.
+///
+/// A fetch failure is never shown as an inline page block — it fires the
+/// shared [AppSnackbar.error] (with a Retry action when [onRetry] is given)
+/// once per new error, and the body renders nothing underneath it.
 ///
 /// ```dart
 /// AsyncValueView(
@@ -138,7 +143,7 @@ class EmptyStateView extends StatelessWidget {
 ///   data: (list) => ListView.builder(...),
 /// )
 /// ```
-class AsyncValueView<T> extends StatelessWidget {
+class AsyncValueView<T> extends StatefulWidget {
   const AsyncValueView({
     super.key,
     required this.value,
@@ -157,17 +162,52 @@ class AsyncValueView<T> extends StatelessWidget {
   final WidgetBuilder? empty;
 
   @override
+  State<AsyncValueView<T>> createState() => _AsyncValueViewState<T>();
+}
+
+class _AsyncValueViewState<T> extends State<AsyncValueView<T>> {
+  // Tracks the error object last surfaced via snackbar so a rebuild while
+  // still in the same error state (e.g. an unrelated parent rebuild) never
+  // re-shows it — only a genuinely new failed fetch does.
+  Object? _lastNotifiedError;
+
+  @override
+  void initState() {
+    super.initState();
+    _maybeNotify();
+  }
+
+  @override
+  void didUpdateWidget(covariant AsyncValueView<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _maybeNotify();
+  }
+
+  void _maybeNotify() {
+    final error = widget.value.error;
+    if (error == null) {
+      _lastNotifiedError = null;
+      return;
+    }
+    if (identical(error, _lastNotifiedError)) return;
+    _lastNotifiedError = error;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      AppSnackbar.error(context, friendlyError(error), onRetry: widget.onRetry);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return value.when(
-      loading: () => loading?.call(context) ?? const _DefaultSkeleton(),
-      error: (e, _) =>
-          ErrorRetryView(message: friendlyError(e), onRetry: onRetry),
+    return widget.value.when(
+      loading: () => widget.loading?.call(context) ?? const _DefaultSkeleton(),
+      error: (_, _) => const SizedBox.shrink(),
       data: (d) {
-        if (isEmpty?.call(d) ?? false) {
-          return empty?.call(context) ??
+        if (widget.isEmpty?.call(d) ?? false) {
+          return widget.empty?.call(context) ??
               const EmptyStateView(title: 'Nothing here yet');
         }
-        return data(d);
+        return widget.data(d);
       },
     );
   }

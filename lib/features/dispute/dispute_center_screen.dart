@@ -148,17 +148,30 @@ class _DisputeCenterScreenState extends ConsumerState<DisputeCenterScreen> {
       ref.invalidate(transactionDisputesProvider(id));
     }
 
+    // A fetch failure goes to the shared snackbar, never an inline page
+    // block — fires once per new error, not on every rebuild.
+    ref.listen(trackingProvider(id), (previous, next) {
+      final err = next.error;
+      if (err != null) {
+        AppSnackbar.error(context, friendlyError(err), onRetry: retry);
+      }
+    });
+    ref.listen(transactionDisputesProvider(id), (previous, next) {
+      final err = next.error;
+      if (err != null) {
+        AppSnackbar.error(context, friendlyError(err), onRetry: retry);
+      }
+    });
+
     return AppScaffold(
       title: 'Dispute Center',
       scrollable: true,
       body: trackingAsync.when(
         loading: () => const _Loading(),
-        error: (e, _) =>
-            ErrorRetryView(message: friendlyError(e), onRetry: retry),
+        error: (_, _) => const SizedBox.shrink(),
         data: (tracking) => disputesAsync.when(
           loading: () => const _Loading(),
-          error: (e, _) =>
-              ErrorRetryView(message: friendlyError(e), onRetry: retry),
+          error: (_, _) => const SizedBox.shrink(),
           data: (disputes) {
             if (tracking.isSeller) {
               return const _MessageCard(

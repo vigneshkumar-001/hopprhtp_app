@@ -26,6 +26,7 @@ class TransactionCard extends StatelessWidget {
     required this.tx,
     this.onTap,
     this.colorIndex = 0,
+    this.productFirstLayout = false,
   });
 
   final EscrowTransaction tx;
@@ -33,6 +34,13 @@ class TransactionCard extends StatelessWidget {
 
   /// Position-based index so each card gets a consistent pastel tint.
   final int colorIndex;
+
+  /// Alternate layout used on Home and Transaction History (Initiation /
+  /// Transit keep the original layout unchanged):
+  ///  - product name (bold) sits where the created-date used to be, and the
+  ///    created-date moves down to where the product name used to be.
+  ///  - the product photo is replaced by an initials avatar (no photo shown).
+  final bool productFirstLayout;
 
   /// Selling/Buying chip driven by the per-transaction role. Null → no chip
   /// (legacy/demo rows with unknown role).
@@ -131,15 +139,29 @@ class TransactionCard extends StatelessWidget {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // The product being sold, not a generic merchant
-                      // avatar — placeholder handled by ProductThumb itself
-                      // when there's no photo. A dedicated tag (not shared
-                      // with Transaction Details' seller-identity avatar) so
-                      // no Hero flight tries to morph a photo into initials.
-                      Hero(
-                        tag: 'txn-thumb-${tx.id}',
-                        child: ProductThumb(url: tx.productPhotoUrl, size: 44),
-                      ),
+                      // Normally the product being sold, not a generic
+                      // merchant avatar — placeholder handled by ProductThumb
+                      // itself when there's no photo. A dedicated tag (not
+                      // shared with Transaction Details' seller-identity
+                      // avatar) so no Hero flight tries to morph a photo into
+                      // initials. The alternate layout instead shows the
+                      // merchant's initials (no photo), and skips the Hero
+                      // entirely so it never tries to fly between an
+                      // initials tile here and a real photo on the Details
+                      // screen.
+                      if (productFirstLayout)
+                        InitialsAvatar(
+                          initials: InitialsAvatar.initialsFor(tx.merchantName),
+                          size: 44,
+                        )
+                      else
+                        Hero(
+                          tag: 'txn-thumb-${tx.id}',
+                          child: ProductThumb(
+                            url: tx.productPhotoUrl,
+                            size: 44,
+                          ),
+                        ),
                       const SizedBox(width: AppSizes.md),
                       Expanded(
                         child: Column(
@@ -196,17 +218,36 @@ class TransactionCard extends StatelessWidget {
                   const SizedBox(height: AppSizes.sm),
                   // Full card width to itself so it's always fully visible —
                   // never squeezed/ellipsized by the header row above.
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.schedule_rounded,
-                        size: 13,
-                        color: AppColors.textTertiary,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(dateLine, style: AppText.caption),
-                    ],
-                  ),
+                  // Swaps places with the product name below: here it shows
+                  // the (bold) product name instead of the created date.
+                  if (productFirstLayout)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          tx.productName,
+                          style: AppText.bodyStrong,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (tx.variant != null) ...[
+                          const SizedBox(height: 2),
+                          Text(tx.variant!, style: AppText.caption),
+                        ],
+                      ],
+                    )
+                  else
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.schedule_rounded,
+                          size: 13,
+                          color: AppColors.textTertiary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(dateLine, style: AppText.caption),
+                      ],
+                    ),
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: AppSizes.md),
                     child: Divider(height: 1),
@@ -215,20 +256,40 @@ class TransactionCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              tx.productName,
-                              style: AppText.title,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            if (tx.variant != null) ...[
-                              const SizedBox(height: 2),
-                              Text(tx.variant!, style: AppText.caption),
-                            ],
-                          ],
-                        ),
+                        // Swapped with the row above: shows the created date
+                        // here instead of the product name.
+                        child: productFirstLayout
+                            ? Row(
+                                children: [
+                                  const Icon(
+                                    Icons.schedule_rounded,
+                                    size: 13,
+                                    color: AppColors.textTertiary,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      dateLine,
+                                      style: AppText.caption,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    tx.productName,
+                                    style: AppText.title,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  if (tx.variant != null) ...[
+                                    const SizedBox(height: 2),
+                                    Text(tx.variant!, style: AppText.caption),
+                                  ],
+                                ],
+                              ),
                       ),
                       const SizedBox(width: AppSizes.sm),
                       Column(

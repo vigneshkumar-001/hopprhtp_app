@@ -148,6 +148,8 @@ class ApiTransaction {
     this.deliveryLng,
     this.estimatedDeliveryDate,
     this.estimatedDeliveryTime,
+    this.dispatcherName,
+    this.dispatcherPhone,
     this.productPhotoUrl,
     this.weight,
     this.waybillTrackingNumber,
@@ -194,6 +196,12 @@ class ApiTransaction {
   final double? deliveryLng;
   final String? estimatedDeliveryDate;
   final String? estimatedDeliveryTime;
+
+  /// The courier arranged by the seller (entered at Create Transaction, from
+  /// `consignments[].payout`) — distinct from the buyer/seller themselves.
+  /// Null until a dispatcher has actually been assigned.
+  final String? dispatcherName;
+  final String? dispatcherPhone;
 
   /// The product photo (the item being sold), from `consignments[].productPhotoUrl`.
   /// For older records created before that field existed, it falls back to the
@@ -288,6 +296,12 @@ class ApiTransaction {
       ),
       estimatedDeliveryTime: asStringOrNull(
         firstConsignment['estimatedDeliveryTime'],
+      ),
+      dispatcherName: asStringOrNull(
+        asMap(firstConsignment['payout'])['dispatcherName'],
+      ),
+      dispatcherPhone: asStringOrNull(
+        asMap(firstConsignment['payout'])['dispatcherPhone'],
       ),
       // New records use productPhotoUrl; dispatch/waybill are only a fallback
       // for older records that predate the dedicated product-photo field.

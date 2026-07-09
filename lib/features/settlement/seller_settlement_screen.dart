@@ -152,16 +152,29 @@ class _SellerSettlementScreenState
       ref.invalidate(transactionLedgerProvider(id));
     }
 
+    // A fetch failure goes to the shared snackbar, never an inline page
+    // block — fires once per new error, not on every rebuild.
+    ref.listen(trackingProvider(id), (previous, next) {
+      final err = next.error;
+      if (err != null) {
+        AppSnackbar.error(context, friendlyError(err), onRetry: retry);
+      }
+    });
+    ref.listen(transactionLedgerProvider(id), (previous, next) {
+      final err = next.error;
+      if (err != null) {
+        AppSnackbar.error(context, friendlyError(err), onRetry: retry);
+      }
+    });
+
     return AppScaffold(
       title: 'Seller Settlement',
       body: trackingAsync.when(
         loading: () => const _LoadingBody(),
-        error: (e, _) =>
-            ErrorRetryView(message: friendlyError(e), onRetry: retry),
+        error: (_, _) => const SizedBox.shrink(),
         data: (tracking) => ledgerAsync.when(
           loading: () => const _LoadingBody(),
-          error: (e, _) =>
-              ErrorRetryView(message: friendlyError(e), onRetry: retry),
+          error: (_, _) => const SizedBox.shrink(),
           data: (ledger) => _SettlementBody(
             transactionId: id,
             tracking: tracking,

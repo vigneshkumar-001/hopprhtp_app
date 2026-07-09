@@ -5,7 +5,7 @@ import '../core/theme/app_typography.dart';
 
 /// Half-circle trust-score gauge (Merchant Profile).
 class TrustGauge extends StatelessWidget {
-  const TrustGauge({super.key, required this.score, this.max = 100});
+  const TrustGauge({super.key, required this.score, this.max = 1000});
   final int score;
   final int max;
 
@@ -22,8 +22,10 @@ class TrustGauge extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('$score',
-                    style: AppText.display.copyWith(fontSize: 40, height: 1)),
+                Text(
+                  '$score',
+                  style: AppText.display.copyWith(fontSize: 40, height: 1),
+                ),
                 Text('/ $max', style: AppText.caption),
               ],
             ),

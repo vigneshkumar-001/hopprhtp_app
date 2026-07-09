@@ -10,6 +10,7 @@ import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_scaffold.dart';
+import '../../widgets/feedback/app_snackbar.dart';
 import 'buyer_review_screen.dart';
 
 /// Enter Transaction Code — the buyer types the HTP code the seller shared to
@@ -41,7 +42,6 @@ class _JoinTransactionScreenState extends ConsumerState<JoinTransactionScreen> {
   final _focus = FocusNode();
 
   bool _loading = false;
-  String? _error;
 
   /// Real codes are `HTP-` + exactly 4 alphanumeric characters.
   static const _len = 4;
@@ -70,19 +70,15 @@ class _JoinTransactionScreenState extends ConsumerState<JoinTransactionScreen> {
   bool get _complete => _segment.length == _len;
 
   void _onChanged() {
-    // Rebuild so the segmented boxes fill in, and drop any stale error the
-    // moment the user edits the code.
-    setState(() => _error = null);
+    // Rebuild so the segmented boxes fill in as the user types.
+    setState(() {});
   }
 
   Future<void> _submit() async {
     if (_loading || !_complete) return;
     FocusScope.of(context).unfocus();
 
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    setState(() => _loading = true);
 
     try {
       final tx = await ref
@@ -96,16 +92,12 @@ class _JoinTransactionScreenState extends ConsumerState<JoinTransactionScreen> {
       AppNav.push(context, BuyerReviewScreen(tx: tx));
     } on ApiException catch (e) {
       if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = _messageFor(e);
-      });
+      setState(() => _loading = false);
+      AppSnackbar.error(context, _messageFor(e));
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = 'Something went wrong. Please try again.';
-      });
+      setState(() => _loading = false);
+      AppSnackbar.error(context, 'Something went wrong. Please try again.');
     }
   }
 
@@ -164,28 +156,6 @@ class _JoinTransactionScreenState extends ConsumerState<JoinTransactionScreen> {
             textAlign: TextAlign.center,
             style: AppText.caption,
           ),
-          if (_error != null) ...[
-            const SizedBox(height: AppSizes.md),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(
-                  Icons.error_outline_rounded,
-                  size: 16,
-                  color: AppColors.danger,
-                ),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    _error!,
-                    textAlign: TextAlign.center,
-                    style: AppText.caption.copyWith(color: AppColors.danger),
-                  ),
-                ),
-              ],
-            ),
-          ],
           const SizedBox(height: AppSizes.xl),
           // Escrow protection info — reassures the buyer their money is safe.
           Row(

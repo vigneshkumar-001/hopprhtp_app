@@ -55,26 +55,28 @@ class DashboardStats {
   }
 }
 
-/// Letter grade from a raw 0–100 trust score. Mirrors the backend's own
-/// `trustGradeFor` thresholds (user.model.ts) exactly — computed here rather
-/// than trusting the backend's separately-*stored* `trustGrade` string, which
-/// can go stale (it's only recalculated on a full document `.save()`, but
-/// `release()` bumps `trustScore` via a raw `$inc` that bypasses that hook).
-/// The raw `trustScore` number itself is always live.
-String trustGradeFor(int score) {
-  if (score >= 95) return 'A+';
-  if (score >= 85) return 'A';
-  if (score >= 70) return 'B';
-  if (score >= 50) return 'C';
-  return 'D';
+/// Hoppr Trust Score category from a raw 0–1000 score. Mirrors the backend's
+/// own `trustCategoryFor` thresholds (common/utils/trustScore.ts) exactly —
+/// computed here rather than trusting the backend's separately-*stored*
+/// `trustCategory` string, which can go stale (it's only recalculated on a
+/// full document `.save()`, but `release()` bumps `trustScore` via a raw
+/// `$inc` that bypasses that hook). The raw `trustScore` number itself is
+/// always live.
+String trustCategoryFor(int score) {
+  if (score >= 900) return 'Exceptional';
+  if (score >= 800) return 'Excellent';
+  if (score >= 700) return 'Good';
+  if (score >= 600) return 'Fair';
+  return 'Needs Improvement';
 }
 
-/// Real trust-score label: a letter grade once the user has at least one
-/// completed deal to base it on; otherwise "New" rather than a
-/// fabricated-looking default grade for a brand-new account (the backend's
-/// default `trustScore` is 80 → grade "B" — misleading with zero history).
-String trustScoreLabel({required int deals, required int trustScore}) =>
-    deals > 0 ? trustGradeFor(trustScore) : 'New';
+/// Real trust-score label: always "score category" (e.g. "600 Fair") — the
+/// real backend trustScore/category are shown even for a brand-new account
+/// (its 600/"Fair" default is a real backend value, not fabricated here),
+/// never hidden behind a bare "New". Callers with room to spare can append
+/// a "· New merchant" qualifier themselves when `deals == 0`.
+String trustScoreLabel({required int trustScore}) =>
+    '$trustScore ${trustCategoryFor(trustScore)}';
 
 /// Time-of-day greeting word (no name attached — the caller adds that).
 /// 05:00–11:59 Morning · 12:00–16:59 Afternoon · 17:00–20:59 Evening ·

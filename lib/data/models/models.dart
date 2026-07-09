@@ -62,6 +62,8 @@ class EscrowTransaction {
     this.deliveryAddress,
     this.estimatedDeliveryDate,
     this.estimatedDeliveryTime,
+    this.dispatcherName,
+    this.dispatcherPhone,
     required this.amount,
     required this.stage,
     required this.status,
@@ -88,6 +90,8 @@ class EscrowTransaction {
     deliveryAddress: t.deliveryAddress,
     estimatedDeliveryDate: t.estimatedDeliveryDate,
     estimatedDeliveryTime: t.estimatedDeliveryTime,
+    dispatcherName: t.dispatcherName,
+    dispatcherPhone: t.dispatcherPhone,
     variant: t.variant,
     amount: t.grandTotalNaira,
     stage: switch (t.stage) {
@@ -118,6 +122,11 @@ class EscrowTransaction {
   final String? deliveryAddress;
   final String? estimatedDeliveryDate;
   final String? estimatedDeliveryTime;
+
+  /// The courier arranged by the seller — distinct from the buyer/seller
+  /// themselves. Null until a dispatcher has actually been assigned.
+  final String? dispatcherName;
+  final String? dispatcherPhone;
   final String? variant; // "Size M · Sand beige"
   final double amount;
   final TxStage stage;

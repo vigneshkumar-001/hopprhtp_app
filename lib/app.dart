@@ -5,13 +5,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/network/socket_service.dart';
 import 'core/providers.dart';
+import 'core/routing/app_transitions.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/app_logger.dart';
 import 'data/app_state.dart';
+import 'data/models/models.dart';
 import 'features/auth/application/auth_controller.dart';
 import 'features/auth/auth_gate.dart';
 import 'features/transaction/application/transactions_provider.dart';
+import 'features/transaction/transaction_detail_screen.dart';
 import 'widgets/theme_reveal.dart';
 
 /// Root widget. Owns the single [AppState] and shares it through [AppScope].
@@ -29,12 +32,19 @@ class _HopprAppState extends ConsumerState<HopprApp>
     with WidgetsBindingObserver {
   late final AppState _state = AppState(prefs: widget.prefs);
 
+  /// Lets push-notification taps navigate even when they arrive with no
+  /// screen-owned [BuildContext] at hand (background/terminated launch).
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
   /// App-wide (not per-screen) — refreshes Home/History the moment ANY
   /// transaction event arrives for the signed-in user, whether or not they
   /// currently have that transaction's Details screen open. Per-transaction
   /// debouncing already happened inside [SocketService]; this only needs to
   /// invalidate the one shared list provider every screen reads from.
   StreamSubscription<TransactionSocketEvent>? _txEventsSub;
+
+  /// A notification was tapped — see [PushNotificationService.transactionTaps].
+  StreamSubscription<String>? _pushTapSub;
 
   @override
   void initState() {
@@ -54,14 +64,38 @@ class _HopprAppState extends ConsumerState<HopprApp>
       // updates in near-real-time instead of only on the next pull-to-refresh.
       ref.invalidate(unreadNotificationsProvider);
     });
+    final push = ref.read(pushNotificationServiceProvider);
+    push.init();
+    _pushTapSub = push.transactionTaps.listen(_onPushTransactionTap);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _txEventsSub?.cancel();
+    _pushTapSub?.cancel();
     _state.dispose();
     super.dispose();
+  }
+
+  /// Opens the real transaction a notification pointed at — always re-fetched
+  /// from the backend first (source of truth), the tapped payload only ever
+  /// supplies the id, never the data shown on screen.
+  Future<void> _onPushTransactionTap(String transactionId) async {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) return;
+    try {
+      final tx = await ref
+          .read(transactionRepositoryProvider)
+          .getById(transactionId);
+      navigator.push(
+        AppNav.route(
+          TransactionDetailScreen(tx: EscrowTransaction.fromApi(tx)),
+        ),
+      );
+    } catch (e) {
+      AppLogger.debug('[push] could not open transaction $transactionId: $e');
+    }
   }
 
   /// Self-heal on resume: a socket that silently died while backgrounded
@@ -90,6 +124,7 @@ class _HopprAppState extends ConsumerState<HopprApp>
       final isNow = next.valueOrNull?.isAuthenticated ?? false;
       if (isNow && !was) {
         ref.read(socketServiceProvider).connect();
+        ref.read(pushNotificationServiceProvider).registerToken();
       } else if (!isNow && was) {
         ref.read(socketServiceProvider).disconnect();
       }
@@ -100,6 +135,7 @@ class _HopprAppState extends ConsumerState<HopprApp>
       child: ListenableBuilder(
         listenable: _state,
         builder: (context, _) => MaterialApp(
+          navigatorKey: _navigatorKey,
           title: 'Hoppr',
           debugShowCheckedModeBanner: false,
           // Kept short: the circular ThemeReveal (below) is the headline

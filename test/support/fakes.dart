@@ -11,8 +11,8 @@ const kTestUser = ApiUser(
   fullName: 'Amara Okafor',
   phone: '+2348000000000',
   email: null,
-  trustScore: 80,
-  trustGrade: 'A',
+  trustScore: 600,
+  trustCategory: 'Fair',
   deals: 0,
   disputes: 0,
   verified: false,
@@ -25,9 +25,7 @@ const kTestUser = ApiUser(
 /// In-memory token store — no platform secure-storage channel in tests. Pass
 /// [access]/[refresh] to simulate a previously-signed-in session.
 class FakeTokenStore implements TokenStore {
-  FakeTokenStore({String? access, String? refresh})
-      : _a = access,
-        _r = refresh;
+  FakeTokenStore({String? access, String? refresh}) : _a = access, _r = refresh;
 
   String? _a;
   String? _r;
@@ -58,12 +56,22 @@ class FakeAuthRepository implements AuthRepository {
   bool failLogin = false;
 
   @override
-  Future<AuthSession> login({required String identifier, required String pin}) async {
+  Future<AuthSession> login({
+    required String identifier,
+    required String pin,
+  }) async {
     if (failLogin) {
       throw ApiException(
-          code: 'UNAUTHORIZED', message: 'Invalid credentials', statusCode: 401);
+        code: 'UNAUTHORIZED',
+        message: 'Invalid credentials',
+        statusCode: 401,
+      );
     }
-    return const AuthSession(user: kTestUser, accessToken: 'a', refreshToken: 'r');
+    return const AuthSession(
+      user: kTestUser,
+      accessToken: 'a',
+      refreshToken: 'r',
+    );
   }
 
   @override
@@ -73,23 +81,33 @@ class FakeAuthRepository implements AuthRepository {
   Future<ApiUser> updateProfile(Map<String, dynamic> body) async => kTestUser;
 
   @override
+  Future<void> updateFcmToken({
+    required String fcmToken,
+    String? platform,
+  }) async {}
+
+  @override
   Future<ApiUser> submitIdentity({
     required String docType,
     required String documentFrontUrl,
     String? documentBackUrl,
     required String selfieUrl,
-  }) async =>
-      kTestUser;
+  }) async => kTestUser;
 
   @override
-  Future<AuthSession> confirmRegister(
-          {required String phone, required String otp, required String pin}) async =>
+  Future<AuthSession> confirmRegister({
+    required String phone,
+    required String otp,
+    required String pin,
+  }) async =>
       const AuthSession(user: kTestUser, accessToken: 'a', refreshToken: 'r');
 
   @override
-  Future<String?> requestOtp(
-          {required String fullName, required String phone, String? email}) async =>
-      '123456';
+  Future<String?> requestOtp({
+    required String fullName,
+    required String phone,
+    String? email,
+  }) async => '123456';
 
   @override
   Future<String?> resendOtp({required String phone}) async => '123456';
@@ -101,8 +119,10 @@ class FakeAuthRepository implements AuthRepository {
   Future<void> logoutAll() async {}
 
   @override
-  Future<void> changePin(
-      {required String currentPin, required String newPin}) async {}
+  Future<void> changePin({
+    required String currentPin,
+    required String newPin,
+  }) async {}
 
   @override
   Future<void> verifyPin({required String pin}) async {}

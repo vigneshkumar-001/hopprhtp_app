@@ -46,20 +46,22 @@ class MerchantStats {
     required this.coolingTransactions,
     required this.disputeCount,
     required this.trustScore,
-    required this.trustGrade,
+    required this.trustCategory,
   });
 
   final int completedTransactions;
   final int activeTransactions;
   final int coolingTransactions;
   final int disputeCount;
-  final int trustScore;
-  final String trustGrade;
+  final int trustScore; // 0..1000 — the Hoppr Trust Score
+  final String trustCategory;
 
-  /// "New" until the merchant has at least one completed deal — mirrors
-  /// `trustScoreLabel()` in `features/home/dashboard_stats.dart` exactly, so
-  /// the label never disagrees between Profile and Merchant Profile.
-  String get trustLabel => completedTransactions > 0 ? trustGrade : 'New';
+  /// Always "score category" (e.g. "600 Fair") — never hidden behind a bare
+  /// "New", even for a 0-deal merchant, since the score itself is real.
+  /// Mirrors `trustScoreLabel()` in `features/home/dashboard_stats.dart`
+  /// exactly, so the label never disagrees between Profile and Merchant
+  /// Profile.
+  String get trustLabel => '$trustScore $trustCategory';
 
   factory MerchantStats.fromJson(Map<String, dynamic> j) => MerchantStats(
     completedTransactions: asInt(j['completedTransactions']),
@@ -67,7 +69,7 @@ class MerchantStats {
     coolingTransactions: asInt(j['coolingTransactions']),
     disputeCount: asInt(j['disputeCount']),
     trustScore: asInt(j['trustScore']),
-    trustGrade: asString(j['trustGrade'], 'D'),
+    trustCategory: asString(j['trustCategory'], 'Needs Improvement'),
   );
 }
 

@@ -13,24 +13,17 @@ import '../../widgets/common.dart';
 import '../../widgets/premium_card.dart';
 import '../../widgets/segmented_control.dart';
 import '../../widgets/theme_reveal.dart';
+import '../../core/providers.dart';
 import '../auth/application/auth_controller.dart';
-import '../home/dashboard_stats.dart';
+import '../notifications/notifications_screen.dart';
+import '../wallet/wallet_screen.dart';
 import 'edit_profile_screen.dart';
+import 'merchant_profile_screen.dart';
 import 'help_support_screen.dart';
 import 'identity_verification_screen.dart';
 import 'payout_accounts_screen.dart';
 import 'security_screen.dart';
 import 'transaction_history_screen.dart';
-
-/// Real initials from a full name — mirrors the legacy `HopprUser.initials`
-/// logic so the avatar reads the same, now sourced from the live `ApiUser`.
-String _initialsFor(String fullName) {
-  final parts = fullName.trim().split(RegExp(r'\s+'));
-  if (parts.isEmpty || parts.first.isEmpty) return '?';
-  if (parts.length == 1) return parts.first.characters.first.toUpperCase();
-  return (parts.first.characters.first + parts[1].characters.first)
-      .toUpperCase();
-}
 
 /// Real (never faked/hardcoded) 4-state identity display, driven entirely by
 /// the backend's `identityStatus` — mirrors the branching in
@@ -105,14 +98,11 @@ class ProfileScreen extends ConsumerWidget {
     // The real, live profile — never the legacy AppState snapshot (which is
     // only hydrated once at login and never refreshed during the session).
     final user = ref.watch(authControllerProvider).valueOrNull?.user;
+    final unreadCount = ref.watch(unreadNotificationsProvider).valueOrNull ?? 0;
     final verified = user?.verified ?? false;
     final identity = _IdentityDisplay.forStatus(
       user?.identityStatus ?? 'unverified',
     );
-    final trustLabel = user == null
-        ? 'New'
-        : trustScoreLabel(deals: user.deals, trustScore: user.trustScore);
-
     return AppScaffold(
       title: 'Profile',
       showBack: !embedded,
@@ -132,7 +122,7 @@ class ProfileScreen extends ConsumerWidget {
                       children: [
                         InitialsAvatar(
                           initials: user != null
-                              ? _initialsFor(user.fullName)
+                              ? InitialsAvatar.initialsFor(user.fullName)
                               : '?',
                           size: 52,
                           onDark: true,
@@ -188,17 +178,33 @@ class ProfileScreen extends ConsumerWidget {
                 ),
                 Row(
                   children: [
-                    CardStat(
-                      value: trustLabel,
-                      label: 'Trust score',
-                      valueColor: AppAccent.of(context).highlight,
+                    // Score as the big value (always short — a plain number),
+                    // category as the label underneath instead of
+                    // concatenated into one string that a long category name
+                    // ("Needs Improvement") would force to shrink to
+                    // near-illegibility.
+                    Expanded(
+                      child: CardStat(
+                        value: user == null ? 'New' : '${user.trustScore}',
+                        label: user == null
+                            ? 'Trust score'
+                            : user.trustCategory,
+                        valueColor: AppAccent.of(context).highlight,
+                      ),
                     ),
                     const CardStatDivider(),
-                    CardStat(value: '${user?.deals ?? 0}', label: 'Deals'),
+                    Expanded(
+                      child: CardStat(
+                        value: '${user?.deals ?? 0}',
+                        label: 'Deals',
+                      ),
+                    ),
                     const CardStatDivider(),
-                    CardStat(
-                      value: '${user?.disputes ?? 0}',
-                      label: 'Disputes',
+                    Expanded(
+                      child: CardStat(
+                        value: '${user?.disputes ?? 0}',
+                        label: 'Disputes',
+                      ),
                     ),
                   ],
                 ),
@@ -223,6 +229,29 @@ class ProfileScreen extends ConsumerWidget {
                 ),
                 const _RowDivider(),
                 MenuRow(
+                  icon: Icons.account_balance_wallet_outlined,
+                  title: 'Wallet',
+                  subtitle: 'Balance, cooling & withdrawals',
+                  onTap: () => AppNav.push(context, const WalletScreen()),
+                ),
+                const _RowDivider(),
+                MenuRow(
+                  icon: Icons.notifications_outlined,
+                  title: 'Notifications',
+                  subtitle: 'Payment, delivery & dispute alerts',
+                  trailing: unreadCount > 0
+                      ? StatusPill(
+                          label: '$unreadCount',
+                          dense: true,
+                          background: AppColors.ink,
+                          foreground: AppColors.textOnDark,
+                        )
+                      : null,
+                  onTap: () =>
+                      AppNav.push(context, const NotificationsScreen()),
+                ),
+                const _RowDivider(),
+                MenuRow(
                   icon: Icons.verified_outlined,
                   title: 'Identity verification',
                   subtitle: identity.menuSubtitle,
@@ -242,6 +271,20 @@ class ProfileScreen extends ConsumerWidget {
                   // branching here.
                   onTap: () =>
                       AppNav.push(context, const IdentityVerificationScreen()),
+                ),
+                const _RowDivider(),
+                MenuRow(
+                  icon: Icons.trending_up_rounded,
+                  title: 'Trust Score',
+                  subtitle: user == null
+                      ? 'Why your score is what it is'
+                      : '${user.trustScore} ${user.trustCategory} · How to improve',
+                  onTap: user == null
+                      ? null
+                      : () => AppNav.push(
+                          context,
+                          MerchantProfileScreen(merchantId: user.id),
+                        ),
                 ),
                 const _RowDivider(),
                 MenuRow(

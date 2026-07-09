@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "750102287952",
+    "project_id": "hoppr-htp",
+    "storage_bucket": "hoppr-htp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:750102287952:android:9a8ab7ce750105999d6355",
+        "android_client_info": {
+          "package_name": "com.fenizotechnologies.hopptHtp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBHO1p0Dt74V7l4-5kDwXx6yzYOJYkZ-5s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

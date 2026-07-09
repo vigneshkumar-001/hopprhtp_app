@@ -33,6 +33,18 @@ class WalletScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final balanceAsync = ref.watch(walletBalanceProvider);
+    // A fetch failure goes to the shared snackbar, never an inline page
+    // block — fires once per new error, not on every rebuild.
+    ref.listen(walletBalanceProvider, (previous, next) {
+      final err = next.error;
+      if (err != null) {
+        AppSnackbar.error(
+          context,
+          friendlyError(err),
+          onRetry: () => ref.invalidate(walletBalanceProvider),
+        );
+      }
+    });
 
     return AppScaffold(
       title: 'Wallet',
@@ -52,13 +64,7 @@ class WalletScreen extends ConsumerWidget {
           height: 360,
           child: Center(child: AppCircularLoader()),
         ),
-        error: (e, _) => SizedBox(
-          height: 360,
-          child: ErrorRetryView(
-            message: friendlyError(e),
-            onRetry: () => ref.invalidate(walletBalanceProvider),
-          ),
-        ),
+        error: (_, _) => const SizedBox.shrink(),
         data: (balance) => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -95,15 +101,24 @@ class _LedgerSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final ledgerAsync = ref.watch(walletLedgerProvider);
+    // A fetch failure goes to the shared snackbar, never an inline page
+    // block — fires once per new error, not on every rebuild.
+    ref.listen(walletLedgerProvider, (previous, next) {
+      final err = next.error;
+      if (err != null) {
+        AppSnackbar.error(
+          context,
+          friendlyError(err),
+          onRetry: () => ref.invalidate(walletLedgerProvider),
+        );
+      }
+    });
     return ledgerAsync.when(
       loading: () => const Padding(
         padding: EdgeInsets.symmetric(vertical: AppSizes.xxl),
         child: Center(child: AppCircularLoader(size: 24, strokeWidth: 2.5)),
       ),
-      error: (e, _) => ErrorRetryView(
-        message: friendlyError(e),
-        onRetry: () => ref.invalidate(walletLedgerProvider),
-      ),
+      error: (_, _) => const SizedBox.shrink(),
       data: (page) {
         if (page.entries.isEmpty) {
           return const EmptyStateView(

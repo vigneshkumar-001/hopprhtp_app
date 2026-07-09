@@ -5,17 +5,27 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <!-- Biometric (fingerprint / face) unlock — used by local_auth. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <!-- Android 13+ (API 33) requires this runtime permission to show any
+         notification, including push — requested via
+         FirebaseMessaging.requestPermission() in push_notification_service.dart. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Hoppr HTP"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <!-- Google Maps SDK key for the Transit tracking tab.
              ⚠️ RESTRICT this key in Google Cloud Console: limit it to the
-             "Maps SDK for Android", this app's package (com.fenizotechnologies.escrow)
+             "Maps SDK for Android", this app's package (com.fenizotechnologies.hopptHtp)
              and its SHA-1 fingerprint, and set usage quotas. -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyBFNOIc2cmuwprJvcKcU6R7Inq2m8bt5Ig"/>
+        <!-- Default channel for background/terminated push notifications —
+             must match the AndroidNotificationChannel id created in
+             push_notification_service.dart. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="high_importance_channel"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"

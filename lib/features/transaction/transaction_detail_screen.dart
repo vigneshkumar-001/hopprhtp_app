@@ -38,6 +38,21 @@ import '../dispute/dispute_status_screen.dart';
 import '../profile/merchant_profile_screen.dart';
 import '../settlement/seller_settlement_screen.dart';
 
+/// Statuses where Track Package is actually meaningful — from funding through
+/// active delivery. Shared with the push-tap router in `app.dart` (a
+/// `dispatcher_nearby` tap should only open Track Package when it's actually
+/// showable; otherwise it falls back to Transaction Details) so both agree on
+/// when navigating there makes sense. Null status (no snapshot yet) defaults
+/// to true, matching this screen's own prior behaviour.
+bool isTrackableTransactionStatus(ApiTxStatus? status) =>
+    status == null ||
+    const {
+      ApiTxStatus.paymentReceived,
+      ApiTxStatus.awaitingDispatch,
+      ApiTxStatus.inTransit,
+      ApiTxStatus.outForDelivery,
+    }.contains(status);
+
 class TransactionDetailScreen extends ConsumerStatefulWidget {
   const TransactionDetailScreen({super.key, required this.tx});
   final EscrowTransaction tx;
@@ -323,7 +338,7 @@ class _TransactionDetailScreenState
   /// — matches prior behaviour and avoids hiding it for a transaction we
   /// simply haven't classified yet.
   bool _isTrackableStatus(ApiTxStatus? status) =>
-      status == null || _trackableStatuses.contains(status);
+      isTrackableTransactionStatus(status);
 
   /// Buyer-only: the delivery code to share with the seller once the product
   /// arrives. Gated on the FRESH transaction status (never the snapshot) so
@@ -466,14 +481,18 @@ class _TransactionDetailScreenState
 
   @override
   Widget build(BuildContext context) {
-    final buyerInfo = _joinNonEmpty([tx.buyerName, tx.buyerContact]);
+    final buyerName = (tx.buyerName ?? '').trim();
     final deliveryEta = _joinNonEmpty([
       tx.estimatedDeliveryDate,
       tx.estimatedDeliveryTime,
     ]);
     final deliveryAddress = (tx.deliveryAddress ?? '').trim();
     final buyerContact = (tx.buyerContact ?? '').trim();
-    final dispatcherLabel = buyerInfo.isNotEmpty ? buyerInfo : tx.merchantName;
+    // The courier arranged by the seller at Create Transaction — never the
+    // buyer/seller themselves. Empty until one has actually been assigned;
+    // the card shows a professional fallback rather than guessing.
+    final dispatcherName = (tx.dispatcherName ?? '').trim();
+    final dispatcherPhone = (tx.dispatcherPhone ?? '').trim();
     // Same cached provider instance _buildCoolingSlot/_buildSellerActionSlot
     // already watch — no extra fetch. `.valueOrNull` (not `.maybeWhen(data:)`)
     // so this keeps the last-known status during a background refetch
@@ -598,8 +617,8 @@ class _TransactionDetailScreenState
                 // Prominent dispute banner (either party) when one is active.
                 _buildDisputeSlot(context),
                 _BuyerInfoCard(
-                  buyerLabel: buyerInfo,
-                  buyerContact: buyerContact,
+                  buyerName: buyerName,
+                  buyerPhone: buyerContact,
                   deliveryAddress: deliveryAddress,
                   eta: deliveryEta,
                   onCopyAddress: () => _copy(
@@ -607,8 +626,8 @@ class _TransactionDetailScreenState
                     deliveryAddress,
                     'Delivery address copied',
                   ),
-                  onCopyContact: () =>
-                      _copy(context, buyerContact, 'Buyer contact copied'),
+                  onCopyName: () =>
+                      _copy(context, buyerName, 'Buyer name copied'),
                 ),
                 const SizedBox(height: AppSizes.md),
                 if (showPaymentLink) ...[
@@ -618,7 +637,9 @@ class _TransactionDetailScreenState
                 _buildDeliveryCodeSlot(context),
                 _EscrowStatusCard(
                   tx: tx,
-                  dispatcherLabel: dispatcherLabel,
+                  dispatcherLabel: dispatcherName.isEmpty
+                      ? 'Dispatcher not assigned yet'
+                      : dispatcherName,
                   eta: deliveryEta,
                   liveStatus: liveStatus,
                 ),
@@ -637,17 +658,16 @@ class _TransactionDetailScreenState
                   address: deliveryAddress.isEmpty
                       ? 'Not provided'
                       : deliveryAddress,
-                  dispatcher: dispatcherLabel.isEmpty
-                      ? 'Not provided'
-                      : dispatcherLabel,
+                  dispatcherName: dispatcherName,
+                  dispatcherPhone: dispatcherPhone,
                   eta: deliveryEta.isEmpty ? 'Not available' : deliveryEta,
                   onAddress: () => _copy(
                     context,
                     deliveryAddress,
                     'Delivery address copied',
                   ),
-                  onDispatcher: () =>
-                      _copy(context, buyerContact, 'Buyer contact copied'),
+                  onCopyDispatcher: () =>
+                      _copy(context, dispatcherName, 'Dispatcher name copied'),
                   onEta: _onTrackPackage,
                 ),
                 const SizedBox(height: 24),
@@ -1221,20 +1241,20 @@ class _ViewItemButton extends StatelessWidget {
 
 class _BuyerInfoCard extends StatelessWidget {
   const _BuyerInfoCard({
-    required this.buyerLabel,
-    required this.buyerContact,
+    required this.buyerName,
+    required this.buyerPhone,
     required this.deliveryAddress,
     required this.eta,
     required this.onCopyAddress,
-    required this.onCopyContact,
+    required this.onCopyName,
   });
 
-  final String buyerLabel;
-  final String buyerContact;
+  final String buyerName;
+  final String buyerPhone;
   final String deliveryAddress;
   final String eta;
   final VoidCallback onCopyAddress;
-  final VoidCallback onCopyContact;
+  final VoidCallback onCopyName;
 
   @override
   Widget build(BuildContext context) {
@@ -1244,11 +1264,12 @@ class _BuyerInfoCard extends StatelessWidget {
         children: [
           CardSectionLabel('Buyer details'),
           const SizedBox(height: AppSizes.md),
-          _InfoRow(
+          _ContactInfoRow(
             icon: Icons.person_outline_rounded,
             label: 'Buyer',
-            value: buyerLabel.isEmpty ? 'Not provided' : buyerLabel,
-            onTap: onCopyContact,
+            name: buyerName.isEmpty ? 'Not provided' : buyerName,
+            phone: buyerPhone,
+            onTap: onCopyName,
           ),
           const SizedBox(height: AppSizes.sm),
           _InfoRow(
@@ -1264,6 +1285,104 @@ class _BuyerInfoCard extends StatelessWidget {
             value: eta.isEmpty ? 'Not provided' : eta,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Contact row shared by Buyer and Dispatcher details — same layout as
+/// [_InfoRow] plus a call action on the right. Never renders [phone] as
+/// visible text; tapping the row copies [name] instead.
+class _ContactInfoRow extends StatelessWidget {
+  const _ContactInfoRow({
+    required this.icon,
+    required this.label,
+    required this.name,
+    required this.phone,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final String name;
+  final String phone;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: InkWell(
+            onTap: onTap,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 17, color: AppColors.textSecondary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(label, style: AppText.caption),
+                      const SizedBox(height: 2),
+                      Text(name, style: AppText.bodyStrong),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: AppSizes.sm),
+        _CallIconButton(phone: phone),
+      ],
+    );
+  }
+}
+
+/// Round call button — enabled (and actually dials via the device's phone
+/// app) only when a real number is available; otherwise a neutral, disabled
+/// icon rather than hiding the action entirely. Never shows the number itself.
+class _CallIconButton extends StatelessWidget {
+  const _CallIconButton({required this.phone});
+  final String phone;
+
+  Future<void> _call(BuildContext context) async {
+    final uri = Uri(scheme: 'tel', path: phone);
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched && context.mounted) {
+        AppSnackbar.error(context, 'Could not start a call.');
+      }
+    } catch (_) {
+      if (context.mounted) {
+        AppSnackbar.error(context, 'Could not start a call.');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = phone.trim().isNotEmpty;
+    return Material(
+      color: enabled ? AppColors.surfaceMuted : Colors.transparent,
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: enabled ? () => _call(context) : null,
+        child: Padding(
+          padding: const EdgeInsets.all(9),
+          child: Icon(
+            Icons.call_rounded,
+            size: 18,
+            color: enabled ? AppColors.ink : AppColors.textTertiary,
+          ),
+        ),
       ),
     );
   }
@@ -1661,21 +1780,27 @@ class _PaidCard extends StatelessWidget {
   }
 }
 
+/// Dispatcher details — same professional row styling as [_BuyerInfoCard].
+/// The dispatcher is the courier the seller arranged at Create Transaction
+/// (`consignments[].payout`); until one is entered, this shows a plain
+/// fallback line rather than a broken/empty row.
 class _DeliveryDetailsCard extends StatelessWidget {
   const _DeliveryDetailsCard({
     required this.address,
-    required this.dispatcher,
+    required this.dispatcherName,
+    required this.dispatcherPhone,
     required this.eta,
     required this.onAddress,
-    required this.onDispatcher,
+    required this.onCopyDispatcher,
     required this.onEta,
   });
 
   final String address;
-  final String dispatcher;
+  final String dispatcherName;
+  final String dispatcherPhone;
   final String eta;
   final VoidCallback onAddress;
-  final VoidCallback onDispatcher;
+  final VoidCallback onCopyDispatcher;
   final VoidCallback onEta;
 
   @override
@@ -1684,7 +1809,7 @@ class _DeliveryDetailsCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CardSectionLabel('Delivery details'),
+          CardSectionLabel('Dispatcher details'),
           const SizedBox(height: AppSizes.md),
           _InfoRow(
             icon: Icons.location_on_outlined,
@@ -1693,12 +1818,19 @@ class _DeliveryDetailsCard extends StatelessWidget {
             onTap: onAddress,
           ),
           const SizedBox(height: AppSizes.sm),
-          _InfoRow(
-            icon: Icons.person_pin_circle_outlined,
-            label: 'Buyer contact',
-            value: dispatcher,
-            onTap: onDispatcher,
-          ),
+          if (dispatcherName.isEmpty)
+            Text(
+              'Dispatcher not assigned yet',
+              style: AppText.caption.copyWith(color: AppColors.textTertiary),
+            )
+          else
+            _ContactInfoRow(
+              icon: Icons.local_shipping_outlined,
+              label: 'Dispatcher',
+              name: dispatcherName,
+              phone: dispatcherPhone,
+              onTap: onCopyDispatcher,
+            ),
           const SizedBox(height: AppSizes.sm),
           _InfoRow(
             icon: Icons.schedule_rounded,

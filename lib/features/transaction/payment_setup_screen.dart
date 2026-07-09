@@ -228,6 +228,9 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
             'deliveryAddress': c.deliveryAddress,
           if (c.deliveryLat != null) 'deliveryLat': c.deliveryLat,
           if (c.deliveryLng != null) 'deliveryLng': c.deliveryLng,
+          'estimatedDeliveryDate': c.estimatedDeliveryDate,
+          if (c.estimatedDeliveryTime.trim().isNotEmpty)
+            'estimatedDeliveryTime': c.estimatedDeliveryTime,
           if (c.waybillTrackingNumber.trim().isNotEmpty)
             'waybillTrackingNumber': c.waybillTrackingNumber,
           if (c.payout.isComplete)

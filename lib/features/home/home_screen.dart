@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/error_messages.dart';
 import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
@@ -52,7 +53,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   // the stat cards to zero — always overwritten by fresh data the moment it
   // arrives. Never seeded with fake numbers; starts null (→ zero-state).
   DashboardStats? _lastStats;
-  String? _lastTrustLabel;
+  // (score, category) — split, not a combined string: a long category name
+  // ("Needs Improvement") forced the whole "score category" text to shrink
+  // to near-illegibility in this tight 3-column stat row. Showing the score
+  // as the big value and the category as the label underneath (like "Active"
+  // / "Cooling") keeps the number readable regardless of category length.
+  (int, String)? _lastTrust;
 
   /// Pull-to-refresh: reloads the real transaction list (cached data stays
   /// visible while the request is in flight, no skeleton flicker — see
@@ -121,6 +127,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final user = ref.watch(authControllerProvider).valueOrNull?.user;
     final txs = ref.watch(transactionsProvider);
+    // A fetch failure is reported via the shared snackbar, never an inline
+    // page block — fires once per new error, not on every rebuild.
+    ref.listen(transactionsProvider, (previous, next) {
+      final err = next.error;
+      if (err != null) {
+        AppSnackbar.error(
+          context,
+          friendlyError(err),
+          onRetry: () => ref.invalidate(transactionsProvider),
+        );
+      }
+    });
 
     // Real numbers only — computed from the same live transaction list
     // rendered below, so the cards never disagree with it. A transient
@@ -132,11 +150,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     if (freshStats != null) _lastStats = freshStats;
     final stats = freshStats ?? _lastStats ?? DashboardStats.zero;
 
-    final freshTrustLabel = user == null
+    final freshTrust = user == null
         ? null
-        : trustScoreLabel(deals: user.deals, trustScore: user.trustScore);
-    if (freshTrustLabel != null) _lastTrustLabel = freshTrustLabel;
-    final trustLabel = freshTrustLabel ?? _lastTrustLabel ?? 'New';
+        : (user.trustScore, user.trustCategory);
+    if (freshTrust != null) _lastTrust = freshTrust;
+    // null here means "no user loaded yet" (nothing to show at all) — not
+    // "new merchant"; a real 0-deal account already carries its real
+    // score/category on `user`, never hidden behind a placeholder.
+    final trust = freshTrust ?? _lastTrust;
 
     // First load only — once any real data has ever arrived, refreshes never
     // show a skeleton again (matches the transaction list's own behaviour).
@@ -170,7 +191,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 balance: stats.protectedNaira,
                 active: stats.active,
                 cooling: stats.cooling,
-                trustScore: trustLabel,
+                trust: trust,
                 loading: statsLoading,
                 hasError: txs.hasError,
                 refreshing: txs.isLoading,
@@ -232,10 +253,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               const SizedBox(height: AppSizes.md),
               txs.when(
                 loading: () => const _TransactionListSkeleton(),
-                error: (e, _) => _ErrorState(
-                  message: 'Could not load live transactions.',
-                  onRetry: () => ref.invalidate(transactionsProvider),
-                ),
+                error: (_, _) => const SizedBox.shrink(),
                 data: (list) {
                   if (list.isEmpty) {
                     return _EmptyState(onCreate: _createTransaction);
@@ -263,6 +281,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             child: TransactionCard(
                               tx: tx,
                               colorIndex: e.key,
+                              productFirstLayout: true,
                               onTap: () => _openTx(context, tx),
                             ),
                           );
@@ -448,7 +467,7 @@ class _BalanceCard extends StatelessWidget {
     required this.balance,
     required this.active,
     required this.cooling,
-    required this.trustScore,
+    required this.trust,
     this.loading = false,
     this.hasError = false,
     this.refreshing = false,
@@ -458,7 +477,9 @@ class _BalanceCard extends StatelessWidget {
   final double balance;
   final int active;
   final int cooling;
-  final String trustScore;
+
+  /// (score, category) — null while nothing's loaded yet (see `_HomeScreenState`).
+  final (int, String)? trust;
 
   /// First-load only (see `statsLoading` in `HomeScreen.build`). The card's
   /// premium chrome — dark gradient, glossy orb, "Protected in escrow" label
@@ -483,6 +504,11 @@ class _BalanceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     // Accent: lime in the Lime theme, white in Mono.
     final hi = AppAccent.of(context).highlight;
+    // Copied to a local so null-safety can promote it (field promotion
+    // across a ternary is less reliable than local-variable promotion).
+    final trust = this.trust;
+    final trustValue = trust == null ? 'New' : '${trust.$1}';
+    final trustCategoryLabel = trust == null ? 'Trust score' : trust.$2;
     return PremiumCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -566,21 +592,32 @@ class _BalanceCard extends StatelessWidget {
             ),
           Row(
             children: [
-              loading
-                  ? const _CardStatSkeleton()
-                  : CardStat(value: '$active', label: 'Active'),
+              Expanded(
+                child: loading
+                    ? const _CardStatSkeleton()
+                    : CardStat(value: '$active', label: 'Active'),
+              ),
               const CardStatDivider(),
-              loading
-                  ? const _CardStatSkeleton()
-                  : CardStat(value: '$cooling', label: 'Cooling'),
+              Expanded(
+                child: loading
+                    ? const _CardStatSkeleton()
+                    : CardStat(value: '$cooling', label: 'Cooling'),
+              ),
               const CardStatDivider(),
-              loading
-                  ? const _CardStatSkeleton()
-                  : CardStat(
-                      value: trustScore,
-                      label: 'Trust score',
-                      valueColor: hi,
-                    ),
+              // Score as the big value (always short — a plain number, same
+              // visual weight as Active/Cooling), category as the label
+              // underneath instead of concatenated into one string that a
+              // long category name ("Needs Improvement") would force to
+              // shrink to near-illegibility.
+              Expanded(
+                child: loading
+                    ? const _CardStatSkeleton()
+                    : CardStat(
+                        value: trustValue,
+                        label: trustCategoryLabel,
+                        valueColor: hi,
+                      ),
+              ),
             ],
           ),
         ],
@@ -682,26 +719,6 @@ class _QuickAction extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(label, style: AppText.caption),
-        ],
-      ),
-    );
-  }
-}
-
-class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.message, required this.onRetry});
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: AppSizes.xl),
-      child: Column(
-        children: [
-          Text(message, style: AppText.body),
-          const SizedBox(height: AppSizes.md),
-          AppButton(label: 'Retry', onPressed: onRetry),
         ],
       ),
     );

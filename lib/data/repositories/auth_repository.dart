@@ -20,11 +20,14 @@ class AuthRepository {
     String? email,
   }) {
     return apiCall(
-      () => _dio.post('/auth/register/request-otp', data: {
-        'fullName': fullName,
-        'phone': phone,
-        if (email != null && email.isNotEmpty) 'email': email,
-      }),
+      () => _dio.post(
+        '/auth/register/request-otp',
+        data: {
+          'fullName': fullName,
+          'phone': phone,
+          if (email != null && email.isNotEmpty) 'email': email,
+        },
+      ),
       (d) => asStringOrNull(asMap(d)['devOtp']),
     );
   }
@@ -36,8 +39,10 @@ class AuthRepository {
     required String pin,
   }) {
     return apiCall(
-      () => _dio.post('/auth/register/confirm',
-          data: {'phone': phone, 'otp': otp, 'pin': pin}),
+      () => _dio.post(
+        '/auth/register/confirm',
+        data: {'phone': phone, 'otp': otp, 'pin': pin},
+      ),
       (d) => AuthSession.fromJson(asMap(d)),
     );
   }
@@ -62,7 +67,10 @@ class AuthRepository {
   /// Sign in with phone-or-email plus the 6-digit PIN.
   Future<AuthSession> login({required String identifier, required String pin}) {
     return apiCall(
-      () => _dio.post('/auth/login', data: {'identifier': identifier, 'pin': pin}),
+      () => _dio.post(
+        '/auth/login',
+        data: {'identifier': identifier, 'pin': pin},
+      ),
       (d) => AuthSession.fromJson(asMap(d)),
     );
   }
@@ -72,19 +80,23 @@ class AuthRepository {
       apiCall<void>(() => _dio.post('/auth/logout-all'), (_) {});
 
   /// Change the 6-digit PIN (verifies the current one server-side).
-  Future<void> changePin({required String currentPin, required String newPin}) =>
-      apiCall<void>(
-        () => _dio.post('/auth/change-pin',
-            data: {'currentPin': currentPin, 'newPin': newPin}),
-        (_) {},
-      );
+  Future<void> changePin({
+    required String currentPin,
+    required String newPin,
+  }) => apiCall<void>(
+    () => _dio.post(
+      '/auth/change-pin',
+      data: {'currentPin': currentPin, 'newPin': newPin},
+    ),
+    (_) {},
+  );
 
   /// Verify the account PIN (e.g. the current PIN in the Change-PIN flow).
   /// Throws [ApiException] ('Incorrect PIN') on a wrong PIN.
   Future<void> verifyPin({required String pin}) => apiCall<void>(
-        () => _dio.post('/auth/verify-pin', data: {'pin': pin}),
-        (_) {},
-      );
+    () => _dio.post('/auth/verify-pin', data: {'pin': pin}),
+    (_) {},
+  );
 
   /// Start the PIN reset flow by sending an OTP to the registered phone.
   Future<String?> requestPinReset({required String phone}) {
@@ -115,8 +127,20 @@ class AuthRepository {
 
   /// Update the profile (Edit Profile screen). Returns the saved user.
   Future<ApiUser> updateProfile(Map<String, dynamic> body) => apiCall(
-        () => _dio.patch('/users/me', data: body),
-        (d) => ApiUser.fromJson(asMap(d)),
+    () => _dio.patch('/users/me', data: body),
+    (d) => ApiUser.fromJson(asMap(d)),
+  );
+
+  /// Register (or refresh) this device's FCM push token. [platform] is
+  /// 'android' | 'ios'; omit when unknown. Best-effort from the caller's side
+  /// — [PushNotificationService] already never lets a failure here propagate.
+  Future<void> updateFcmToken({required String fcmToken, String? platform}) =>
+      apiCall<void>(
+        () => _dio.post(
+          '/users/me/fcm-token',
+          data: {'fcmToken': fcmToken, 'platform': ?platform},
+        ),
+        (_) {},
       );
 
   /// Submit KYC documents for review. [docType] is nin|drivers_license|passport.
@@ -126,14 +150,16 @@ class AuthRepository {
     required String documentFrontUrl,
     String? documentBackUrl,
     required String selfieUrl,
-  }) =>
-      apiCall(
-        () => _dio.post('/users/me/identity', data: {
-          'docType': docType,
-          'documentFrontUrl': documentFrontUrl,
-          'documentBackUrl': ?documentBackUrl,
-          'selfieUrl': selfieUrl,
-        }),
-        (d) => ApiUser.fromJson(asMap(d)),
-      );
+  }) => apiCall(
+    () => _dio.post(
+      '/users/me/identity',
+      data: {
+        'docType': docType,
+        'documentFrontUrl': documentFrontUrl,
+        'documentBackUrl': ?documentBackUrl,
+        'selfieUrl': selfieUrl,
+      },
+    ),
+    (d) => ApiUser.fromJson(asMap(d)),
+  );
 }

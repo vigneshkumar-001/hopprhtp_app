@@ -1,4 +1,4 @@
-package com.fenizotechnologies.escrow
+package com.fenizotechnologies.hopptHtp
 
 import android.app.Activity
 import android.content.Intent
@@ -11,7 +11,7 @@ import io.flutter.embedding.android.FlutterFragmentActivity
 
 // FlutterFragmentActivity (not FlutterActivity) is required by local_auth.
 class MainActivity : FlutterFragmentActivity() {
-    private val channelName = "com.fenizotechnologies.escrow/phone_hint"
+    private val channelName = "com.fenizotechnologies.hopptHtp/phone_hint"
     private var pendingResult: MethodChannel.Result? = null
 
     companion object {

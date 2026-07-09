@@ -35,7 +35,9 @@ class BrandMark extends StatelessWidget {
     if (pill) {
       return Container(
         padding: const EdgeInsets.symmetric(
-            horizontal: AppSizes.lg, vertical: AppSizes.sm),
+          horizontal: AppSizes.lg,
+          vertical: AppSizes.sm,
+        ),
         decoration: BoxDecoration(
           color: AppColors.ink,
           borderRadius: AppRadii.md,
@@ -65,7 +67,9 @@ class BrandMark extends StatelessWidget {
               fontSize: 11,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.5,
-              color: onDark ? AppColors.textOnDarkMuted : AppColors.textSecondary,
+              color: onDark
+                  ? AppColors.textOnDarkMuted
+                  : AppColors.textSecondary,
             ),
           ),
         ),
@@ -140,7 +144,11 @@ class StatusPill extends StatelessWidget {
 
 /// The verified check badge (small green tick).
 class VerifiedBadge extends StatelessWidget {
-  const VerifiedBadge({super.key, this.size = 16, this.color = AppColors.success});
+  const VerifiedBadge({
+    super.key,
+    this.size = 16,
+    this.color = AppColors.success,
+  });
   final double size;
   final Color color;
 
@@ -167,6 +175,18 @@ class InitialsAvatar extends StatelessWidget {
   /// Overrides the default tile colour (used to match a card's pastel tint).
   final Color? background;
 
+  /// "Vignesh Kumar" → "VK" (first letter of each of the first two words).
+  /// "Vignesh" (a single word) → just "V" — never padded to two letters.
+  static String initialsFor(String name) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first.isEmpty) return '?';
+    if (parts.length == 1) {
+      return parts.first.characters.first.toUpperCase();
+    }
+    return (parts.first.characters.first + parts[1].characters.first)
+        .toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -174,7 +194,8 @@ class InitialsAvatar extends StatelessWidget {
       height: size,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: background ??
+        color:
+            background ??
             (onDark ? AppColors.surface : AppAccent.of(context).accentSoft),
         borderRadius: BorderRadius.circular(size * 0.28),
       ),
@@ -281,8 +302,9 @@ class MenuRow extends StatelessWidget {
     // In the Lime theme the menu-row icon tiles use a soft lilac (per the
     // reference design); the Default theme keeps the neutral accent tile.
     final tileColor = accent.isLime ? AppColors.lilacTile : accent.accentSoft;
-    final tileIconColor =
-        accent.isLime ? AppColors.onLilacTile : accent.onAccentSoft;
+    final tileIconColor = accent.isLime
+        ? AppColors.onLilacTile
+        : accent.onAccentSoft;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -290,7 +312,9 @@ class MenuRow extends StatelessWidget {
         borderRadius: AppRadii.md,
         child: Padding(
           padding: const EdgeInsets.symmetric(
-              horizontal: AppSizes.sm, vertical: AppSizes.md),
+            horizontal: AppSizes.sm,
+            vertical: AppSizes.md,
+          ),
           child: Row(
             children: [
               Container(
@@ -318,8 +342,10 @@ class MenuRow extends StatelessWidget {
               ),
               ?trailing,
               if (showChevron)
-                const Icon(Icons.chevron_right_rounded,
-                    color: AppColors.textTertiary),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppColors.textTertiary,
+                ),
             ],
           ),
         ),
@@ -354,7 +380,8 @@ class DottedBorderBox extends StatelessWidget {
       child: ClipRRect(
         borderRadius: AppRadii.md,
         child: Container(
-          color: fill ??
+          color:
+              fill ??
               (active
                   ? AppColors.successSoft.withValues(alpha: 0.5)
                   : AppColors.surfaceMuted.withValues(alpha: 0.4)),
@@ -375,7 +402,8 @@ class _DashedBorderPainter extends CustomPainter {
     final paint = Paint()
       ..color = color
       ..strokeWidth = 2.0
-      ..strokeCap = StrokeCap.round // round caps → clean dots
+      ..strokeCap = StrokeCap
+          .round // round caps → clean dots
       ..style = PaintingStyle.stroke;
 
     final rrect = RRect.fromRectAndRadius(
@@ -390,10 +418,7 @@ class _DashedBorderPainter extends CustomPainter {
     for (final metric in path.computeMetrics()) {
       double dist = 0;
       while (dist < metric.length) {
-        canvas.drawPath(
-          metric.extractPath(dist, dist + dash),
-          paint,
-        );
+        canvas.drawPath(metric.extractPath(dist, dist + dash), paint);
         dist += dash + gap;
       }
     }

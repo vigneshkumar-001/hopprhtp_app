@@ -11,6 +11,7 @@ import '../../data/dto/transaction_dto.dart';
 import '../../data/models/models.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/feedback/app_loaders.dart';
+import '../../widgets/feedback/app_snackbar.dart';
 import '../../widgets/feedback/state_views.dart';
 import '../../widgets/transaction_card.dart';
 import '../transaction/transaction_detail_screen.dart';
@@ -109,7 +110,10 @@ class _TransactionHistoryScreenState
         _error = null;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e);
+      if (mounted) {
+        setState(() => _error = e);
+        AppSnackbar.error(context, friendlyError(e), onRetry: _loadFirst);
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -186,12 +190,6 @@ class _TransactionHistoryScreenState
     if (_firstLoad && _loading) {
       return const Center(child: AppCircularLoader());
     }
-    if (_error != null && _items.isEmpty) {
-      return ErrorRetryView(
-        message: friendlyError(_error!),
-        onRetry: _loadFirst,
-      );
-    }
     if (_items.isEmpty) {
       return const EmptyStateView(
         icon: Icons.receipt_long_rounded,
@@ -216,6 +214,7 @@ class _TransactionHistoryScreenState
           return TransactionCard(
             tx: tx,
             colorIndex: i,
+            productFirstLayout: true,
             onTap: () => AppNav.push(context, TransactionDetailScreen(tx: tx)),
           );
         },

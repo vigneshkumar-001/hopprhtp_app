@@ -231,7 +231,10 @@ class _PackageTrackingScreenState extends ConsumerState<PackageTrackingScreen> {
 }
 
 /// Neutral background behind the loading/error/empty placeholders, so nothing
-/// ever reads as a broken or blank map.
+/// ever reads as a broken or blank map. Centers within the safe (non-notch/
+/// status-bar) area — this sits behind `Positioned.fill` in a `Stack` whose
+/// full bounds include the area under the status bar, so centering on the
+/// raw bounds instead of the safe area visually skews the content upward.
 class _MapArea extends StatelessWidget {
   const _MapArea({required this.child});
   final Widget child;
@@ -240,8 +243,7 @@ class _MapArea extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       color: AppColors.surfaceMuted,
-      alignment: Alignment.center,
-      child: child,
+      child: SafeArea(child: Center(child: child)),
     );
   }
 }

@@ -16,7 +16,6 @@ import '../../widgets/app_scaffold.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/app_snackbar.dart';
-import '../../widgets/feedback/state_views.dart';
 
 /// More → Help & support. Contact channels, an FAQ accordion, and a "contact
 /// us" form that opens a support ticket. Fully theme-aware (Mono / Lime).
@@ -39,6 +38,10 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
 
   late Future<SupportOverview> _future;
 
+  // Tracks the error last surfaced via snackbar so a rebuild while still in
+  // the same error state doesn't re-show it — only a fresh failed fetch does.
+  Object? _lastNotifiedError;
+
   final _subject = TextEditingController();
   final _message = TextEditingController();
   String _category = 'transactions';
@@ -57,8 +60,10 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
     super.dispose();
   }
 
-  void _reload() =>
-      setState(() => _future = ref.read(supportRepositoryProvider).overview());
+  void _reload() => setState(() {
+    _lastNotifiedError = null;
+    _future = ref.read(supportRepositoryProvider).overview();
+  });
 
   void _copy(String label, String value) {
     Clipboard.setData(ClipboardData(text: value));
@@ -74,13 +79,17 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
     }
     if (message.length < 10) {
       AppSnackbar.error(
-          context, 'Please describe your issue (at least 10 characters).');
+        context,
+        'Please describe your issue (at least 10 characters).',
+      );
       return;
     }
     FocusScope.of(context).unfocus();
     setState(() => _sending = true);
     try {
-      final ticket = await ref.read(supportRepositoryProvider).createTicket(
+      final ticket = await ref
+          .read(supportRepositoryProvider)
+          .createTicket(
             category: _category,
             subject: subject,
             message: message,
@@ -89,7 +98,9 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
       _subject.clear();
       _message.clear();
       AppSnackbar.success(
-          context, 'Request sent — ref ${ticket.code}. We’ll reply by email.');
+        context,
+        'Request sent — ref ${ticket.code}. We’ll reply by email.',
+      );
     } on ApiException catch (e) {
       if (mounted) AppSnackbar.error(context, e.userMessage);
     } finally {
@@ -111,15 +122,20 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
             );
           }
           if (snap.hasError || !snap.hasData) {
-            return SizedBox(
-              height: 360,
-              child: ErrorRetryView(
-                message: snap.hasError
-                    ? friendlyError(snap.error!)
-                    : 'Couldn’t load help content.',
-                onRetry: _reload,
-              ),
-            );
+            final error = snap.error;
+            if (error != null && !identical(error, _lastNotifiedError)) {
+              _lastNotifiedError = error;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  AppSnackbar.error(
+                    context,
+                    friendlyError(error),
+                    onRetry: _reload,
+                  );
+                }
+              });
+            }
+            return const SizedBox(height: 360);
           }
           return _content(snap.data!);
         },
@@ -142,13 +158,19 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
         const SizedBox(height: AppSizes.xxl),
 
         // ── Contact channels ────────────────────────────────────────────────
-        _SectionHeader(icon: Icons.support_agent_rounded, title: 'Get in touch'),
+        _SectionHeader(
+          icon: Icons.support_agent_rounded,
+          title: 'Get in touch',
+        ),
         const SizedBox(height: AppSizes.md),
         _ContactCard(contact: data.contact, onCopy: _copy),
         const SizedBox(height: AppSizes.xxl),
 
         // ── FAQ accordion ───────────────────────────────────────────────────
-        _SectionHeader(icon: Icons.help_outline_rounded, title: 'Popular questions'),
+        _SectionHeader(
+          icon: Icons.help_outline_rounded,
+          title: 'Popular questions',
+        ),
         const SizedBox(height: AppSizes.md),
         _FaqList(faqs: data.faqs),
         const SizedBox(height: AppSizes.xxl),
@@ -156,8 +178,10 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
         // ── Contact form ────────────────────────────────────────────────────
         _SectionHeader(icon: Icons.edit_outlined, title: 'Send us a message'),
         const SizedBox(height: AppSizes.sm),
-        Text('Can’t find it above? Tell us and we’ll reply by email.',
-            style: AppText.caption),
+        Text(
+          'Can’t find it above? Tell us and we’ll reply by email.',
+          style: AppText.caption,
+        ),
         const SizedBox(height: AppSizes.lg),
         Text('Category', style: AppText.label),
         const SizedBox(height: AppSizes.sm),
@@ -181,10 +205,7 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
         const SizedBox(height: AppSizes.lg),
         Text('Message', style: AppText.label),
         const SizedBox(height: AppSizes.sm),
-        _MultilineField(
-          controller: _message,
-          hint: 'Tell us what’s going on…',
-        ),
+        _MultilineField(controller: _message, hint: 'Tell us what’s going on…'),
         const SizedBox(height: AppSizes.xl),
         AppButton(
           label: 'Send message',
@@ -228,7 +249,9 @@ class _ContactCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return AppCard(
       padding: const EdgeInsets.symmetric(
-          horizontal: AppSizes.sm, vertical: AppSizes.xs),
+        horizontal: AppSizes.sm,
+        vertical: AppSizes.xs,
+      ),
       child: Column(
         children: [
           _ContactRow(
@@ -254,16 +277,24 @@ class _ContactCard extends StatelessWidget {
           const _RowDivider(),
           Padding(
             padding: const EdgeInsets.symmetric(
-                horizontal: AppSizes.sm, vertical: AppSizes.md),
+              horizontal: AppSizes.sm,
+              vertical: AppSizes.md,
+            ),
             child: Row(
               children: [
-                const Icon(Icons.schedule_rounded,
-                    size: 16, color: AppColors.textTertiary),
+                const Icon(
+                  Icons.schedule_rounded,
+                  size: 16,
+                  color: AppColors.textTertiary,
+                ),
                 const SizedBox(width: AppSizes.sm),
                 Expanded(
-                  child: Text(contact.hours,
-                      style: AppText.caption
-                          .copyWith(color: AppColors.textTertiary)),
+                  child: Text(
+                    contact.hours,
+                    style: AppText.caption.copyWith(
+                      color: AppColors.textTertiary,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -297,7 +328,9 @@ class _ContactRow extends StatelessWidget {
         borderRadius: AppRadii.md,
         child: Padding(
           padding: const EdgeInsets.symmetric(
-              horizontal: AppSizes.sm, vertical: AppSizes.md),
+            horizontal: AppSizes.sm,
+            vertical: AppSizes.md,
+          ),
           child: Row(
             children: [
               Container(
@@ -321,8 +354,11 @@ class _ContactRow extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(Icons.copy_rounded,
-                  size: 17, color: AppColors.textTertiary),
+              const Icon(
+                Icons.copy_rounded,
+                size: 17,
+                color: AppColors.textTertiary,
+              ),
             ],
           ),
         ),
@@ -394,8 +430,10 @@ class _FaqRowState extends State<_FaqRow> {
                   turns: _open ? 0.5 : 0,
                   duration: AppDurations.fast,
                   curve: AppDurations.easeOut,
-                  child: const Icon(Icons.keyboard_arrow_down_rounded,
-                      color: AppColors.textSecondary),
+                  child: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: AppColors.textSecondary,
+                  ),
                 ),
               ],
             ),
@@ -455,7 +493,9 @@ class _MultilineFieldState extends State<_MultilineField> {
       duration: AppDurations.fast,
       curve: AppDurations.easeOut,
       padding: const EdgeInsets.symmetric(
-          horizontal: AppSizes.lg, vertical: AppSizes.md),
+        horizontal: AppSizes.lg,
+        vertical: AppSizes.md,
+      ),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: AppRadii.md,

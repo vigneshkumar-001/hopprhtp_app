@@ -8,7 +8,7 @@
 PRODUCT_NAME = escrow
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.fenizotechnologies.escrow
+PRODUCT_BUNDLE_IDENTIFIER = com.fenizotechnologies.hopptHtp
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 com.fenizotechnologies. All rights reserved.

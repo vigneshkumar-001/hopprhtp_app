@@ -377,7 +377,9 @@ class _Subtitle extends StatelessWidget {
     switch (phase) {
       case _Phase.inZone:
         return Text(
-          "Ask the buyer to read you the 6-digit code, then type it below to confirm delivery.",
+          "Delivery can only be confirmed once the dispatcher is physically "
+          "inside a tight radius of the buyer, and only with the 6-digit "
+          "code the dispatcher provides to the buyer at that delivery point.",
           style: style,
         );
       case _Phase.locating:

@@ -19,6 +19,7 @@ import 'auth/biometric_service.dart';
 import 'env/app_config.dart';
 import 'network/auth_interceptor.dart';
 import 'network/logging_interceptor.dart';
+import 'notifications/push_notification_service.dart';
 import 'storage/token_store.dart';
 
 // Re-export so feature files can import a single `core/providers.dart`.
@@ -83,6 +84,27 @@ final transactionRepositoryProvider = Provider<TransactionRepository>(
 final disputeRepositoryProvider = Provider<DisputeRepository>(
   (ref) => DisputeRepository(ref.watch(dioProvider)),
 );
+
+/// One instance app-wide — created lazily on first use (see `app.dart`).
+final pushNotificationServiceProvider = Provider<PushNotificationService>((
+  ref,
+) {
+  final service = PushNotificationService(
+    onToken: (token, platform) {
+      // A token refresh can fire before sign-in (or after sign-out) — skip
+      // the call rather than sending a request guaranteed to 401.
+      final authed =
+          ref.read(authControllerProvider).valueOrNull?.isAuthenticated ??
+          false;
+      if (!authed) return Future.value();
+      return ref
+          .read(authRepositoryProvider)
+          .updateFcmToken(fcmToken: token, platform: platform);
+    },
+  );
+  ref.onDispose(service.dispose);
+  return service;
+});
 
 final merchantRepositoryProvider = Provider<MerchantRepository>(
   (ref) => MerchantRepository(ref.watch(dioProvider)),
