@@ -61,12 +61,14 @@ class PushNotificationService {
     }
   }
 
-  /// Emits a real transaction id whenever the user taps a notification
-  /// (foreground-shown local notification, background tap, or the message
-  /// that launched the app from terminated). The id is the ONLY thing taken
-  /// from the payload — the caller must still fetch the transaction from the
-  /// backend before navigating; the payload is never trusted as data.
-  Stream<String> get transactionTaps => _tapController.stream;
+  /// Emits a real transaction id (+ the payload's `screen` hint, if any)
+  /// whenever the user taps a notification (foreground-shown local
+  /// notification, background tap, or the message that launched the app from
+  /// terminated). Both are the ONLY things taken from the payload — the
+  /// caller must still fetch the transaction from the backend before
+  /// navigating; the payload is never trusted as data, `screen` is only ever
+  /// used to pick which real, re-fetched screen to open.
+  Stream<(String, String?)> get transactionTaps => _tapController.stream;
 
   /// True once [initializeFirebase] actually succeeded. Every other method
   /// on this class no-ops when false instead of throwing.
@@ -125,8 +127,17 @@ class PushNotificationService {
         iOS: iosInit,
       ),
       onDidReceiveNotificationResponse: (response) {
-        final id = response.payload;
-        if (id != null && id.isNotEmpty) _tapController.add(id);
+        final payload = response.payload;
+        if (payload == null || payload.isEmpty) return;
+        // Encoded as "transactionId|screen" by _onForegroundMessage below —
+        // flutter_local_notifications only carries a single string payload.
+        final parts = payload.split('|');
+        final id = parts.isNotEmpty ? parts[0] : '';
+        if (id.isEmpty) return;
+        final screen = parts.length > 1 && parts[1].isNotEmpty
+            ? parts[1]
+            : null;
+        _tapController.add((id, screen));
       },
     );
     await _local
@@ -172,6 +183,7 @@ class PushNotificationService {
     final notification = message.notification;
     if (notification == null) return;
     final transactionId = message.data['transactionId'] as String?;
+    final screen = message.data['screen'] as String?;
     final id =
         (message.messageId ?? notification.hashCode.toString()).hashCode &
         0x7fffffff;
@@ -189,14 +201,17 @@ class PushNotificationService {
         ),
         iOS: const DarwinNotificationDetails(),
       ),
-      payload: transactionId,
+      // Encoded as "transactionId|screen" — decoded in
+      // onDidReceiveNotificationResponse above (a single string is all this
+      // plugin's payload supports).
+      payload: transactionId == null ? null : '$transactionId|${screen ?? ''}',
     );
   }
 
   void _onMessageTapped(RemoteMessage message) {
     final transactionId = message.data['transactionId'] as String?;
     if (transactionId != null && transactionId.isNotEmpty) {
-      _tapController.add(transactionId);
+      _tapController.add((transactionId, message.data['screen'] as String?));
     }
   }
 

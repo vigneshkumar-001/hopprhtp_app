@@ -14,6 +14,7 @@ import 'data/models/models.dart';
 import 'features/auth/application/auth_controller.dart';
 import 'features/auth/auth_gate.dart';
 import 'features/transaction/application/transactions_provider.dart';
+import 'features/transaction/package_tracking_screen.dart';
 import 'features/transaction/transaction_detail_screen.dart';
 import 'widgets/theme_reveal.dart';
 
@@ -44,7 +45,7 @@ class _HopprAppState extends ConsumerState<HopprApp>
   StreamSubscription<TransactionSocketEvent>? _txEventsSub;
 
   /// A notification was tapped — see [PushNotificationService.transactionTaps].
-  StreamSubscription<String>? _pushTapSub;
+  StreamSubscription<(String, String?)>? _pushTapSub;
 
   @override
   void initState() {
@@ -80,17 +81,28 @@ class _HopprAppState extends ConsumerState<HopprApp>
 
   /// Opens the real transaction a notification pointed at — always re-fetched
   /// from the backend first (source of truth), the tapped payload only ever
-  /// supplies the id, never the data shown on screen.
-  Future<void> _onPushTransactionTap(String transactionId) async {
+  /// supplies the id (+ a `screen` routing hint), never the data shown on
+  /// screen. `screen == 'track_package'` (from `dispatcher_nearby`) opens
+  /// Track Package only when it's actually meaningful for the transaction's
+  /// current status (same gate the screen's own button uses) — otherwise it
+  /// falls back to Transaction Details, same as every other event.
+  Future<void> _onPushTransactionTap((String, String?) tap) async {
+    final (transactionId, screen) = tap;
     final navigator = _navigatorKey.currentState;
     if (navigator == null) return;
     try {
       final tx = await ref
           .read(transactionRepositoryProvider)
           .getById(transactionId);
+      final escrowTx = EscrowTransaction.fromApi(tx);
+      final openTrackPackage =
+          screen == 'track_package' &&
+          isTrackableTransactionStatus(escrowTx.apiStatus);
       navigator.push(
         AppNav.route(
-          TransactionDetailScreen(tx: EscrowTransaction.fromApi(tx)),
+          openTrackPackage
+              ? PackageTrackingScreen(tx: escrowTx)
+              : TransactionDetailScreen(tx: escrowTx),
         ),
       );
     } catch (e) {
