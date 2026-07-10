@@ -59,6 +59,13 @@ class TransactionCard extends StatelessWidget {
       background: AppColors.successSoft,
       foreground: AppColors.success,
     ),
+    'dispatcher' => const StatusPill(
+      label: 'Dispatcher',
+      icon: Icons.local_shipping_outlined,
+      dense: true,
+      background: AppColors.surfaceMuted,
+      foreground: AppColors.ink,
+    ),
     _ => null,
   };
 

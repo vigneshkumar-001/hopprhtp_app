@@ -42,9 +42,16 @@ class PackageTrackingScreen extends ConsumerStatefulWidget {
 }
 
 class _PackageTrackingScreenState extends ConsumerState<PackageTrackingScreen> {
-  /// Raw backend status values in which the seller is actually en route —
-  /// matches the backend's own `ACTIVE_DELIVERY_STATUSES` gate.
-  static const _activeStatuses = {'in_transit', 'out_for_delivery'};
+  /// Raw backend status values worth polling for — matches the backend's own
+  /// `ACTIVE_DELIVERY_STATUSES` gate (in_transit/out_for_delivery) plus the
+  /// dispatcher pickup leg, which also changes without the viewer doing
+  /// anything (the dispatcher confirming pickup on their own device).
+  static const _activeStatuses = {
+    'ready_for_pickup',
+    'dispatcher_going_to_pickup',
+    'in_transit',
+    'out_for_delivery',
+  };
   static const _autoRefreshInterval = Duration(seconds: 45);
 
   Timer? _autoRefreshTimer;
@@ -690,6 +697,14 @@ class _StatusSheet extends StatelessWidget {
         return isSeller
             ? 'Start delivery so the buyer can track this order.'
             : 'Waiting for the seller to dispatch this order.';
+      case ApiTxStatus.readyForPickup:
+        return isSeller
+            ? 'Give the dispatcher your pickup code when they arrive.'
+            : 'Waiting for the dispatcher to collect the package.';
+      case ApiTxStatus.dispatcherGoingToPickup:
+        return isSeller
+            ? 'The dispatcher is on the way to collect the package.'
+            : 'The dispatcher is heading to the seller for pickup.';
       default:
         return 'Tracking this order.';
     }
@@ -762,6 +777,8 @@ class _StatusSheet extends StatelessWidget {
             _stageNote(status, tracking.isSeller, tracking.hasSellerLocation),
             style: AppText.body,
           ),
+          const SizedBox(height: AppSizes.md),
+          _DeliveryTimeline(status: status, tracking: tracking),
           if (route != null) ...[
             const SizedBox(height: AppSizes.md),
             Row(
@@ -801,7 +818,7 @@ class _StatusSheet extends StatelessWidget {
           ),
           const SizedBox(height: AppSizes.md),
           _RefreshLocationButton(refreshing: refreshing, onTap: onRefresh),
-          if (tracking.isSeller) ...[
+          if (tracking.isDeliveryActor) ...[
             const SizedBox(height: AppSizes.sm),
             AppButton(
               label: 'Update my delivery location',
@@ -814,6 +831,117 @@ class _StatusSheet extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+class _TrackStep {
+  const _TrackStep(this.label, this.icon, this.reached);
+  final String label;
+  final IconData icon;
+  final bool reached;
+}
+
+/// Compact pickup → delivery timeline. Real, backend-derived milestones only
+/// (status + pickup.confirmedAt + delivery.nearBuyerAt/confirmedAt) — never a
+/// guessed/animated progress bar. Pickup steps only appear for a
+/// request_hoppr_dispatcher transaction; self-delivery has no pickup leg.
+class _DeliveryTimeline extends StatelessWidget {
+  const _DeliveryTimeline({required this.status, required this.tracking});
+
+  final ApiTxStatus status;
+  final TransactionTracking tracking;
+
+  static const _pastPickupStatuses = {
+    ApiTxStatus.inTransit,
+    ApiTxStatus.outForDelivery,
+    ApiTxStatus.delivered,
+    ApiTxStatus.cooling,
+    ApiTxStatus.released,
+    ApiTxStatus.completed,
+  };
+  static const _deliveredStatuses = {
+    ApiTxStatus.delivered,
+    ApiTxStatus.cooling,
+    ApiTxStatus.released,
+    ApiTxStatus.completed,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPickupLeg =
+        status == ApiTxStatus.readyForPickup ||
+        status == ApiTxStatus.dispatcherGoingToPickup ||
+        tracking.pickupConfirmedAt != null;
+    // Reached once the dispatcher has actually set off (or skipped straight
+    // to entering the pickup code, which also implies they were on the way).
+    final dispatcherOnTheWay =
+        status == ApiTxStatus.dispatcherGoingToPickup ||
+        tracking.pickupConfirmedAt != null;
+    final inTransitOrLater =
+        _pastPickupStatuses.contains(status) ||
+        tracking.pickupConfirmedAt != null;
+
+    final steps = [
+      if (hasPickupLeg)
+        const _TrackStep('Ready for pickup', Icons.inventory_2_outlined, true),
+      if (hasPickupLeg)
+        _TrackStep(
+          ApiTxStatus.dispatcherGoingToPickup.label,
+          Icons.directions_walk_rounded,
+          dispatcherOnTheWay,
+        ),
+      if (hasPickupLeg)
+        _TrackStep(
+          'Picked up',
+          Icons.check_circle_outline,
+          tracking.pickupConfirmedAt != null,
+        ),
+      _TrackStep('In transit', Icons.local_shipping_outlined, inTransitOrLater),
+      _TrackStep(
+        'Nearby',
+        Icons.near_me_outlined,
+        tracking.nearBuyerAt != null,
+      ),
+      _TrackStep(
+        'Delivered',
+        Icons.flag_outlined,
+        _deliveredStatuses.contains(status),
+      ),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final (i, step) in steps.indexed) ...[
+          Row(
+            children: [
+              Icon(
+                step.reached ? Icons.check_circle_rounded : step.icon,
+                size: 16,
+                color: step.reached
+                    ? AppColors.success
+                    : AppColors.textTertiary,
+              ),
+              const SizedBox(width: AppSizes.sm),
+              Text(
+                step.label,
+                style: AppText.caption.copyWith(
+                  fontWeight: step.reached ? FontWeight.w700 : FontWeight.w500,
+                  color: step.reached
+                      ? AppColors.textPrimary
+                      : AppColors.textTertiary,
+                ),
+              ),
+            ],
+          ),
+          if (i != steps.length - 1)
+            Padding(
+              padding: const EdgeInsets.only(left: 7.5),
+              child: Container(width: 1, height: 12, color: AppColors.border),
+            ),
+        ],
+      ],
     );
   }
 }

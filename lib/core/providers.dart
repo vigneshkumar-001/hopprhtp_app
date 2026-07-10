@@ -172,10 +172,14 @@ final walletBalanceProvider = FutureProvider.autoDispose<WalletBalance>(
   (ref) => ref.watch(walletRepositoryProvider).balance(),
 );
 
-/// Recent ledger activity (first page).
-final walletLedgerProvider = FutureProvider.autoDispose<WalletLedgerPage>(
-  (ref) => ref.watch(walletRepositoryProvider).ledger(page: 1, perPage: 30),
-);
+/// Recent ledger activity (first page), scoped to the selected date filter
+/// (All / Today / Yesterday / a custom range — see [WalletActivityFilter]).
+final walletLedgerProvider = FutureProvider.autoDispose
+    .family<WalletLedgerPage, WalletActivityFilter>(
+      (ref, filter) => ref
+          .watch(walletRepositoryProvider)
+          .ledger(page: 1, perPage: 30, from: filter.from, to: filter.to),
+    );
 
 /// Unread-notification count for the home bell badge. Invalidate it after the
 /// notifications screen marks items read so the badge updates.

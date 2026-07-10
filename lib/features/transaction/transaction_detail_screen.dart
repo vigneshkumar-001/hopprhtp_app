@@ -30,6 +30,7 @@ import '../../widgets/feedback/state_views.dart';
 import 'application/transactions_provider.dart';
 import 'widgets/transaction_widgets.dart';
 import 'confirm_delivery_screen.dart';
+import 'enter_pickup_code_screen.dart';
 import 'cooling_period_screen.dart';
 import 'package_tracking_screen.dart';
 import 'settlement_ledger_screen.dart';
@@ -49,6 +50,8 @@ bool isTrackableTransactionStatus(ApiTxStatus? status) =>
     const {
       ApiTxStatus.paymentReceived,
       ApiTxStatus.awaitingDispatch,
+      ApiTxStatus.readyForPickup,
+      ApiTxStatus.dispatcherGoingToPickup,
       ApiTxStatus.inTransit,
       ApiTxStatus.outForDelivery,
     }.contains(status);
@@ -226,6 +229,80 @@ class _TransactionDetailScreenState
     }
   }
 
+  /// Dispatcher-only: marks that they've set off for the seller's pickup
+  /// address (ready_for_pickup → dispatcher_going_to_pickup). Optional — the
+  /// dispatcher can also go straight to entering the pickup code.
+  Future<void> _startPickupJourney() async {
+    if (_shipping) return;
+    setState(() => _shipping = true);
+    try {
+      await ref
+          .read(transactionRepositoryProvider)
+          .dispatcherStartPickup(tx.id);
+      if (!mounted) return;
+      _invalidateTx();
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.userMessage);
+    } catch (_) {
+      if (mounted) {
+        AppSnackbar.error(
+          context,
+          'Could not update status. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _shipping = false);
+    }
+  }
+
+  bool _sharingDispatcherLink = false;
+
+  /// Seller-only: generates the secure dispatcher web link and opens
+  /// WhatsApp to share it — for a third-party/independent dispatcher with no
+  /// Hoppr account. Mirrors `_PaymentLinkCard._shareLink`'s exact pattern.
+  Future<void> _shareDispatcherLink(BuildContext context) async {
+    if (_sharingDispatcherLink) return;
+    setState(() => _sharingDispatcherLink = true);
+    try {
+      final url = await ref
+          .read(transactionRepositoryProvider)
+          .generateDispatcherLink(tx.id);
+      if (!context.mounted) return;
+      final message =
+          'You have a delivery assignment for ${tx.code}.\n'
+          'Use this secure link to manage pickup and delivery — no app download needed:\n'
+          '$url';
+      final uri = Uri.parse(
+        'https://wa.me/?text=${Uri.encodeComponent(message)}',
+      );
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened) {
+        await Clipboard.setData(ClipboardData(text: url));
+        if (context.mounted)
+          AppSnackbar.success(context, 'Dispatcher link copied');
+      }
+    } on ApiException catch (e) {
+      if (context.mounted) AppSnackbar.error(context, e.userMessage);
+    } catch (_) {
+      if (context.mounted) {
+        AppSnackbar.error(
+          context,
+          'Could not generate the dispatcher link. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sharingDispatcherLink = false);
+    }
+  }
+
+  Future<void> _openPickupCode(BuildContext context) async {
+    final confirmed = await AppNav.push<bool>(
+      context,
+      EnterPickupCodeScreen(transactionId: tx.id),
+    );
+    if (confirmed == true && mounted) _invalidateTx();
+  }
+
   /// Seller marks the order out for delivery (in_transit → out_for_delivery).
   Future<void> _markOutForDelivery() async {
     if (_shipping) return;
@@ -267,7 +344,7 @@ class _TransactionDetailScreenState
     final detailAsync = ref.watch(transactionDetailProvider(tx.id));
     if (!detailAsync.hasValue) return null;
     final full = detailAsync.value!;
-    if (!full.isSeller) return null;
+    if (!full.isDeliveryActor) return null;
     // A background refetch is in flight (e.g. after app resume / pull to
     // refresh) but we still have the last-known-good status — keep showing
     // it (no layout jump) but block the irreversible actions until the fresh
@@ -275,6 +352,52 @@ class _TransactionDetailScreenState
     // against a transaction that already moved on.
     final refreshing = detailAsync.isLoading;
 
+    // Hoppr-Dispatcher mode: the assigned dispatcher handles the pickup leg
+    // AND the delivery leg end-to-end. The seller is never the delivery
+    // actor here (see ApiTransaction.isDeliveryActor) — showing them
+    // "Heading to pickup" / "Enter pickup code" was the reported bug: a
+    // seller who chose Hoppr Dispatcher must never see the dispatcher's own
+    // controls, only their own Pickup Code (see _buildPickupCodeSlot below).
+    if (full.isDispatcher) {
+      switch (full.status) {
+        case ApiTxStatus.readyForPickup:
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppButton(
+                label: 'Enter pickup code',
+                trailingIcon: Icons.lock_open_rounded,
+                accentInLime: true,
+                enabled: !refreshing,
+                onPressed: () => _openPickupCode(context),
+              ),
+              const SizedBox(height: AppSizes.sm),
+              AppButton(
+                label: 'Heading to pickup',
+                icon: Icons.directions_walk_rounded,
+                variant: AppButtonVariant.outline,
+                loading: _shipping,
+                enabled: !_shipping && !refreshing,
+                onPressed: _startPickupJourney,
+              ),
+            ],
+          );
+        case ApiTxStatus.dispatcherGoingToPickup:
+          return AppButton(
+            label: 'Enter pickup code',
+            trailingIcon: Icons.lock_open_rounded,
+            accentInLime: true,
+            enabled: !refreshing,
+            onPressed: () => _openPickupCode(context),
+          );
+        default:
+          return _deliveryPhaseActions(full.status, refreshing);
+      }
+    }
+
+    // Deliver-myself mode: the seller IS the delivery actor throughout —
+    // there is no pickup handoff/OTP step at all (that only ever applies to
+    // the Hoppr Dispatcher flow).
     switch (full.status) {
       case ApiTxStatus.paymentReceived:
       case ApiTxStatus.awaitingDispatch:
@@ -286,6 +409,16 @@ class _TransactionDetailScreenState
           enabled: !_shipping && !refreshing,
           onPressed: _startDelivery,
         );
+      default:
+        return _deliveryPhaseActions(full.status, refreshing);
+    }
+  }
+
+  /// The "Verify delivery" / "Mark out for delivery" controls shared by both
+  /// the assigned dispatcher (Hoppr-Dispatcher mode) and the self-delivering
+  /// seller (Deliver-myself mode) — identical UI, different actor.
+  Widget? _deliveryPhaseActions(ApiTxStatus status, bool refreshing) {
+    switch (status) {
       case ApiTxStatus.inTransit:
         return Column(
           mainAxisSize: MainAxisSize.min,
@@ -380,6 +513,47 @@ class _TransactionDetailScreenState
     );
   }
 
+  /// Seller-only, Hoppr-Dispatcher-mode: the plaintext pickup code to read
+  /// out to the dispatcher in person once they arrive — a separate code from
+  /// the buyer-facing Delivery Code, never mixed with it or the Transaction
+  /// Code. Never shown for self-delivery (no pickup step) or to the
+  /// dispatcher themselves (they only ever enter this code — see
+  /// EnterPickupCodeScreen — never view it).
+  Widget _buildPickupCodeSlot(BuildContext context) {
+    final detailAsync = ref.watch(transactionDetailProvider(tx.id));
+    const preHandoffStatuses = {
+      ApiTxStatus.readyForPickup,
+      ApiTxStatus.dispatcherGoingToPickup,
+    };
+    if (!detailAsync.hasValue) {
+      final expectCode =
+          tx.myRole == 'seller' && preHandoffStatuses.contains(tx.apiStatus);
+      return expectCode
+          ? const Padding(
+              padding: EdgeInsets.only(bottom: AppSizes.md),
+              child: _DeliveryCodeSkeleton(),
+            )
+          : const SizedBox.shrink();
+    }
+    final full = detailAsync.value!;
+    // Self-delivery has no pickup step at all; in Hoppr-Dispatcher mode the
+    // pickup code is seller-only — never the dispatcher's to view (they only
+    // ever enter it, see EnterPickupCodeScreen).
+    if (full.isSelfDelivery ||
+        !full.isSeller ||
+        !preHandoffStatuses.contains(full.status)) {
+      return const SizedBox.shrink();
+    }
+    final pc = ref.watch(pickupCodeProvider(tx.id)).valueOrNull;
+    if (pc == null || pc.alreadyConfirmed || pc.code == null) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSizes.md),
+      child: _PickupCodeCard(code: pc.code!),
+    );
+  }
+
   /// Real cooling-period card, shown only once the transaction has actually
   /// reached a cooling-relevant status. Reuses [transactionDetailProvider]
   /// (the full `ApiTransaction`, with `coolingEndsAt`/`timeline`) rather than
@@ -455,6 +629,11 @@ class _TransactionDetailScreenState
     );
   }
 
+  // EscrowTransaction (this screen's snapshot model) doesn't carry
+  // platformFeePayer — it's only a display convenience for
+  // ConfirmDeliveryScreen, which doesn't render a fee breakdown, so the
+  // previous implicit default is kept explicit rather than plumbing the real
+  // value through another model for no visible effect.
   PaymentDraft get _draft => PaymentDraft(
     productName: tx.productName,
     sellerName: tx.merchantName,
@@ -462,6 +641,7 @@ class _TransactionDetailScreenState
     itemSubtotal: tx.amount,
     variant: tx.variant,
     transactionId: tx.id,
+    platformFeePayer: PlatformFeePayer.split50,
   );
 
   // Product category isn't on the model yet; keep the Escrow badge for now.
@@ -507,6 +687,37 @@ class _TransactionDetailScreenState
     final merchantAsync = sellerId == null
         ? null
         : ref.watch(merchantProfileProvider(sellerId));
+    // Buyer/dispatcher ACCOUNT identity — same public-safe profile lookup the
+    // Seller Card already uses (any signed-in user can view any user's
+    // profile by id), reused rather than adding a new backend lookup. Null id
+    // means "no account linked yet" (either never assigned, or the phone
+    // hasn't registered) — the cards below show a professional fallback,
+    // never a guess.
+    final buyerId = detailAsync.valueOrNull?.buyerId;
+    final buyerProfileAsync = buyerId == null
+        ? null
+        : ref.watch(merchantProfileProvider(buyerId));
+    final buyerDisplayName = buyerId == null
+        ? 'Buyer not registered yet'
+        : (buyerProfileAsync?.valueOrNull?.name ?? buyerName);
+    final dispatcherAccountId = detailAsync.valueOrNull?.dispatcherAccountId;
+    final dispatcherAccountPhone =
+        (detailAsync.valueOrNull?.dispatcherAccountPhone ?? '').trim();
+    final dispatcherAccountName =
+        (detailAsync.valueOrNull?.dispatcherAccountName ?? '').trim();
+    final isSelfDelivery = detailAsync.valueOrNull?.isSelfDelivery ?? true;
+    final dispatcherProfileAsync = dispatcherAccountId == null
+        ? null
+        : ref.watch(merchantProfileProvider(dispatcherAccountId));
+    final dispatcherDisplayName = isSelfDelivery
+        ? 'Seller is handling this delivery'
+        : dispatcherAccountId != null
+        ? (dispatcherProfileAsync?.valueOrNull?.name ?? 'Dispatcher')
+        : (dispatcherAccountPhone.isEmpty
+              ? 'Dispatcher will be assigned later'
+              : dispatcherAccountName.isEmpty
+              ? 'Dispatcher not registered yet'
+              : '$dispatcherAccountName — not registered yet');
     // A refetch is in flight but we still have a previous value — surface the
     // small "Updating…" indicator rather than silently swapping data under
     // the user, or blocking the screen with a full-page spinner.
@@ -590,88 +801,136 @@ class _TransactionDetailScreenState
           padding: const EdgeInsets.only(bottom: AppSizes.xxl),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSizes.screenPad),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SizedBox(height: AppSizes.sm),
-                AnimatedSize(
-                  duration: AppDurations.normal,
-                  alignment: Alignment.topCenter,
-                  child: isUpdating
-                      ? const _UpdatingBanner()
-                      : const SizedBox(width: double.infinity),
-                ),
-                _SellerCard(
-                  tx: tx,
-                  merchantAsync: merchantAsync,
-                  onTap: sellerId == null
-                      ? () {}
-                      : () => AppNav.push(
-                          context,
-                          MerchantProfileScreen(merchantId: sellerId),
+            // Nothing renders from the frozen list/history snapshot until the
+            // first live fetch actually resolves — avoids the old behaviour
+            // where seller/buyer/dispatcher identity, trust badges and status
+            // would visibly pop in and change under the user a beat after the
+            // screen opened. One clean cross-fade from skeleton to real
+            // content instead of several piecemeal ones.
+            child: AnimatedSwitcher(
+              duration: AppDurations.normal,
+              child: !detailAsync.hasValue
+                  ? const _TransactionDetailSkeleton(key: ValueKey('skeleton'))
+                  : Column(
+                      key: const ValueKey('content'),
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const SizedBox(height: AppSizes.sm),
+                        AnimatedSize(
+                          duration: AppDurations.normal,
+                          alignment: Alignment.topCenter,
+                          child: isUpdating
+                              ? const _UpdatingBanner()
+                              : const SizedBox(width: double.infinity),
                         ),
-                ),
-                const SizedBox(height: AppSizes.md),
-                _ProductCard(tx: tx, category: _category),
-                const SizedBox(height: AppSizes.md),
-                // Prominent dispute banner (either party) when one is active.
-                _buildDisputeSlot(context),
-                _BuyerInfoCard(
-                  buyerName: buyerName,
-                  buyerPhone: buyerContact,
-                  deliveryAddress: deliveryAddress,
-                  eta: deliveryEta,
-                  onCopyAddress: () => _copy(
-                    context,
-                    deliveryAddress,
-                    'Delivery address copied',
-                  ),
-                  onCopyName: () =>
-                      _copy(context, buyerName, 'Buyer name copied'),
-                ),
-                const SizedBox(height: AppSizes.md),
-                if (showPaymentLink) ...[
-                  _PaymentLinkCard(code: tx.code, amount: tx.amount),
-                  const SizedBox(height: AppSizes.md),
-                ],
-                _buildDeliveryCodeSlot(context),
-                _EscrowStatusCard(
-                  tx: tx,
-                  dispatcherLabel: dispatcherName.isEmpty
-                      ? 'Dispatcher not assigned yet'
-                      : dispatcherName,
-                  eta: deliveryEta,
-                  liveStatus: liveStatus,
-                ),
-                _buildCoolingSlot(context),
-                // "Funds held in escrow" banners only make sense once the buyer
-                // has actually paid — hidden while the seller still sees the
-                // Buyer Payment Link (awaiting payment) card above.
-                if (!showPaymentLink) ...[
-                  const SizedBox(height: AppSizes.md),
-                  const _ReleaseBanner(),
-                  const SizedBox(height: AppSizes.md),
-                  _PaidCard(total: tx.amount),
-                ],
-                const SizedBox(height: AppSizes.md),
-                _DeliveryDetailsCard(
-                  address: deliveryAddress.isEmpty
-                      ? 'Not provided'
-                      : deliveryAddress,
-                  dispatcherName: dispatcherName,
-                  dispatcherPhone: dispatcherPhone,
-                  eta: deliveryEta.isEmpty ? 'Not available' : deliveryEta,
-                  onAddress: () => _copy(
-                    context,
-                    deliveryAddress,
-                    'Delivery address copied',
-                  ),
-                  onCopyDispatcher: () =>
-                      _copy(context, dispatcherName, 'Dispatcher name copied'),
-                  onEta: _onTrackPackage,
-                ),
-                const SizedBox(height: 24),
-              ],
+                        _SellerCard(
+                          tx: tx,
+                          merchantAsync: merchantAsync,
+                          onTap: sellerId == null
+                              ? () {}
+                              : () => AppNav.push(
+                                  context,
+                                  MerchantProfileScreen(merchantId: sellerId),
+                                ),
+                        ),
+                        const SizedBox(height: AppSizes.md),
+                        _ProductCard(tx: tx, category: _category),
+                        const SizedBox(height: AppSizes.md),
+                        // Prominent dispute banner (either party) when one is active.
+                        _buildDisputeSlot(context),
+                        _BuyerInfoCard(
+                          buyerName: buyerDisplayName,
+                          buyerPhone: buyerContact,
+                          deliveryAddress: deliveryAddress,
+                          eta: deliveryEta,
+                          onCopyAddress: () => _copy(
+                            context,
+                            deliveryAddress,
+                            'Delivery address copied',
+                          ),
+                          onCopyName: () => _copy(
+                            context,
+                            buyerDisplayName,
+                            'Buyer name copied',
+                          ),
+                        ),
+                        const SizedBox(height: AppSizes.md),
+                        _DispatcherAccountCard(
+                          name: dispatcherDisplayName,
+                          phone: dispatcherAccountPhone,
+                          dispatcherAddress:
+                              (detailAsync.valueOrNull?.dispatcherAddress ?? '')
+                                  .trim(),
+                          statusLabel:
+                              (liveStatus ?? tx.apiStatus)?.label ?? 'Unknown',
+                        ),
+                        // Seller-only: a third-party/independent dispatcher has no
+                        // Hoppr account to log into — share this secure, transaction-
+                        // scoped link instead so they can manage pickup/delivery
+                        // (Pickup OTP, GPS, Delivery OTP) from any browser.
+                        if (isSellerView &&
+                            detailAsync.valueOrNull?.dispatcherMode ==
+                                'request_hoppr_dispatcher') ...[
+                          const SizedBox(height: AppSizes.sm),
+                          AppButton(
+                            label: 'Share dispatcher link',
+                            icon: Icons.link_rounded,
+                            variant: AppButtonVariant.outline,
+                            loading: _sharingDispatcherLink,
+                            enabled: !_sharingDispatcherLink,
+                            onPressed: () => _shareDispatcherLink(context),
+                          ),
+                        ],
+                        const SizedBox(height: AppSizes.md),
+                        if (showPaymentLink) ...[
+                          _PaymentLinkCard(code: tx.code, amount: tx.amount),
+                          const SizedBox(height: AppSizes.md),
+                        ],
+                        _buildPickupCodeSlot(context),
+                        _buildDeliveryCodeSlot(context),
+                        _EscrowStatusCard(
+                          tx: tx,
+                          dispatcherLabel: dispatcherName.isEmpty
+                              ? 'Dispatcher not assigned yet'
+                              : dispatcherName,
+                          eta: deliveryEta,
+                          liveStatus: liveStatus,
+                        ),
+                        _buildCoolingSlot(context),
+                        // "Funds held in escrow" banners only make sense once the buyer
+                        // has actually paid — hidden while the seller still sees the
+                        // Buyer Payment Link (awaiting payment) card above.
+                        if (!showPaymentLink) ...[
+                          const SizedBox(height: AppSizes.md),
+                          const _ReleaseBanner(),
+                          const SizedBox(height: AppSizes.md),
+                          _PaidCard(total: tx.amount),
+                        ],
+                        const SizedBox(height: AppSizes.md),
+                        _DeliveryDetailsCard(
+                          address: deliveryAddress.isEmpty
+                              ? 'Not provided'
+                              : deliveryAddress,
+                          dispatcherName: dispatcherName,
+                          dispatcherPhone: dispatcherPhone,
+                          eta: deliveryEta.isEmpty
+                              ? 'Not available'
+                              : deliveryEta,
+                          onAddress: () => _copy(
+                            context,
+                            deliveryAddress,
+                            'Delivery address copied',
+                          ),
+                          onCopyDispatcher: () => _copy(
+                            context,
+                            dispatcherName,
+                            'Dispatcher name copied',
+                          ),
+                          onEta: _onTrackPackage,
+                        ),
+                        const SizedBox(height: 24),
+                      ],
+                    ),
             ),
           ),
         ),
@@ -691,6 +950,172 @@ class _ActionBarSkeleton extends StatelessWidget {
     width: double.infinity,
     height: AppSizes.buttonHeight,
   );
+}
+
+/// Full-screen shimmer placeholder shown until the first live
+/// [transactionDetailProvider] fetch resolves. Mirrors the shape of the real
+/// card layout below (seller, product, buyer, dispatcher, escrow timeline,
+/// delivery) so the skeleton-to-content swap doesn't jump around, and the
+/// whole screen reveals itself in one clean cross-fade instead of individual
+/// fields (trust badge, buyer/dispatcher identity, status) popping in one by
+/// one as they resolve.
+class _TransactionDetailSkeleton extends StatelessWidget {
+  const _TransactionDetailSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(height: AppSizes.sm),
+        _SkeletonSellerCard(),
+        SizedBox(height: AppSizes.md),
+        _SkeletonProductCard(),
+        SizedBox(height: AppSizes.md),
+        _SkeletonInfoCard(rows: 3),
+        SizedBox(height: AppSizes.md),
+        _SkeletonInfoCard(rows: 3),
+        SizedBox(height: AppSizes.md),
+        _SkeletonTimelineCard(),
+        SizedBox(height: AppSizes.md),
+        _SkeletonInfoCard(rows: 3),
+        SizedBox(height: 24),
+      ],
+    );
+  }
+}
+
+class _SkeletonSellerCard extends StatelessWidget {
+  const _SkeletonSellerCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Row(
+        children: [
+          AppShimmerBox(width: 46, height: 46, radius: AppRadii.pill),
+          const SizedBox(width: AppSizes.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                AppShimmerBox(width: 150, height: 16),
+                SizedBox(height: 8),
+                AppShimmerBox(width: 110, height: 12),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SkeletonProductCard extends StatelessWidget {
+  const _SkeletonProductCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AppShimmerBox(width: 64, height: 64, radius: AppRadii.md),
+          const SizedBox(width: AppSizes.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                AppShimmerBox(width: double.infinity, height: 16),
+                SizedBox(height: 8),
+                AppShimmerBox(width: 90, height: 12),
+                SizedBox(height: 10),
+                AppShimmerBox(width: 100, height: 20),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Generic "label + N icon rows" card skeleton — matches the shape shared by
+/// [_BuyerInfoCard], [_DispatcherAccountCard] and [_DeliveryDetailsCard].
+class _SkeletonInfoCard extends StatelessWidget {
+  const _SkeletonInfoCard({required this.rows});
+  final int rows;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const AppShimmerBox(width: 100, height: 11),
+          const SizedBox(height: AppSizes.md),
+          for (int i = 0; i < rows; i++) ...[
+            if (i != 0) const SizedBox(height: AppSizes.sm),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppShimmerBox(width: 17, height: 17, radius: AppRadii.sm),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      AppShimmerBox(width: 80, height: 11),
+                      SizedBox(height: 4),
+                      AppShimmerBox(width: double.infinity, height: 14),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Mirrors [_EscrowStatusCard]'s step-by-step timeline shape.
+class _SkeletonTimelineCard extends StatelessWidget {
+  const _SkeletonTimelineCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const AppShimmerBox(width: 130, height: 11),
+          const SizedBox(height: AppSizes.lg),
+          for (int i = 0; i < 4; i++) ...[
+            if (i != 0) const SizedBox(height: AppSizes.md),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppShimmerBox(width: 30, height: 30, radius: AppRadii.pill),
+                const SizedBox(width: AppSizes.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      AppShimmerBox(width: 140, height: 14),
+                      SizedBox(height: 6),
+                      AppShimmerBox(width: 100, height: 11),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 /// Small top-of-screen indicator shown while a background refetch is in
@@ -773,6 +1198,43 @@ class _DeliveryCodeCard extends StatelessWidget {
           const NoteBanner(
             icon: Icons.info_outline_rounded,
             text: 'Share this code only after receiving the product.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Seller-only card (Hoppr-Dispatcher mode) showing the plaintext pickup
+/// code — read this out to the dispatcher in person once they arrive to
+/// collect the package. Distinct from [_DeliveryCodeCard]'s buyer-facing
+/// code and from the Transaction Code; the dispatcher never sees this card,
+/// only the OTP-entry keypad (see EnterPickupCodeScreen).
+class _PickupCodeCard extends StatelessWidget {
+  const _PickupCodeCard({required this.code});
+  final String code;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const CardSectionLabel('Pickup code'),
+          const SizedBox(height: AppSizes.md),
+          Center(
+            child: Text(
+              code,
+              style: AppText.display.copyWith(fontSize: 34, letterSpacing: 8),
+            ),
+          ),
+          const SizedBox(height: AppSizes.md),
+          const NoteBanner(
+            icon: Icons.info_outline_rounded,
+            text:
+                'Waiting for the dispatcher to collect the package. Read '
+                'this code out to them in person at handover — never share '
+                'it any other way.',
           ),
         ],
       ),
@@ -1125,6 +1587,13 @@ class _ProductCard extends StatelessWidget {
       background: AppColors.successSoft,
       foreground: AppColors.success,
     ),
+    'dispatcher' => const StatusPill(
+      label: 'Dispatcher',
+      icon: Icons.local_shipping_outlined,
+      dense: true,
+      background: AppColors.surfaceMuted,
+      foreground: AppColors.ink,
+    ),
     _ => null,
   };
 
@@ -1283,6 +1752,62 @@ class _BuyerInfoCard extends StatelessWidget {
             icon: Icons.schedule_rounded,
             label: 'Estimated delivery',
             value: eta.isEmpty ? 'Not provided' : eta,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The assigned Hoppr dispatcher ACCOUNT — entirely distinct from the
+/// courier payout contact shown further down in [_DeliveryDetailsCard].
+/// [name] is already a resolved display value (real account name, or one of
+/// the professional fallbacks below) — never a raw phone number.
+class _DispatcherAccountCard extends StatelessWidget {
+  const _DispatcherAccountCard({
+    required this.name,
+    required this.phone,
+    required this.dispatcherAddress,
+    required this.statusLabel,
+  });
+
+  final String name;
+  final String phone;
+
+  /// Where the dispatcher collects the product from the seller — shown as
+  /// "Package Collection Address" (never "Dispatcher Address", which reads
+  /// like the dispatcher's own address, and never "Pickup Address", not a
+  /// concept this app uses). Only this and Delivery Address exist.
+  final String dispatcherAddress;
+  final String statusLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CardSectionLabel('Dispatcher details'),
+          const SizedBox(height: AppSizes.md),
+          _ContactInfoRow(
+            icon: Icons.local_shipping_outlined,
+            label: 'Dispatcher',
+            name: name,
+            phone: phone,
+          ),
+          const SizedBox(height: AppSizes.sm),
+          _InfoRow(
+            icon: Icons.storefront_outlined,
+            label: 'Package Collection Address',
+            value: dispatcherAddress.isEmpty
+                ? 'Not provided'
+                : dispatcherAddress,
+          ),
+          const SizedBox(height: AppSizes.sm),
+          _InfoRow(
+            icon: Icons.timeline_rounded,
+            label: 'Delivery status',
+            value: statusLabel,
           ),
         ],
       ),
@@ -1449,6 +1974,10 @@ class _EscrowStatusCard extends StatelessWidget {
     final bool paid;
     final bool inTransit;
     final bool outForDelivery;
+    // Delivery confirmed (buyer got the package, OTP+GPS verified) — the
+    // start of the cooling/review window. Distinct from [done]/[settled]:
+    // a transaction can sit here for the whole cooling period.
+    final bool deliveryConfirmed;
     // A dead-ended transaction (cancelled/refunded/returned/undeliverable, or
     // a status this app build doesn't recognise) has nothing "actively
     // happening right now" — never fabricate an in-progress step for it.
@@ -1475,6 +2004,7 @@ class _EscrowStatusCard extends StatelessWidget {
               live == ApiTxStatus.outForDelivery ||
               pastDelivery);
       outForDelivery = live == ApiTxStatus.outForDelivery || pastDelivery;
+      deliveryConfirmed = pastDelivery;
       terminated =
           live == ApiTxStatus.cancelled ||
           live == ApiTxStatus.refunded ||
@@ -1493,17 +2023,30 @@ class _EscrowStatusCard extends StatelessWidget {
           tx.status == TxStatus.outForDelivery ||
           tx.status == TxStatus.delivered ||
           done;
+      deliveryConfirmed = tx.status == TxStatus.delivered || done;
       // The coarse list/history snapshot enum has no cancelled/refunded
       // value — nothing to flag as terminated before the fresh fetch lands.
       terminated = false;
     }
+    // Cooling and Settlement Released reach "done" at the same moment in
+    // this system (release() performs both transitions atomically) — see
+    // _CoolingPeriodCard elsewhere on this screen for the precise
+    // remaining-time detail this simplified timeline doesn't need to repeat.
+    final settled = done;
 
     // Each flag means "this stage has been reached (or passed)" and is
     // monotonic — once true for a stage it stays true for every later
     // status. So the first `false` in order is the ONE step genuinely in
     // progress right now; every flag after it is also false and hasn't
     // started yet (pending) — never "current" just because it isn't done.
-    final reached = [paid, inTransit, outForDelivery, done];
+    final reached = [
+      paid,
+      inTransit,
+      outForDelivery,
+      deliveryConfirmed,
+      settled,
+      settled,
+    ];
     final activeIndex = reached.indexWhere((r) => !r);
 
     _StepState stateFor(int index) {
@@ -1516,14 +2059,16 @@ class _EscrowStatusCard extends StatelessWidget {
       _StepData(
         state: stateFor(0),
         icon: Icons.account_balance_wallet_outlined,
-        title: 'Paid into escrow',
-        lines: paid ? ['Payment secured'] : ['Awaiting buyer payment'],
+        title: 'Payment Secured',
+        lines: paid
+            ? ['Payment secured in escrow']
+            : ['Awaiting buyer payment'],
         stopped: terminated && activeIndex == 0,
       ),
       _StepData(
         state: stateFor(1),
         icon: Icons.local_shipping_outlined,
-        title: 'In transit',
+        title: 'Picked Up / In Transit',
         lines: inTransit ? ['Package is moving'] : ['Waiting for dispatch'],
         stopped: terminated && activeIndex == 1,
       ),
@@ -1538,12 +2083,32 @@ class _EscrowStatusCard extends StatelessWidget {
       ),
       _StepData(
         state: stateFor(3),
-        icon: Icons.inventory_2_outlined,
-        title: 'Delivered & released',
-        lines: done
-            ? ['Funds released to seller']
-            : ['Confirm delivery to release payment'],
+        icon: Icons.verified_user_outlined,
+        title: 'Delivery Confirmed',
+        lines: deliveryConfirmed
+            ? ['Verified with OTP + location']
+            : ['Confirm delivery to start the review period'],
         stopped: terminated && activeIndex == 3,
+      ),
+      _StepData(
+        state: stateFor(4),
+        icon: Icons.hourglass_top_rounded,
+        title: 'Cooling Period',
+        lines: settled
+            ? ['Review period completed']
+            : deliveryConfirmed
+            ? ['Buyer can raise a dispute during this window']
+            : ['Starts once delivery is confirmed'],
+        stopped: terminated && activeIndex == 4,
+      ),
+      _StepData(
+        state: stateFor(5),
+        icon: Icons.inventory_2_outlined,
+        title: 'Settlement Released',
+        lines: settled
+            ? ['Funds released to seller']
+            : ['Released after the review period, if no dispute'],
+        stopped: terminated && activeIndex == 5,
       ),
     ];
 
@@ -1811,9 +2376,13 @@ class _DeliveryDetailsCard extends StatelessWidget {
         children: [
           CardSectionLabel('Dispatcher details'),
           const SizedBox(height: AppSizes.md),
+          // This is the buyer's delivery destination (not the dispatcher's
+          // collection point — that's shown on the Dispatcher Details card
+          // above as "Package Collection Address") — labeled precisely so
+          // the two are never confused.
           _InfoRow(
             icon: Icons.location_on_outlined,
-            label: 'Address',
+            label: 'Delivery address',
             value: address,
             onTap: onAddress,
           ),

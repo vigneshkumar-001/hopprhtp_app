@@ -254,7 +254,8 @@ class _SettlementBody extends StatelessWidget {
       if (endsAt == null) {
         return 'Cooling period details are not available yet.';
       }
-      if (!_coolingTimeUp) return 'Payout unlocks after cooling period ends.';
+      if (!_coolingTimeUp)
+        return 'Payment is pending release after the review period.';
       return 'Payout is ready to release.';
     }
     return 'This transaction has not reached cooling yet.';

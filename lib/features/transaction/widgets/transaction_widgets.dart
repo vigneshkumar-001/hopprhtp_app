@@ -202,8 +202,9 @@ class ItemSummaryCard extends StatelessWidget {
 }
 
 /// The "grand total" summary card with a one-line cost breakdown
-/// (item · delivery · trust + fee split). Uses the same premium dark card /
-/// glowing-sphere design as the Home balance card, sized to its content.
+/// (item · delivery · platform fee + who pays it). Uses the same premium
+/// dark card / glowing-sphere design as the Home balance card, sized to its
+/// content.
 /// Shared across the payment flow.
 class GrandTotalCard extends StatelessWidget {
   const GrandTotalCard({super.key, required this.draft});
@@ -224,8 +225,8 @@ class GrandTotalCard extends StatelessWidget {
           Text(
             '${Money.format(draft.itemSubtotal)} item · '
             '${Money.format(draft.deliveryFee)} delivery · '
-            '${Money.format(draft.buyerTrustShare)} trust '
-            '(${draft.feeSplit.label})',
+            '${Money.format(draft.buyerTrustShare)} platform fee '
+            '(${draft.platformFeePayer.label})',
             style: muted,
           ),
         ],

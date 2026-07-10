@@ -171,16 +171,18 @@ class _ConfirmDeliveryScreenState extends ConsumerState<ConfirmDeliveryScreen> {
       );
     }
 
-    // Seller-only UI guard (the backend enforces it regardless). Default allow
-    // while the role is still unknown so the real seller is never blocked.
-    final isSeller = ref
+    // Delivery-actor-only UI guard (the backend enforces it regardless) — the
+    // self-delivering seller, or the assigned Hoppr dispatcher. Default allow
+    // while the role is still unknown so the real actor is never blocked.
+    final isDeliveryActor = ref
         .watch(trackingProvider(txId))
-        .maybeWhen(data: (t) => t.isSeller, orElse: () => true);
-    if (!isSeller) {
+        .maybeWhen(data: (t) => t.isDeliveryActor, orElse: () => true);
+    if (!isDeliveryActor) {
       return AppScaffold(
         title: 'Confirm delivery',
         body: const ErrorRetryView(
-          message: 'Only the seller can verify delivery for this transaction.',
+          message:
+              'Only the seller or assigned dispatcher can verify delivery for this transaction.',
         ),
       );
     }
@@ -235,6 +237,15 @@ class _ConfirmDeliveryScreenState extends ConsumerState<ConfirmDeliveryScreen> {
             ),
             const SizedBox(height: AppSizes.xs),
             _Subtitle(phase: phase),
+            const SizedBox(height: AppSizes.sm),
+            Text(
+              'Delivery is confirmed using OTP and location verification to '
+              'protect both buyer and seller.',
+              style: AppText.caption.copyWith(
+                fontStyle: FontStyle.italic,
+                color: AppColors.textTertiary,
+              ),
+            ),
             const SizedBox(height: AppSizes.lg),
             _OtpRow(otp: _otp, length: _len, locked: !inZone),
             const SizedBox(height: AppSizes.md),

@@ -162,4 +162,55 @@ class AuthRepository {
     ),
     (d) => ApiUser.fromJson(asMap(d)),
   );
+
+  /// Add a payout account (Payout Accounts / Wallet settings only — never
+  /// part of Create Transaction). Returns the full saved user.
+  Future<ApiUser> addPayoutAccount({
+    required String bank,
+    required String accountNumber,
+    required String accountName,
+    bool makeDefault = false,
+  }) => apiCall(
+    () => _dio.post(
+      '/users/me/payout-accounts',
+      data: {
+        'bank': bank,
+        'accountNumber': accountNumber,
+        'accountName': accountName,
+        'makeDefault': makeDefault,
+      },
+    ),
+    (d) => ApiUser.fromJson(asMap(d)),
+  );
+
+  /// Update a saved payout account's bank/account number/account name
+  /// (partial — only the fields passed are changed).
+  Future<ApiUser> updatePayoutAccount(
+    String accountId, {
+    String? bank,
+    String? accountNumber,
+    String? accountName,
+  }) => apiCall(
+    () => _dio.patch(
+      '/users/me/payout-accounts/$accountId',
+      data: {
+        'bank': ?bank,
+        'accountNumber': ?accountNumber,
+        'accountName': ?accountName,
+      },
+    ),
+    (d) => ApiUser.fromJson(asMap(d)),
+  );
+
+  /// Disable (soft-remove) a saved payout account. Never hard-deletes.
+  Future<ApiUser> removePayoutAccount(String accountId) => apiCall(
+    () => _dio.delete('/users/me/payout-accounts/$accountId'),
+    (d) => ApiUser.fromJson(asMap(d)),
+  );
+
+  /// Set a saved payout account as the default (used for wallet withdrawal).
+  Future<ApiUser> setDefaultPayoutAccount(String accountId) => apiCall(
+    () => _dio.patch('/users/me/payout-accounts/$accountId/default'),
+    (d) => ApiUser.fromJson(asMap(d)),
+  );
 }

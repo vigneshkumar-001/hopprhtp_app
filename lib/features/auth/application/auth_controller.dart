@@ -13,16 +13,14 @@ class AuthState {
   const AuthState({required this.status, this.user});
 
   const AuthState.unauthenticated()
-      : status = AuthStatus.unauthenticated,
-        user = null;
+    : status = AuthStatus.unauthenticated,
+      user = null;
 
   /// A stored session exists but is gated behind a biometric unlock.
-  const AuthState.locked()
-      : status = AuthStatus.locked,
-        user = null;
+  const AuthState.locked() : status = AuthStatus.locked, user = null;
 
   const AuthState.authenticated(ApiUser this.user)
-      : status = AuthStatus.authenticated;
+    : status = AuthStatus.authenticated;
 
   final AuthStatus status;
   final ApiUser? user;
@@ -67,7 +65,9 @@ class AuthController extends AsyncNotifier<AuthState> {
   Future<void> login({required String identifier, required String pin}) async {
     final session = await _repo.login(identifier: identifier, pin: pin);
     await _tokens.save(
-        access: session.accessToken, refresh: session.refreshToken);
+      access: session.accessToken,
+      refresh: session.refreshToken,
+    );
     // Drop any cached data from a previous session before the new one's screens
     // mount, so they fetch fresh with the new token (no flash of stale data).
     resetUserScopedProviders(ref);
@@ -79,8 +79,7 @@ class AuthController extends AsyncNotifier<AuthState> {
     required String fullName,
     required String phone,
     String? email,
-  }) =>
-      _repo.requestOtp(fullName: fullName, phone: phone, email: email);
+  }) => _repo.requestOtp(fullName: fullName, phone: phone, email: email);
 
   /// Re-send the registration OTP (server enforces the resend cooldown).
   Future<String?> resendOtp({required String phone}) =>
@@ -97,9 +96,15 @@ class AuthController extends AsyncNotifier<AuthState> {
     required String otp,
     required String pin,
   }) async {
-    final session = await _repo.confirmRegister(phone: phone, otp: otp, pin: pin);
+    final session = await _repo.confirmRegister(
+      phone: phone,
+      otp: otp,
+      pin: pin,
+    );
     await _tokens.save(
-        access: session.accessToken, refresh: session.refreshToken);
+      access: session.accessToken,
+      refresh: session.refreshToken,
+    );
     resetUserScopedProviders(ref);
     state = AsyncData(AuthState.authenticated(session.user));
   }
@@ -130,6 +135,51 @@ class AuthController extends AsyncNotifier<AuthState> {
       documentBackUrl: documentBackUrl,
       selfieUrl: selfieUrl,
     );
+    state = AsyncData(AuthState.authenticated(user));
+  }
+
+  /// Add a payout account; updates the session user (so every screen reading
+  /// `user.payoutAccounts` sees it immediately, no separate refetch).
+  Future<void> addPayoutAccount({
+    required String bank,
+    required String accountNumber,
+    required String accountName,
+    bool makeDefault = false,
+  }) async {
+    final user = await _repo.addPayoutAccount(
+      bank: bank,
+      accountNumber: accountNumber,
+      accountName: accountName,
+      makeDefault: makeDefault,
+    );
+    state = AsyncData(AuthState.authenticated(user));
+  }
+
+  /// Update a saved payout account's bank/account number/account name.
+  Future<void> updatePayoutAccount(
+    String accountId, {
+    String? bank,
+    String? accountNumber,
+    String? accountName,
+  }) async {
+    final user = await _repo.updatePayoutAccount(
+      accountId,
+      bank: bank,
+      accountNumber: accountNumber,
+      accountName: accountName,
+    );
+    state = AsyncData(AuthState.authenticated(user));
+  }
+
+  /// Disable (soft-remove) a saved payout account.
+  Future<void> removePayoutAccount(String accountId) async {
+    final user = await _repo.removePayoutAccount(accountId);
+    state = AsyncData(AuthState.authenticated(user));
+  }
+
+  /// Set a saved payout account as the default (used for wallet withdrawal).
+  Future<void> setDefaultPayoutAccount(String accountId) async {
+    final user = await _repo.setDefaultPayoutAccount(accountId);
     state = AsyncData(AuthState.authenticated(user));
   }
 
@@ -164,7 +214,9 @@ class AuthController extends AsyncNotifier<AuthState> {
   /// Turn biometric unlock on — requires a successful biometric check first.
   Future<bool> enableBiometric() async {
     if (!await _biometrics.isAvailable()) return false;
-    final ok = await _biometrics.authenticate('Confirm to enable biometric unlock');
+    final ok = await _biometrics.authenticate(
+      'Confirm to enable biometric unlock',
+    );
     if (!ok) return false;
     await _biometrics.setEnabled(true);
     return true;
@@ -175,8 +227,10 @@ class AuthController extends AsyncNotifier<AuthState> {
   Future<bool> isBiometricAvailable() => _biometrics.isAvailable();
 
   /// Change the 6-digit PIN. Throws [ApiException] on failure.
-  Future<void> changePin({required String currentPin, required String newPin}) =>
-      _repo.changePin(currentPin: currentPin, newPin: newPin);
+  Future<void> changePin({
+    required String currentPin,
+    required String newPin,
+  }) => _repo.changePin(currentPin: currentPin, newPin: newPin);
 
   /// Verify the account PIN (Change-PIN flow). Throws on a wrong PIN.
   Future<void> verifyAccountPin(String pin) => _repo.verifyPin(pin: pin);
@@ -190,9 +244,9 @@ class AuthController extends AsyncNotifier<AuthState> {
     required String phone,
     required String otp,
     required String newPin,
-  }) =>
-      _repo.confirmPinReset(phone: phone, otp: otp, newPin: newPin);
+  }) => _repo.confirmPinReset(phone: phone, otp: otp, newPin: newPin);
 }
 
-final authControllerProvider =
-    AsyncNotifierProvider<AuthController, AuthState>(AuthController.new);
+final authControllerProvider = AsyncNotifierProvider<AuthController, AuthState>(
+  AuthController.new,
+);

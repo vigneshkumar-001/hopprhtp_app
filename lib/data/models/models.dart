@@ -197,46 +197,54 @@ class HopprUser {
   }
 }
 
-/// Courier payout details captured while creating a transaction.
-class CourierPayout {
-  CourierPayout({
-    this.dispatcherName = '',
-    this.dispatcherPhone = '',
-    this.bank = '',
-    this.accountNumber = '',
-    this.accountName = '',
-  });
+/// Who pays the Hoppr Platform Fee — a decision entirely independent of
+/// [DeliveryMethod] (who delivers). Even "Deliver myself" still incurs the
+/// fee: Hoppr provides the payment link, escrow protection, buyer payment
+/// holding, delivery confirmation, dispute safety and seller wallet release
+/// regardless of who physically carries the package.
+// Declared in the same order the Create Transaction segmented control
+// displays them (Buyer, 50:50, Seller) — `_platformFeePayer =
+// PlatformFeePayer.values[i]` maps the tapped segment index straight onto
+// this enum, so the declaration order must track the UI order exactly.
+enum PlatformFeePayer { buyer, split50, seller }
 
-  String dispatcherName;
-  String dispatcherPhone;
-  String bank;
-  String accountNumber;
-  String accountName;
+extension PlatformFeePayerX on PlatformFeePayer {
+  String get label => switch (this) {
+    PlatformFeePayer.buyer => 'Buyer pays',
+    PlatformFeePayer.seller => 'Seller pays',
+    PlatformFeePayer.split50 => 'Split 50:50',
+  };
 
-  bool get isComplete =>
-      dispatcherName.isNotEmpty &&
-      dispatcherPhone.isNotEmpty &&
-      bank.isNotEmpty &&
-      accountNumber.isNotEmpty &&
-      accountName.isNotEmpty;
+  String get wireValue => switch (this) {
+    PlatformFeePayer.buyer => 'buyer',
+    PlatformFeePayer.seller => 'seller',
+    PlatformFeePayer.split50 => 'split_50_50',
+  };
 
-  String get summary =>
-      isComplete ? '$dispatcherName · $bank ${_maskedAccount()}' : 'Not added';
-
-  String _maskedAccount() {
-    if (accountNumber.length <= 4) return accountNumber;
-    return '${accountNumber.substring(0, 4)}…';
-  }
+  /// Parses the backend's `platformFeePayer` wire value — an unrecognised or
+  /// missing value (only possible for pre-migration records) falls back to
+  /// [split50], matching [ApiTransaction.platformFeePayer]'s own fallback.
+  static PlatformFeePayer fromWireValue(String v) => switch (v) {
+    'buyer' => PlatformFeePayer.buyer,
+    'seller' => PlatformFeePayer.seller,
+    _ => PlatformFeePayer.split50,
+  };
 }
 
-/// Who covers the Hoppr trust-protection fee.
-enum FeeSplit { buyer, split, seller }
+/// Who physically handles pickup + delivery — chosen once per transaction
+/// (mirrors the backend's `dispatcherMode`). `requestDispatcher` is the only
+/// case that asks for a dispatcher name/phone.
+enum DeliveryMethod { sellerSelf, requestDispatcher }
 
-extension FeeSplitX on FeeSplit {
+extension DeliveryMethodX on DeliveryMethod {
   String get label => switch (this) {
-    FeeSplit.buyer => 'Buyer',
-    FeeSplit.split => '50 : 50',
-    FeeSplit.seller => 'Seller',
+    DeliveryMethod.sellerSelf => 'I will deliver myself',
+    DeliveryMethod.requestDispatcher => 'Request Hoppr Dispatcher',
+  };
+
+  String get wireValue => switch (this) {
+    DeliveryMethod.sellerSelf => 'seller_self_delivery',
+    DeliveryMethod.requestDispatcher => 'request_hoppr_dispatcher',
   };
 }
 
@@ -250,8 +258,8 @@ class PaymentDraft {
     required this.sellerName,
     required this.sellerCode,
     required this.itemSubtotal,
+    required this.platformFeePayer,
     this.deliveryFee = 7500,
-    this.feeSplit = FeeSplit.split,
     this.variant,
     this.transactionId,
   });
@@ -268,21 +276,31 @@ class PaymentDraft {
   final String? transactionId;
   final double itemSubtotal;
   double deliveryFee;
-  FeeSplit feeSplit;
+
+  /// Chosen once, required, on Create Transaction — never defaulted or
+  /// re-asked here. This is only a client-side PREVIEW of the backend's own
+  /// computation (see computeFees() in transaction.service.ts); the
+  /// authoritative amounts are whatever the backend returns once the
+  /// transaction actually exists.
+  PlatformFeePayer platformFeePayer;
 
   static const double trustRate = 0.015;
 
   double get trustFull => _round2(itemSubtotal * trustRate);
 
-  double get buyerTrustShare => switch (feeSplit) {
-    FeeSplit.buyer => trustFull,
-    FeeSplit.split => _round2(trustFull / 2),
-    FeeSplit.seller => 0,
+  double get buyerTrustShare => switch (platformFeePayer) {
+    PlatformFeePayer.buyer => trustFull,
+    PlatformFeePayer.split50 => _round2(trustFull / 2),
+    PlatformFeePayer.seller => 0,
   };
 
   double get sellerTrustShare => _round2(trustFull - buyerTrustShare);
 
   double get grandTotal => itemSubtotal + deliveryFee + buyerTrustShare;
+
+  /// What the seller actually receives once released — item value net of
+  /// their fee share. Mirrors the backend's sellerReceivableKobo.
+  double get sellerReceivable => _round2(itemSubtotal - sellerTrustShare);
 }
 
 /// A single consignment within a (multi-item) transaction draft.
@@ -300,15 +318,16 @@ class Consignment {
     this.estimatedDeliveryDate = '',
     this.estimatedDeliveryTime = '',
     this.waybillTrackingNumber = '',
+    this.dispatcherName = '',
+    this.dispatcherPhone = '',
     this.dispatcherAddress = '',
     this.specialInstructions = '',
-    CourierPayout? payout,
     this.hasDispatchPhoto = false,
     this.hasWaybillImage = false,
     this.productPhotoUrl,
     this.dispatchPhotoUrl,
     this.waybillImageUrl,
-  }) : payout = payout ?? CourierPayout();
+  });
 
   String product;
   String amount; // kept as text while editing
@@ -316,6 +335,10 @@ class Consignment {
   String weight;
   String buyerName;
   String buyerContact;
+
+  /// Buyer delivery location — where the dispatcher (or self-delivering
+  /// seller) hands the package to the buyer. There is no separate "pickup
+  /// address" in this app; only this and [dispatcherAddress] exist.
   String deliveryAddress;
 
   /// Delivery address coordinates from the map picker. Null when the address
@@ -325,9 +348,22 @@ class Consignment {
   String estimatedDeliveryDate;
   String estimatedDeliveryTime;
   String waybillTrackingNumber;
+
+  /// Dispatcher's name/phone — sent as the top-level Hoppr dispatcher
+  /// ACCOUNT link (request_hoppr_dispatcher only) *and* shown in the
+  /// Dispatcher Information section; a single pair of fields serves both,
+  /// never a duplicate. No payout/bank details are collected here — the
+  /// dispatcher is settled later via Dispatcher Wallet / Admin Settlement,
+  /// never at Create Transaction.
+  String dispatcherName;
+  String dispatcherPhone;
+
+  /// Where the dispatcher collects the product from the seller — the
+  /// collection/pickup point. Shown in the UI as "Package Collection
+  /// Address" — never "Dispatcher Address" (reads like the dispatcher's own
+  /// address) or "Pickup Address" (not a concept this app uses).
   String dispatcherAddress;
   String specialInstructions;
-  CourierPayout payout;
   bool hasDispatchPhoto;
   bool hasWaybillImage;
   String? productPhotoUrl; // backend URL after upload
@@ -340,6 +376,5 @@ class Consignment {
       quantity.isNotEmpty &&
       buyerName.isNotEmpty &&
       buyerContact.isNotEmpty &&
-      deliveryAddress.isNotEmpty &&
-      payout.isComplete;
+      deliveryAddress.isNotEmpty;
 }

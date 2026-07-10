@@ -4,6 +4,7 @@ import '../../core/network/json.dart';
 import '../dto/delivery_code_dto.dart';
 import '../dto/delivery_verification_status_dto.dart';
 import '../dto/dispute_dto.dart';
+import '../dto/scan_dto.dart';
 import '../dto/tracking_dto.dart';
 import '../dto/transaction_dto.dart';
 import '../dto/transaction_ledger_dto.dart';
@@ -106,18 +107,72 @@ class TransactionRepository {
   Future<ApiTransaction> outForDelivery(String id) =>
       _action(id, 'out-for-delivery');
 
-  /// Seller-only: confirms delivery with the code the buyer gives them.
+  /// Delivery-actor-only (self-delivering seller, or the assigned Hoppr
+  /// dispatcher): confirms delivery with the code the buyer gives them.
   Future<ApiTransaction> confirmDelivery(
     String id, {
     required String otp,
     double? lat,
     double? lng,
+    String? proofPhotoUrl,
   }) => apiCall(
     () => _dio.post(
       '/transactions/$id/confirm-delivery',
-      data: {'otp': otp, 'lat': ?lat, 'lng': ?lng},
+      data: {
+        'otp': otp,
+        'lat': ?lat,
+        'lng': ?lng,
+        'proofPhotoUrl': ?proofPhotoUrl,
+      },
     ),
     (d) => ApiTransaction.fromJson(asMap(d)),
+  );
+
+  /// Dispatcher-only: marks that they've set off for the seller's pickup address.
+  Future<ApiTransaction> dispatcherStartPickup(
+    String id, {
+    double? lat,
+    double? lng,
+  }) => apiCall(
+    () => _dio.post(
+      '/transactions/$id/pickup/start',
+      data: {'lat': ?lat, 'lng': ?lng},
+    ),
+    (d) => ApiTransaction.fromJson(asMap(d)),
+  );
+
+  /// Dispatcher-only: verifies the seller's Pickup OTP and marks picked up.
+  Future<ApiTransaction> confirmPickup(
+    String id, {
+    required String otp,
+    double? lat,
+    double? lng,
+    String? proofPhotoUrl,
+  }) => apiCall(
+    () => _dio.post(
+      '/transactions/$id/pickup/confirm',
+      data: {
+        'otp': otp,
+        'lat': ?lat,
+        'lng': ?lng,
+        'proofPhotoUrl': ?proofPhotoUrl,
+      },
+    ),
+    (d) => ApiTransaction.fromJson(asMap(d)),
+  );
+
+  /// Seller-only: the plaintext pickup code to read out to the dispatcher.
+  Future<DeliveryCode> getPickupCode(String id) => apiCall(
+    () => _dio.get('/transactions/$id/pickup-code'),
+    (d) => DeliveryCode.fromJson(asMap(d)),
+  );
+
+  /// Seller-only: (re)generates the secure web link for a third-party
+  /// dispatcher with no Hoppr account (see backend dispatcherLinkGuard).
+  /// Regenerating instantly invalidates any previously-shared link.
+  Future<String> generateDispatcherLink(String id) => apiCall(
+    () => _dio.post('/transactions/$id/dispatcher-link'),
+    (d) => asString(asMap(d)['url']),
   );
 
   Future<ApiTransaction> release(String id) => _action(id, 'release');
@@ -128,9 +183,11 @@ class TransactionRepository {
   );
 
   /// Create a transaction (seller). [body] follows the create schema:
-  /// `{ consignments:[{product, amountNaira, buyerContact, payout{...},
-  /// dispatchPhotoUrl?, waybillImageUrl?}], feeSplit, deliveryFeeNaira?,
+  /// `{ consignments:[{product, amountNaira, buyerContact, dispatchPhotoUrl?,
+  /// waybillImageUrl?}], platformFeePayer, dispatcherMode, deliveryFeeNaira?,
   /// variant?, inspectionPeriodSeconds?, buyerEmail?, sellerEmail? }`.
+  /// `platformFeePayer` ('buyer' | 'seller' | 'split_50_50') is required —
+  /// the backend rejects the request if it's missing, never a silent default.
   Future<ApiTransaction> create(Map<String, dynamic> body) => apiCall(
     () => _dio.post('/transactions', data: body),
     (d) => ApiTransaction.fromJson(asMap(d)),
@@ -140,6 +197,20 @@ class TransactionRepository {
     () => _dio.post('/transactions/$id/$path'),
     (d) => ApiTransaction.fromJson(asMap(d)),
   );
+
+  /// "Scan with Hoppr Vision" — uploads a document photo and returns the
+  /// backend's best-effort structured extraction for review. Never applies
+  /// anything itself and never creates a transaction; the caller always
+  /// shows the fields for the user to confirm first.
+  Future<ScanResult> scanDocument(String filePath) async {
+    final form = FormData.fromMap({
+      'file': await MultipartFile.fromFile(filePath),
+    });
+    return apiCall(
+      () => _dio.post('/transactions/scan', data: form),
+      (d) => ScanResult.fromJson(asMap(d)),
+    );
+  }
 
   /// Real tracking snapshot (buyer destination, seller's last reported
   /// position, and a route only when both exist) — no client-side fallback.

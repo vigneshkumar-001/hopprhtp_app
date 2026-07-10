@@ -24,14 +24,32 @@ import '../../widgets/feedback/state_views.dart';
 import '../../widgets/premium_card.dart';
 import '../auth/application/auth_controller.dart';
 import '../profile/payout_accounts_screen.dart';
+import '../transaction/widgets/transaction_widgets.dart';
 
 /// Wallet — live balance, cooling settlement, and the recent ledger activity,
 /// all from the `/wallet` API.
-class WalletScreen extends ConsumerWidget {
+class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<WalletScreen> createState() => _WalletScreenState();
+}
+
+class _WalletScreenState extends ConsumerState<WalletScreen> {
+  // Recent Activity opens on the current month by default — the most useful
+  // default for most users, rather than an unbounded "All" fetch.
+  WalletActivityFilter _filter = WalletActivityFilter.thisMonth();
+
+  Future<void> _openFilterSheet() async {
+    final picked = await showBlurredSheet<WalletActivityFilter>(
+      context,
+      builder: (ctx) => _ActivityFilterSheet(selected: _filter),
+    );
+    if (picked != null && mounted) setState(() => _filter = picked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final balanceAsync = ref.watch(walletBalanceProvider);
     // A fetch failure goes to the shared snackbar, never an inline page
     // block — fires once per new error, not on every rebuild.
@@ -71,16 +89,25 @@ class WalletScreen extends ConsumerWidget {
             const SizedBox(height: AppSizes.sm),
             _WalletBalanceCard(balance: balance),
             const SizedBox(height: AppSizes.xxl),
-            Text(
-              'RECENT ACTIVITY',
-              style: AppText.caption.copyWith(
-                letterSpacing: 1.1,
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF3F4652),
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'RECENT ACTIVITY',
+                  style: AppText.caption.copyWith(
+                    letterSpacing: 1.1,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF3F4652),
+                  ),
+                ),
+                _ActivityFilterButton(
+                  selected: _filter,
+                  onTap: _openFilterSheet,
+                ),
+              ],
             ),
-            const SizedBox(height: AppSizes.lg),
-            const _LedgerSection(),
+            const SizedBox(height: AppSizes.md),
+            _LedgerSection(filter: _filter),
             const SizedBox(height: AppSizes.xl),
             Center(
               child: Text(
@@ -95,21 +122,219 @@ class WalletScreen extends ConsumerWidget {
   }
 }
 
+/// Compact pill button showing the active Recent Activity filter — tapping it
+/// opens [_ActivityFilterSheet]. Replaces the old always-visible chip/tab row
+/// with a single, clear "this is what you're looking at" affordance.
+class _ActivityFilterButton extends StatelessWidget {
+  const _ActivityFilterButton({required this.selected, required this.onTap});
+
+  final WalletActivityFilter selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = selected.label == 'Custom'
+        ? '${Dates.short(selected.from!)} – ${Dates.short(selected.to!)}'
+        : selected.label;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.only(left: 10, right: 8, top: 6, bottom: 6),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceMuted,
+          borderRadius: AppRadii.pill,
+          border: Border.all(color: AppColors.border, width: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.tune_rounded,
+              size: 14,
+              color: AppColors.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: AppText.label.copyWith(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: AppColors.textTertiary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom sheet listing every Recent Activity date filter — Today, Yesterday,
+/// Last week, This month (the default) and a Custom range. Purely a
+/// client-side selector; the actual filtering happens server-side (see
+/// [walletLedgerProvider]), so the list is never fetched then re-filtered.
+/// Pops with the chosen [WalletActivityFilter], or null if dismissed.
+class _ActivityFilterSheet extends StatelessWidget {
+  const _ActivityFilterSheet({required this.selected});
+
+  final WalletActivityFilter selected;
+
+  Future<void> _pickCustomRange(BuildContext context) async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 2),
+      lastDate: now,
+      initialDateRange: DateTimeRange(
+        start: now.subtract(const Duration(days: 6)),
+        end: now,
+      ),
+    );
+    if (picked == null || !context.mounted) return;
+    Navigator.of(
+      context,
+    ).pop(WalletActivityFilter.range(picked.start, picked.end));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isCustom = selected.label == 'Custom';
+    final options = <(IconData, WalletActivityFilter)>[
+      (Icons.today_rounded, WalletActivityFilter.today()),
+      (Icons.event_outlined, WalletActivityFilter.yesterday()),
+      (Icons.date_range_rounded, WalletActivityFilter.lastWeek()),
+      (Icons.calendar_view_month_rounded, WalletActivityFilter.thisMonth()),
+      (Icons.all_inclusive_rounded, WalletActivityFilter.all),
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSizes.xl,
+        AppSizes.md,
+        AppSizes.xl,
+        AppSizes.lg,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Filter by date', style: AppText.h2),
+          const SizedBox(height: 4),
+          Text(
+            'Choose a range to narrow down your wallet activity.',
+            style: AppText.body,
+          ),
+          const SizedBox(height: AppSizes.lg),
+          for (final (icon, filter) in options)
+            _FilterOptionTile(
+              icon: icon,
+              label: filter.label,
+              selected: !isCustom && selected == filter,
+              onTap: () => Navigator.of(context).pop(filter),
+            ),
+          _FilterOptionTile(
+            icon: Icons.calendar_today_outlined,
+            label: isCustom
+                ? '${Dates.short(selected.from!)} – ${Dates.short(selected.to!)}'
+                : 'Custom date range',
+            selected: isCustom,
+            trailing: const Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: AppColors.textTertiary,
+            ),
+            onTap: () => _pickCustomRange(context),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FilterOptionTile extends StatelessWidget {
+  const _FilterOptionTile({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSizes.sm),
+      child: Material(
+        color: selected ? AppColors.ink : AppColors.surfaceMuted,
+        borderRadius: AppRadii.md,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSizes.md,
+              vertical: AppSizes.md,
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 19,
+                  color: selected ? Colors.white : AppColors.textSecondary,
+                ),
+                const SizedBox(width: AppSizes.md),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: AppText.bodyStrong.copyWith(
+                      color: selected ? Colors.white : AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                if (trailing != null)
+                  trailing!
+                else if (selected)
+                  const Icon(
+                    Icons.check_rounded,
+                    size: 20,
+                    color: Colors.white,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _LedgerSection extends ConsumerWidget {
-  const _LedgerSection();
+  const _LedgerSection({required this.filter});
+  final WalletActivityFilter filter;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final ledgerAsync = ref.watch(walletLedgerProvider);
+    final ledgerAsync = ref.watch(walletLedgerProvider(filter));
     // A fetch failure goes to the shared snackbar, never an inline page
     // block — fires once per new error, not on every rebuild.
-    ref.listen(walletLedgerProvider, (previous, next) {
+    ref.listen(walletLedgerProvider(filter), (previous, next) {
       final err = next.error;
       if (err != null) {
         AppSnackbar.error(
           context,
           friendlyError(err),
-          onRetry: () => ref.invalidate(walletLedgerProvider),
+          onRetry: () => ref.invalidate(walletLedgerProvider(filter)),
         );
       }
     });
@@ -121,10 +346,14 @@ class _LedgerSection extends ConsumerWidget {
       error: (_, _) => const SizedBox.shrink(),
       data: (page) {
         if (page.entries.isEmpty) {
-          return const EmptyStateView(
+          return EmptyStateView(
             icon: Icons.account_balance_wallet_outlined,
-            title: 'No activity yet',
-            subtitle: 'Escrow funding, payouts and refunds will show up here.',
+            title: filter.isAll
+                ? 'No activity yet'
+                : 'No activity in this range',
+            subtitle: filter.isAll
+                ? 'Escrow funding, payouts and refunds will show up here.'
+                : 'Try a different date range, or switch back to All.',
           );
         }
         return AppCard(
@@ -582,65 +811,317 @@ class _WalletCardAction extends StatelessWidget {
   }
 }
 
+/// One Recent Activity row — tappable (ripple feedback) to open
+/// [_ActivityDetailsSheet] with the full plain-language explanation.
 class _ActivityRow extends StatelessWidget {
   const _ActivityRow({required this.entry});
   final WalletLedgerEntry entry;
 
-  static (IconData, String) _meta(String type) => switch (type) {
-    'escrow_funded' => (Icons.lock_outline_rounded, 'Secured in escrow'),
-    'seller_payout' => (Icons.account_balance_outlined, 'Seller payout'),
-    'delivery_payout' => (Icons.local_shipping_outlined, 'Delivery payout'),
-    'buyer_refund' => (Icons.shield_outlined, 'Buyer refund'),
-    'trust_fee' => (Icons.verified_user_outlined, 'Hoppr trust fee'),
-    'withdrawal' => (Icons.south_rounded, 'Withdrawal'),
-    'adjustment' => (Icons.tune_rounded, 'Adjustment'),
-    _ => (Icons.receipt_long_outlined, 'Transaction'),
+  /// Icon only — the title/description are backend-enriched (see
+  /// [WalletLedgerEntry.title]) and never re-derived here. Direction-aware
+  /// where the same [type] means something different as a credit vs a debit
+  /// (e.g. delivery_payout: dispatcher earning vs a fee deducted from a
+  /// seller's payout).
+  static IconData _icon(String type, bool credit) => switch (type) {
+    'escrow_funded' =>
+      credit ? Icons.lock_outline_rounded : Icons.lock_open_outlined,
+    'seller_payout' => Icons.account_balance_outlined,
+    'delivery_payout' => Icons.local_shipping_outlined,
+    'buyer_refund' => Icons.shield_outlined,
+    'trust_fee' => Icons.verified_user_outlined,
+    'withdrawal' => Icons.south_rounded,
+    'adjustment' => Icons.tune_rounded,
+    _ => Icons.receipt_long_outlined,
   };
 
   @override
   Widget build(BuildContext context) {
-    final (icon, title) = _meta(entry.type);
     final positive = entry.isCredit;
+    final icon = _icon(entry.type, positive);
+    final title = entry.title ?? entry.description;
     final amount = '${positive ? '+' : '−'}${Money.format(entry.amountNaira)}';
     final subtitle = entry.createdAt != null
         ? '${entry.description} · ${Dates.relative(entry.createdAt!)}'
         : entry.description;
 
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => showActivityDetailsSheet(context, entry),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSizes.md),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceMuted,
+                  borderRadius: AppRadii.sm,
+                ),
+                child: Icon(icon, size: 18),
+              ),
+              const SizedBox(width: AppSizes.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: AppText.bodyStrong),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: AppText.caption,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSizes.sm),
+              Text(
+                amount,
+                style: AppText.bodyStrong.copyWith(
+                  color: positive ? AppColors.success : AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(width: 2),
+              const Icon(
+                Icons.chevron_right_rounded,
+                size: 18,
+                color: AppColors.textTertiary,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Opens the Activity Details bottom sheet for [entry]. Opens instantly from
+/// already-fetched list data when it's fully enriched (the common case —
+/// every current API response is); only falls back to a fetch (with a brief
+/// loading state) for a legacy/partial shape.
+void showActivityDetailsSheet(BuildContext context, WalletLedgerEntry entry) {
+  showBlurredSheet(
+    context,
+    builder: (ctx) => _ActivityDetailsSheet(entry: entry),
+  );
+}
+
+class _ActivityDetailsSheet extends ConsumerStatefulWidget {
+  const _ActivityDetailsSheet({required this.entry});
+  final WalletLedgerEntry entry;
+
+  @override
+  ConsumerState<_ActivityDetailsSheet> createState() =>
+      _ActivityDetailsSheetState();
+}
+
+class _ActivityDetailsSheetState extends ConsumerState<_ActivityDetailsSheet> {
+  late WalletLedgerEntry _entry = widget.entry;
+  bool _loading = false;
+  bool _loadFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Only the rare partial/legacy shape needs a fetch — every entry the
+    // current API returns already has everything this sheet shows.
+    if (!_entry.hasFullDetails) _fetchDetails();
+  }
+
+  Future<void> _fetchDetails() async {
+    setState(() => _loading = true);
+    try {
+      final full = await ref
+          .read(walletRepositoryProvider)
+          .ledgerEntry(_entry.id);
+      if (mounted) setState(() => _entry = full);
+    } catch (_) {
+      if (mounted) setState(() => _loadFailed = true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppSizes.xxl * 2),
+        child: Center(child: AppCircularLoader()),
+      );
+    }
+
+    final e = _entry;
+    final positive = e.isCredit;
+    final amount = '${positive ? '+' : '−'}${Money.format(e.amountNaira)}';
+    final hasBreakdown = e.platformFeeKobo != null;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSizes.md),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(
+        AppSizes.xl,
+        AppSizes.md,
+        AppSizes.xl,
+        AppSizes.lg,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(e.title ?? e.description, style: AppText.h2),
+              ),
+              StatusPill(
+                label: _statusLabel(e.status),
+                background: AppColors.successSoft,
+                foreground: AppColors.success,
+                dense: true,
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSizes.sm),
+          Text(
+            amount,
+            style: AppText.h1.copyWith(
+              color: positive ? AppColors.success : AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: AppSizes.lg),
+          if (e.createdAt != null)
+            _DetailRow(
+              icon: Icons.schedule_rounded,
+              label: 'Date & time',
+              value: Dates.createdLabel(e.createdAt),
+            ),
+          if (e.reference != null)
+            _DetailRow(
+              icon: Icons.confirmation_number_outlined,
+              label: 'Transaction reference',
+              value: e.reference!,
+            ),
+          if (e.productName != null)
+            _DetailRow(
+              icon: Icons.inventory_2_outlined,
+              label: 'Product',
+              value: e.productName!,
+            ),
+          if (e.sourceLabel != null)
+            _DetailRow(
+              icon: Icons.call_made_rounded,
+              label: 'Source',
+              value: e.sourceLabel!,
+            ),
+          if (e.destinationLabel != null)
+            _DetailRow(
+              icon: Icons.call_received_rounded,
+              label: 'Destination',
+              value: e.destinationLabel!,
+            ),
+          const SizedBox(height: AppSizes.md),
           Container(
-            width: 38,
-            height: 38,
-            alignment: Alignment.center,
+            width: double.infinity,
+            padding: const EdgeInsets.all(AppSizes.lg),
             decoration: BoxDecoration(
               color: AppColors.surfaceMuted,
-              borderRadius: AppRadii.sm,
+              borderRadius: AppRadii.card,
             ),
-            child: Icon(icon, size: 18),
-          ),
-          const SizedBox(width: AppSizes.md),
-          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: AppText.bodyStrong),
-                const SizedBox(height: 2),
+                Text('Why this happened', style: AppText.bodyStrong),
+                const SizedBox(height: 6),
                 Text(
-                  subtitle,
-                  style: AppText.caption,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  _loadFailed
+                      ? 'Details are not available for this activity yet.'
+                      : e.description.isEmpty
+                      ? 'Details are not available for this activity yet.'
+                      : e.description,
+                  style: AppText.body,
                 ),
               ],
             ),
           ),
-          const SizedBox(width: AppSizes.sm),
-          Text(
-            amount,
-            style: AppText.bodyStrong.copyWith(
-              color: positive ? AppColors.success : AppColors.textPrimary,
+          if (hasBreakdown) ...[
+            const SizedBox(height: AppSizes.md),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(AppSizes.lg),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: AppRadii.card,
+                border: Border.all(color: AppColors.border, width: 1.2),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Breakdown', style: AppText.bodyStrong),
+                  const SizedBox(height: AppSizes.md),
+                  if (e.productAmountKobo != null)
+                    SummaryRow(
+                      label: 'Product Amount',
+                      value: Money.format(e.productAmountNaira ?? 0),
+                    ),
+                  const SizedBox(height: AppSizes.sm),
+                  SummaryRow(
+                    label: 'Platform Fee',
+                    value: Money.format(e.platformFeeNaira ?? 0),
+                  ),
+                  if (e.sellerReceivableAmountNaira != null) ...[
+                    const SizedBox(height: AppSizes.sm),
+                    SummaryRow(
+                      label: 'Seller Receives',
+                      value: Money.format(e.sellerReceivableAmountNaira!),
+                      emphasized: true,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _statusLabel(String status) => status.isEmpty
+      ? 'Completed'
+      : status[0].toUpperCase() + status.substring(1);
+}
+
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSizes.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 17, color: AppColors.textSecondary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: AppText.caption),
+                const SizedBox(height: 2),
+                Text(value, style: AppText.bodyStrong),
+              ],
             ),
           ),
         ],

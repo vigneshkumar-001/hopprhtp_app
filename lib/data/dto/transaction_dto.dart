@@ -28,6 +28,8 @@ enum ApiTxStatus {
   awaitingPayment,
   paymentReceived,
   awaitingDispatch,
+  readyForPickup,
+  dispatcherGoingToPickup,
   inTransit,
   outForDelivery,
   delivered,
@@ -47,6 +49,8 @@ enum ApiTxStatus {
     'awaiting_payment' => ApiTxStatus.awaitingPayment,
     'payment_received' => ApiTxStatus.paymentReceived,
     'awaiting_dispatch' => ApiTxStatus.awaitingDispatch,
+    'ready_for_pickup' => ApiTxStatus.readyForPickup,
+    'dispatcher_going_to_pickup' => ApiTxStatus.dispatcherGoingToPickup,
     'in_transit' => ApiTxStatus.inTransit,
     'out_for_delivery' => ApiTxStatus.outForDelivery,
     'delivered' => ApiTxStatus.delivered,
@@ -67,6 +71,9 @@ enum ApiTxStatus {
     ApiTxStatus.awaitingPayment => 'Awaiting payment',
     ApiTxStatus.paymentReceived => 'Payment received',
     ApiTxStatus.awaitingDispatch => 'Awaiting dispatch',
+    ApiTxStatus.readyForPickup => 'Ready for pickup',
+    ApiTxStatus.dispatcherGoingToPickup =>
+      'Dispatcher going to collection point',
     ApiTxStatus.inTransit => 'In transit',
     ApiTxStatus.outForDelivery => 'Out for delivery',
     ApiTxStatus.delivered => 'Delivered',
@@ -132,7 +139,10 @@ class ApiTransaction {
     required this.grandTotalKobo,
     required this.trustFullKobo,
     this.buyerTrustShareKobo,
+    this.sellerTrustShareKobo,
+    this.sellerReceivableKobo,
     required this.feeSplit,
+    this.platformFeePayer = 'split_50_50',
     required this.currency,
     required this.inspectionPeriodSeconds,
     this.coolingEndsAt,
@@ -156,7 +166,18 @@ class ApiTransaction {
     this.myRole,
     this.isSeller = false,
     this.isBuyer = false,
+    this.isDispatcher = false,
     this.sellerId,
+    this.buyerId,
+    this.dispatcherAccountId,
+    this.dispatcherAccountName,
+    this.dispatcherAccountPhone,
+    this.dispatcherAccountStatus,
+    this.dispatcherMode,
+    this.pickupConfirmedAt,
+    this.nearBuyerAt,
+    this.deliveryConfirmedAt,
+    this.dispatcherAddress,
   });
 
   final String id;
@@ -174,11 +195,27 @@ class ApiTransaction {
   final int grandTotalKobo;
   final int trustFullKobo;
 
-  /// The buyer's share of the trust/protection fee (may be less than
-  /// [trustFullKobo] when the seller absorbs part of it — see [feeSplit]).
-  /// Null on older/legacy records; callers should fall back to [trustFullKobo].
+  /// The buyer's share of the platform fee (may be less than [trustFullKobo]
+  /// when the seller absorbs part of it — see [platformFeePayer]). Null on
+  /// older/legacy records; callers should fall back to [trustFullKobo].
   final int? buyerTrustShareKobo;
-  final String feeSplit; // buyer | split | seller
+
+  /// The seller's share of the platform fee. Null on older/legacy records.
+  final int? sellerTrustShareKobo;
+
+  /// What the seller actually receives once released — itemSubtotalKobo net
+  /// of [sellerTrustShareKobo]. Backend-computed (see transactionService's
+  /// feeView()), never re-derived client-side once a real transaction
+  /// exists. Null on older/legacy records.
+  final int? sellerReceivableKobo;
+
+  /// Internal storage value — 'buyer' | 'split' | 'seller'. Prefer
+  /// [platformFeePayer] (the same decision, public-API naming) for display.
+  final String feeSplit;
+
+  /// Who pays the Hoppr Platform Fee — 'buyer' | 'seller' | 'split_50_50'.
+  /// A decision entirely separate from delivery method/dispatcherMode.
+  final String platformFeePayer;
   final String currency;
 
   final int inspectionPeriodSeconds;
@@ -221,25 +258,93 @@ class ApiTransaction {
   /// Per-transaction role of the signed-in user, computed by the backend from
   /// this transaction only (there is no global buyer/seller account type). The
   /// same user can be seller on one transaction and buyer on another.
-  final String? myRole; // 'seller' | 'buyer' | null
+  final String? myRole; // 'seller' | 'buyer' | 'dispatcher' | null
   final bool isSeller;
   final bool isBuyer;
+  final bool isDispatcher;
 
   /// The transaction creator's user id — lets the buyer's side navigate to a
   /// real Merchant Profile. Null on shapes that don't carry it (defensive
   /// only; every live transaction has a sellerId).
   final String? sellerId;
 
+  /// The linked buyer account id, once a real Hoppr user has been matched by
+  /// phone (see backend transaction.service.ts create()/attachBuyerToPendingByPhone).
+  /// Null until then — screens show a professional fallback, never a guess.
+  final String? buyerId;
+
+  /// The assigned Hoppr dispatcher ACCOUNT id/phone/status — entirely
+  /// distinct from [dispatcherName]/[dispatcherPhone] above, which are the
+  /// courier's free-text payout contact and never imply a real account.
+  /// Null [dispatcherAccountId] means no dispatcher account is linked yet
+  /// (either none was assigned, or the phone hasn't registered on Hoppr).
+  final String? dispatcherAccountId;
+
+  /// Seller-entered dispatcher name (request_hoppr_dispatcher only) — shown
+  /// as a fallback ("[name] — not registered yet") before the account links.
+  final String? dispatcherAccountName;
+  final String? dispatcherAccountPhone;
+  final String? dispatcherAccountStatus; // 'assigned' | 'pending_registration'
+
+  /// 'seller_self_delivery' | 'request_hoppr_dispatcher'. Null on
+  /// legacy/lean-list shapes that don't carry it — treat as self-delivery.
+  final String? dispatcherMode;
+  bool get isSelfDelivery => dispatcherMode != 'request_hoppr_dispatcher';
+
+  /// True only for the seller on a 'seller_self_delivery' transaction — a
+  /// Hoppr-Dispatcher-mode seller is NOT this, even though they're still
+  /// [isSeller]. Distinguishes the two so seller-only UI (pickup code share)
+  /// never gets confused with dispatcher-only UI (pickup OTP entry).
+  bool get isSelfDeliverySeller => isSeller && isSelfDelivery;
+
+  /// Seller → dispatcher pickup handoff timestamp — null until confirmed,
+  /// always null for self-delivery (no pickup step).
+  final DateTime? pickupConfirmedAt;
+
+  /// First time the dispatcher entered the buyer's delivery geofence.
+  final DateTime? nearBuyerAt;
+
+  /// Dispatcher/seller → buyer delivery handoff timestamp.
+  final DateTime? deliveryConfirmedAt;
+
+  /// Where the dispatcher collects the package from — from
+  /// `consignments[].dispatcherAddress`, entered by the seller at creation.
+  /// There is no separate "pickup address" concept in this app; only this
+  /// and [deliveryAddress] exist. Shown in the UI as "Package Collection
+  /// Address" — never "Dispatcher Address" or "Pickup Address".
+  final String? dispatcherAddress;
+
+  /// Whoever actually handles pickup + delivery for this transaction — the
+  /// self-delivering seller, or the assigned Hoppr dispatcher. Screens
+  /// driving pickup/delivery actions should gate on this instead of
+  /// [isSeller] alone: in Hoppr-Dispatcher mode the seller is NOT the
+  /// delivery actor (the dispatcher is), so `isSeller || isDispatcher` was
+  /// wrong here — it made every seller a delivery actor regardless of mode,
+  /// which is exactly what let a Hoppr-Dispatcher-mode seller see the
+  /// dispatcher's "Heading to pickup" / "Enter pickup code" controls.
+  bool get isDeliveryActor => isDispatcher || isSelfDeliverySeller;
+
   double get itemSubtotalNaira => itemSubtotalKobo / 100;
   double get deliveryFeeNaira => deliveryFeeKobo / 100;
   double get grandTotalNaira => grandTotalKobo / 100;
   double get trustFullNaira => trustFullKobo / 100;
 
-  /// The trust fee actually payable by the buyer — [buyerTrustShareKobo] when
-  /// the backend provided it, else the full fee (older records / seller-paid
-  /// split where the buyer's share equals the full amount shown).
+  /// The platform fee actually payable by the buyer — [buyerTrustShareKobo]
+  /// when the backend provided it, else the full fee (older records /
+  /// seller-paid split where the buyer's share equals the full amount shown).
   double get buyerTrustShareNaira =>
       (buyerTrustShareKobo ?? trustFullKobo) / 100;
+
+  double? get sellerTrustShareNaira =>
+      sellerTrustShareKobo == null ? null : sellerTrustShareKobo! / 100;
+
+  /// What the seller actually receives once released. Falls back to
+  /// itemSubtotal net of [sellerTrustShareKobo] if the backend-computed
+  /// value is ever absent (defensive only — feeView() always returns it).
+  double get sellerReceivableNaira =>
+      (sellerReceivableKobo ??
+          (itemSubtotalKobo - (sellerTrustShareKobo ?? 0))) /
+      100;
 
   /// True once the buyer's delivery address has real coordinates (set from the
   /// map picker at creation). Screens must gate any map/tracking UI on this —
@@ -268,7 +373,14 @@ class ApiTransaction {
       buyerTrustShareKobo: j['buyerTrustShareKobo'] == null
           ? null
           : asInt(j['buyerTrustShareKobo']),
+      sellerTrustShareKobo: j['sellerTrustShareKobo'] == null
+          ? null
+          : asInt(j['sellerTrustShareKobo']),
+      sellerReceivableKobo: j['sellerReceivableKobo'] == null
+          ? null
+          : asInt(j['sellerReceivableKobo']),
       feeSplit: asString(j['feeSplit'], 'split'),
+      platformFeePayer: asString(j['platformFeePayer'], 'split_50_50'),
       currency: asString(j['currency'], 'NGN'),
       inspectionPeriodSeconds: asInt(j['inspectionPeriodSeconds'], 86400),
       coolingEndsAt: asDateTime(j['coolingEndsAt']),
@@ -297,12 +409,19 @@ class ApiTransaction {
       estimatedDeliveryTime: asStringOrNull(
         firstConsignment['estimatedDeliveryTime'],
       ),
-      dispatcherName: asStringOrNull(
-        asMap(firstConsignment['payout'])['dispatcherName'],
-      ),
-      dispatcherPhone: asStringOrNull(
-        asMap(firstConsignment['payout'])['dispatcherPhone'],
-      ),
+      // Older records carry the courier's contact inside consignments[].payout
+      // (captured alongside now-removed bank details); Create Transaction no
+      // longer collects payout at all, so new records fall back to the
+      // top-level dispatcherName/dispatcherPhone (the same Hoppr dispatcher
+      // link parsed separately below into dispatcherAccountName/Phone).
+      dispatcherName:
+          asStringOrNull(asMap(firstConsignment['payout'])['dispatcherName']) ??
+          asStringOrNull(j['dispatcherName']),
+      dispatcherPhone:
+          asStringOrNull(
+            asMap(firstConsignment['payout'])['dispatcherPhone'],
+          ) ??
+          asStringOrNull(j['dispatcherPhone']),
       // New records use productPhotoUrl; dispatch/waybill are only a fallback
       // for older records that predate the dedicated product-photo field.
       productPhotoUrl:
@@ -322,7 +441,25 @@ class ApiTransaction {
       isBuyer: j['isBuyer'] != null
           ? asBool(j['isBuyer'])
           : asStringOrNull(j['myRole']) == 'buyer',
+      isDispatcher: j['isDispatcher'] != null
+          ? asBool(j['isDispatcher'])
+          : asStringOrNull(j['myRole']) == 'dispatcher',
       sellerId: j['sellerId'] == null ? null : asId(j['sellerId']),
+      buyerId: j['buyerId'] == null ? null : asId(j['buyerId']),
+      dispatcherAccountId: j['dispatcherId'] == null
+          ? null
+          : asId(j['dispatcherId']),
+      // Top-level `dispatcherPhone` (the assigned Hoppr account's phone) —
+      // never confused with `consignments[].payout.dispatcherPhone` above,
+      // which is parsed separately into [dispatcherPhone].
+      dispatcherAccountPhone: asStringOrNull(j['dispatcherPhone']),
+      dispatcherAccountName: asStringOrNull(j['dispatcherName']),
+      dispatcherAccountStatus: asStringOrNull(j['dispatcherStatus']),
+      dispatcherMode: asStringOrNull(j['dispatcherMode']),
+      pickupConfirmedAt: asDateTime(asMap(j['pickup'])['confirmedAt']),
+      nearBuyerAt: asDateTime(delivery['nearBuyerAt']),
+      deliveryConfirmedAt: asDateTime(delivery['confirmedAt']),
+      dispatcherAddress: asStringOrNull(firstConsignment['dispatcherAddress']),
     );
   }
 }

@@ -75,6 +75,13 @@ final deliveryCodeProvider = FutureProvider.autoDispose
       return ref.watch(transactionRepositoryProvider).getDeliveryCode(id);
     });
 
+/// Seller-only pickup code to read out to the dispatcher in person. Manual
+/// refresh only, via `ref.invalidate(pickupCodeProvider(id))`.
+final pickupCodeProvider = FutureProvider.autoDispose
+    .family<DeliveryCode, String>((ref, id) {
+      return ref.watch(transactionRepositoryProvider).getPickupCode(id);
+    });
+
 /// Settlement/resolution ledger for one transaction. Manual refresh only, via
 /// `ref.invalidate(transactionLedgerProvider(id))`.
 final transactionLedgerProvider = FutureProvider.autoDispose

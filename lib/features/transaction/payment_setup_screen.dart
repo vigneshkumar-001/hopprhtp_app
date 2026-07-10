@@ -18,22 +18,32 @@ import '../../widgets/app_scaffold.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/feedback/app_snackbar.dart';
 import '../../widgets/feedback/pin_prompt.dart';
-import '../../widgets/segmented_control.dart';
 import 'application/transactions_provider.dart';
 import 'payment_link_ready_screen.dart';
 import 'widgets/transaction_widgets.dart';
 
-/// Payment Setup (seller) — delivery fee + trust-fee split, then a payment link.
+/// Payment Setup (seller) — delivery fee, then the payment link. Platform Fee
+/// Payer is decided on Create Transaction and shown here read-only (see
+/// [platformFeePayer]) — never re-asked or defaulted on this screen.
 class PaymentSetupScreen extends ConsumerStatefulWidget {
   const PaymentSetupScreen({
     super.key,
     required this.consignments,
-    this.feeSplit = FeeSplit.split,
+    required this.platformFeePayer,
+    this.deliveryMethod = DeliveryMethod.sellerSelf,
   });
   final List<Consignment> consignments;
 
-  /// Initial fee split chosen on the Create screen.
-  final FeeSplit feeSplit;
+  /// Who pays Hoppr Platform Fee — chosen (required, no default) on Create
+  /// Transaction. A separate decision from [deliveryMethod]: even
+  /// self-delivery still incurs the fee.
+  final PlatformFeePayer platformFeePayer;
+
+  /// Delivery method chosen on the Create screen. The dispatcher's
+  /// name/phone (only sent when this is [DeliveryMethod.requestDispatcher])
+  /// live on the primary consignment itself — see [_buildBody] — never a
+  /// separate/duplicate field here.
+  final DeliveryMethod deliveryMethod;
 
   @override
   ConsumerState<PaymentSetupScreen> createState() => _PaymentSetupScreenState();
@@ -69,7 +79,7 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
       sellerCode: 'HTP-LGS-8881',
       itemSubtotal: subtotal,
       variant: 'Yemi Stores',
-      feeSplit: widget.feeSplit,
+      platformFeePayer: widget.platformFeePayer,
     );
     _deliveryCtrl = TextEditingController(
       text: Money.format(_draft.deliveryFee, symbol: false),
@@ -215,6 +225,11 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
 
   Map<String, dynamic> _buildBody(String pin) => {
     'pin': pin,
+    // Explicit top-level buyer linking — backend falls back to the primary
+    // consignment's buyerContact when buyerPhone is omitted, but sending it
+    // explicitly keeps this request self-describing.
+    if (_primary.buyerContact.trim().isNotEmpty)
+      'buyerPhone': _primary.buyerContact.trim(),
     'consignments': [
       for (final c in widget.consignments)
         {
@@ -233,14 +248,6 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
             'estimatedDeliveryTime': c.estimatedDeliveryTime,
           if (c.waybillTrackingNumber.trim().isNotEmpty)
             'waybillTrackingNumber': c.waybillTrackingNumber,
-          if (c.payout.isComplete)
-            'payout': {
-              'dispatcherName': c.payout.dispatcherName,
-              'dispatcherPhone': c.payout.dispatcherPhone,
-              'bank': c.payout.bank,
-              'accountNumber': c.payout.accountNumber,
-              'accountName': c.payout.accountName,
-            },
           if (c.dispatcherAddress.trim().isNotEmpty)
             'dispatcherAddress': c.dispatcherAddress,
           if (c.specialInstructions.trim().isNotEmpty)
@@ -254,8 +261,15 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
             'waybillImageUrl': c.waybillImageUrl,
         },
     ],
-    'feeSplit': _draft.feeSplit.name,
+    'platformFeePayer': widget.platformFeePayer.wireValue,
     'deliveryFeeNaira': _draft.deliveryFee,
+    'dispatcherMode': widget.deliveryMethod.wireValue,
+    // Sourced from the primary consignment's own Dispatcher Information
+    // fields (Create Transaction) — never a separate/duplicate field here.
+    if (widget.deliveryMethod == DeliveryMethod.requestDispatcher) ...{
+      'dispatcherName': _primary.dispatcherName,
+      'dispatcherPhone': _primary.dispatcherPhone,
+    },
   };
 
   @override
@@ -328,8 +342,8 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
           ),
           const SizedBox(height: AppSizes.md),
           _DispatcherCard(
-            name: _primary.payout.dispatcherName,
-            phone: _primary.payout.dispatcherPhone,
+            name: _primary.dispatcherName,
+            phone: _primary.dispatcherPhone,
           ),
           const SizedBox(height: AppSizes.md),
           _DeliveryAddressCard(
@@ -353,22 +367,6 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
                 Text(
                   'Enter any amount — up to ${Money.format(999999)}',
                   style: AppText.caption,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: AppSizes.md),
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Who pays the trust fee?', style: AppText.h3),
-                const SizedBox(height: AppSizes.md),
-                SegmentedControl(
-                  segments: const ['Buyer', '50 : 50', 'Seller'],
-                  selected: _draft.feeSplit.index,
-                  onChanged: (i) =>
-                      setState(() => _draft.feeSplit = FeeSplit.values[i]),
                 ),
               ],
             ),
@@ -543,23 +541,26 @@ class _TrustProtocolBanner extends StatelessWidget {
   }
 }
 
-/// Itemised "Buyer will pay" summary: item value, delivery, the buyer's share
-/// of the trust fee (with who-pays note), and the grand total. Reflects the
-/// live delivery-fee and fee-split selections above.
+/// Payment breakdown, shaped by the Platform Fee Payer chosen (required, no
+/// default) on Create Transaction — never re-decided here, only reflected:
+///   Buyer pays   → Product Amount, Hoppr Platform Fee, Buyer Pays Total, Seller Receives
+///   Seller pays  → Product Amount, Hoppr Platform Fee, Buyer Pays Total, Seller Receives (after fee deduction)
+///   Split 50:50  → Product Amount, Hoppr Platform Fee, Buyer Fee Share, Seller Fee Share, Buyer Pays Total, Seller Receives (after fee deduction)
+/// Delivery fee is also shown (real money the buyer pays) even though it
+/// isn't part of the platform-fee split. This is a client-side PREVIEW — the
+/// backend recomputes and returns the authoritative figures once the
+/// transaction is created.
 class _BuyerBreakdownCard extends StatelessWidget {
   const _BuyerBreakdownCard({required this.draft});
 
   final PaymentDraft draft;
 
-  String get _trustNote => switch (draft.feeSplit) {
-    FeeSplit.buyer => 'Buyer pays',
-    FeeSplit.split => 'Split 50 : 50',
-    FeeSplit.seller => 'Seller pays',
-  };
+  bool get _sellerBearsFee => draft.platformFeePayer != PlatformFeePayer.buyer;
 
   @override
   Widget build(BuildContext context) {
     final accent = AppAccent.of(context);
+    final isSplit = draft.platformFeePayer == PlatformFeePayer.split50;
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -568,14 +569,14 @@ class _BuyerBreakdownCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
             children: [
-              Text('Buyer will pay', style: AppText.h3),
+              Text('Payment breakdown', style: AppText.h3),
               const SizedBox(width: 6),
-              Text('(breakdown)', style: AppText.caption),
+              Text('(${draft.platformFeePayer.label})', style: AppText.caption),
             ],
           ),
           const SizedBox(height: AppSizes.lg),
           SummaryRow(
-            label: 'Item value',
+            label: 'Product Amount',
             value: Money.format(draft.itemSubtotal),
           ),
           const SizedBox(height: AppSizes.md),
@@ -584,25 +585,22 @@ class _BuyerBreakdownCard extends StatelessWidget {
             value: Money.format(draft.deliveryFee),
           ),
           const SizedBox(height: AppSizes.md),
-          // Trust line: label + a lighter "(who pays)" note, then the value.
-          Row(
-            children: [
-              Text('Trust protection fee', style: AppText.body),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  '($_trustNote)',
-                  style: AppText.caption,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                Money.format(draft.buyerTrustShare),
-                style: AppText.bodyStrong,
-              ),
-            ],
+          SummaryRow(
+            label: 'Hoppr Platform Fee',
+            value: Money.format(draft.trustFull),
           ),
+          if (isSplit) ...[
+            const SizedBox(height: AppSizes.md),
+            SummaryRow(
+              label: 'Buyer Fee Share',
+              value: Money.format(draft.buyerTrustShare),
+            ),
+            const SizedBox(height: AppSizes.md),
+            SummaryRow(
+              label: 'Seller Fee Share',
+              value: Money.format(draft.sellerTrustShare),
+            ),
+          ],
           const Padding(
             padding: EdgeInsets.symmetric(vertical: AppSizes.lg),
             child: Divider(height: 1),
@@ -610,15 +608,30 @@ class _BuyerBreakdownCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text(
-                  'Grand total payable by buyer',
-                  style: AppText.bodyStrong,
-                ),
+                child: Text('Buyer Pays Total', style: AppText.bodyStrong),
               ),
               const SizedBox(width: AppSizes.sm),
               Text(
                 Money.format(draft.grandTotal),
                 style: AppText.h2.copyWith(color: accent.ring),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSizes.md),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _sellerBearsFee
+                      ? 'Seller Receives (after fee deduction)'
+                      : 'Seller Receives',
+                  style: AppText.bodyStrong,
+                ),
+              ),
+              const SizedBox(width: AppSizes.sm),
+              Text(
+                Money.format(draft.sellerReceivable),
+                style: AppText.bodyStrong,
               ),
             ],
           ),

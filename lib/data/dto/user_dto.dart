@@ -1,6 +1,9 @@
 import '../../core/network/json.dart';
 
 /// A saved bank account the user receives settlements / withdrawals into.
+/// Never collected at Create Transaction / payment-link generation — managed
+/// only here (Payout Accounts / Wallet). The backend never returns a full
+/// account number, only the last 4 digits ([accountNumberLast4]).
 class PayoutAccount {
   const PayoutAccount({
     required this.id,
@@ -9,6 +12,7 @@ class PayoutAccount {
     required this.accountName,
     required this.isDefault,
     required this.verified,
+    this.status = 'pending',
   });
 
   final String id;
@@ -18,6 +22,11 @@ class PayoutAccount {
   final bool isDefault;
   final bool verified;
 
+  /// 'pending' | 'verified' | 'failed' — backend-computed from [verified]
+  /// (never a separately-editable field). Disabled (removed) accounts are
+  /// never returned by the backend, so 'disabled' never appears here.
+  final String status;
+
   factory PayoutAccount.fromJson(Map<String, dynamic> j) => PayoutAccount(
     id: asId(j['id'] ?? j['_id']),
     bank: asString(j['bank']),
@@ -25,6 +34,7 @@ class PayoutAccount {
     accountName: asString(j['accountName']),
     isDefault: asBool(j['isDefault']),
     verified: asBool(j['verified']),
+    status: asString(j['status'], 'pending'),
   );
 }
 

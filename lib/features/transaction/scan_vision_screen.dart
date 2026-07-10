@@ -1,48 +1,59 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../core/network/error_messages.dart';
+import '../../core/providers.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
+import '../../data/dto/scan_dto.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_snackbar.dart';
 import 'widgets/transaction_widgets.dart';
 
 enum _Phase { ready, scanning, extracted }
 
-/// "Scan with Hoppr Vision" — capture a photo of the waybill/parcel, watch it
-/// scan, then review the pre-filled fields. This is a **demo**: the fields are
-/// sample values (not read from the photo) and are clearly labelled as such, so
-/// the user knows to edit them. Returns `true` when confirmed (caller fills).
-class ScanVisionScreen extends StatefulWidget {
+/// Icons shown next to each of [ScanFields.displayFields], in the same order.
+const _fieldIcons = <IconData>[
+  Icons.person_outline_rounded, // Buyer name
+  Icons.call_outlined, // Buyer phone
+  Icons.local_shipping_outlined, // Dispatcher phone
+  Icons.inventory_2_outlined, // Item name
+  Icons.notes_outlined, // Item description
+  Icons.payments_outlined, // Amount
+  Icons.schedule_rounded, // Estimated delivery
+  Icons.location_on_outlined, // Dispatcher address
+  Icons.location_on_outlined, // Delivery address
+  Icons.sticky_note_2_outlined, // Package notes
+];
+
+/// "Scan with Hoppr Vision" — capture a photo of the waybill/parcel, upload
+/// it for extraction, then review the detected fields before applying
+/// anything. Real upload + real backend response; never fabricates a value —
+/// a field the backend didn't detect is shown as "Not detected", not a
+/// guessed sample. Returns the [ScanResult] when the user confirms, or null
+/// if they back out — the caller decides how to apply it.
+class ScanVisionScreen extends ConsumerStatefulWidget {
   const ScanVisionScreen({super.key});
 
   @override
-  State<ScanVisionScreen> createState() => _ScanVisionScreenState();
+  ConsumerState<ScanVisionScreen> createState() => _ScanVisionScreenState();
 }
 
-class _ScanVisionScreenState extends State<ScanVisionScreen>
+class _ScanVisionScreenState extends ConsumerState<ScanVisionScreen>
     with SingleTickerProviderStateMixin {
   _Phase _phase = _Phase.ready;
   XFile? _photo;
+  ScanResult? _result;
 
   late final AnimationController _scan = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1300),
   );
-
-  // Sample values shown in the demo — kept in sync with the caller's auto-fill.
-  static const _sample = <(IconData, String, String)>[
-    (Icons.inventory_2_outlined, 'Product / Item', 'MacBook Pro M2'),
-    (Icons.payments_outlined, 'Declared value', '₦1,230,087'),
-    (Icons.call_outlined, 'Buyer contact', '0901 234 5678'),
-    (Icons.local_shipping_outlined, 'Dispatcher', 'Tunde Bello'),
-    (Icons.call_outlined, 'Dispatcher phone', '+234 706 740 8881'),
-    (Icons.account_balance_outlined, 'Bank', 'GTBank'),
-    (Icons.numbers_rounded, 'Account', '0123456789 · Tunde Bello'),
-  ];
 
   @override
   void dispose() {
@@ -51,33 +62,53 @@ class _ScanVisionScreenState extends State<ScanVisionScreen>
   }
 
   Future<void> _pick(ImageSource source) async {
-    final x = await ImagePicker()
-        .pickImage(source: source, imageQuality: 80, maxWidth: 1600);
+    final x = await ImagePicker().pickImage(
+      source: source,
+      imageQuality: 80,
+      maxWidth: 1600,
+    );
     if (x != null && mounted) setState(() => _photo = x);
   }
 
   Future<void> _startScan() async {
+    final photo = _photo;
+    if (photo == null) return;
     setState(() => _phase = _Phase.scanning);
     _scan.repeat();
-    await Future<void>.delayed(const Duration(milliseconds: 2000));
-    if (!mounted) return;
-    _scan.stop();
-    setState(() => _phase = _Phase.extracted);
+    try {
+      final result = await ref
+          .read(transactionRepositoryProvider)
+          .scanDocument(photo.path);
+      if (!mounted) return;
+      _scan.stop();
+      setState(() {
+        _result = result;
+        _phase = _Phase.extracted;
+      });
+    } catch (e) {
+      _scan.stop();
+      if (!mounted) return;
+      // Back to "photo ready" (not extracted) so the same photo can be
+      // retried without re-picking it.
+      setState(() => _phase = _Phase.ready);
+      AppSnackbar.error(context, friendlyError(e), onRetry: _startScan);
+    }
   }
 
   void _rescan() => setState(() {
-        _phase = _Phase.ready;
-        _photo = null;
-      });
+    _phase = _Phase.ready;
+    _photo = null;
+    _result = null;
+  });
 
   @override
   Widget build(BuildContext context) {
     final scanning = _phase == _Phase.scanning;
     final extracted = _phase == _Phase.extracted;
+    final result = _result;
 
     return AppScaffold(
       titleWidget: const Text('Scan with Hoppr Vision', style: AppText.title),
-      trailing: const _DemoTag(),
       bottomAction: _buildAction(scanning, extracted),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -86,7 +117,7 @@ class _ScanVisionScreenState extends State<ScanVisionScreen>
           if (_photo == null && !extracted)
             Text(
               'Add a photo of the waybill, shipping label or parcel and Hoppr '
-              'Vision will pre-fill the transaction for you to review.',
+              'Vision will suggest transaction details for you to review.',
               style: AppText.body.copyWith(color: AppColors.textSecondary),
             )
           else if (extracted)
@@ -98,8 +129,10 @@ class _ScanVisionScreenState extends State<ScanVisionScreen>
               ],
             )
           else
-            Text(scanning ? 'Reading your document…' : 'Photo ready to scan',
-                style: AppText.body.copyWith(color: AppColors.textSecondary)),
+            Text(
+              scanning ? 'Reading your document…' : 'Photo ready to scan',
+              style: AppText.body.copyWith(color: AppColors.textSecondary),
+            ),
           const SizedBox(height: AppSizes.lg),
 
           // Picker (no photo yet) OR the photo preview with scan overlay.
@@ -108,18 +141,17 @@ class _ScanVisionScreenState extends State<ScanVisionScreen>
           else
             _preview(scanning: scanning, extracted: extracted),
 
-          if (extracted) ...[
+          if (extracted && result != null) ...[
             const SizedBox(height: AppSizes.lg),
-            const NoteBanner(
-              icon: Icons.info_outline_rounded,
-              text:
-                  'Demo mode: these are sample details, not read from your photo. '
-                  'Edit anything to match your item before you continue — you '
-                  'stay in control of the transaction.',
-            ),
-            const SizedBox(height: AppSizes.lg),
-            for (final f in _sample) ...[
-              _SampleField(icon: f.$1, label: f.$2, value: f.$3),
+            if (result.warnings.isNotEmpty) ...[
+              NoteBanner(
+                icon: Icons.info_outline_rounded,
+                text: result.warnings.join(' '),
+              ),
+              const SizedBox(height: AppSizes.lg),
+            ],
+            for (final (i, f) in result.fields.displayFields.indexed) ...[
+              _DetectedField(icon: _fieldIcons[i], label: f.$1, value: f.$2),
               const SizedBox(height: AppSizes.md),
             ],
           ],
@@ -140,13 +172,15 @@ class _ScanVisionScreenState extends State<ScanVisionScreen>
               padding: const EdgeInsets.symmetric(vertical: AppSizes.xxxl),
               child: Column(
                 children: [
-                  Icon(Icons.photo_camera_outlined,
-                      size: 30, color: AppAccent.of(context).onAccentSoft),
+                  Icon(
+                    Icons.photo_camera_outlined,
+                    size: 30,
+                    color: AppAccent.of(context).onAccentSoft,
+                  ),
                   const SizedBox(height: AppSizes.md),
                   Text('Take a photo', style: AppText.bodyStrong),
                   const SizedBox(height: 2),
-                  Text('Tap to open the camera',
-                      style: AppText.caption),
+                  Text('Tap to open the camera', style: AppText.caption),
                 ],
               ),
             ),
@@ -179,7 +213,8 @@ class _ScanVisionScreenState extends State<ScanVisionScreen>
                     ? const SizedBox.shrink()
                     : Image.file(File(_photo!.path), fit: BoxFit.cover),
               ),
-              if (scanning) Positioned.fill(child: _ScanOverlay(animation: _scan)),
+              if (scanning)
+                Positioned.fill(child: _ScanOverlay(animation: _scan)),
               if (extracted)
                 Positioned(
                   top: AppSizes.sm,
@@ -188,9 +223,14 @@ class _ScanVisionScreenState extends State<ScanVisionScreen>
                     width: 26,
                     height: 26,
                     decoration: const BoxDecoration(
-                        color: AppColors.ink, shape: BoxShape.circle),
-                    child: const Icon(Icons.check_rounded,
-                        size: 16, color: AppColors.textOnDark),
+                      color: AppColors.ink,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      size: 16,
+                      color: AppColors.textOnDark,
+                    ),
                   ),
                 ),
             ],
@@ -203,12 +243,16 @@ class _ScanVisionScreenState extends State<ScanVisionScreen>
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.sync_rounded,
-                    size: 16, color: AppColors.textSecondary),
+                const Icon(
+                  Icons.sync_rounded,
+                  size: 16,
+                  color: AppColors.textSecondary,
+                ),
                 const SizedBox(width: 4),
-                Text('Replace photo',
-                    style: AppText.label
-                        .copyWith(color: AppColors.textSecondary)),
+                Text(
+                  'Replace photo',
+                  style: AppText.label.copyWith(color: AppColors.textSecondary),
+                ),
               ],
             ),
           ),
@@ -233,7 +277,7 @@ class _ScanVisionScreenState extends State<ScanVisionScreen>
             label: 'Use these details',
             trailingIcon: Icons.arrow_forward_rounded,
             accentInLime: true,
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(context).pop(_result),
           ),
           const SizedBox(height: AppSizes.sm),
           AppButton(
@@ -286,7 +330,10 @@ class _ScanOverlay extends StatelessWidget {
               decoration: BoxDecoration(
                 color: accent,
                 boxShadow: [
-                  BoxShadow(color: accent.withValues(alpha: 0.6), blurRadius: 8),
+                  BoxShadow(
+                    color: accent.withValues(alpha: 0.6),
+                    blurRadius: 8,
+                  ),
                 ],
               ),
             ),
@@ -297,9 +344,10 @@ class _ScanOverlay extends StatelessWidget {
   }
 }
 
-/// One sample (demo) field — label + editable-looking value box + "Sample" tag.
-class _SampleField extends StatelessWidget {
-  const _SampleField({
+/// One reviewed field — label + value box + a "Detected"/"Not detected" tag.
+/// A null/blank [value] is shown honestly as not found, never a guess.
+class _DetectedField extends StatelessWidget {
+  const _DetectedField({
     required this.icon,
     required this.label,
     required this.value,
@@ -307,10 +355,11 @@ class _SampleField extends StatelessWidget {
 
   final IconData icon;
   final String label;
-  final String value;
+  final String? value;
 
   @override
   Widget build(BuildContext context) {
+    final detected = (value ?? '').trim().isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -320,22 +369,29 @@ class _SampleField extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: AppColors.surfaceMuted,
+                color: detected
+                    ? AppColors.successSoft
+                    : AppColors.surfaceMuted,
                 borderRadius: AppRadii.pill,
               ),
-              child: Text('Sample',
-                  style: AppText.caption.copyWith(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 11,
-                      color: AppColors.textSecondary)),
+              child: Text(
+                detected ? 'Detected' : 'Not detected',
+                style: AppText.caption.copyWith(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 11,
+                  color: detected ? AppColors.success : AppColors.textSecondary,
+                ),
+              ),
             ),
           ],
         ),
         const SizedBox(height: 6),
         Container(
           width: double.infinity,
-          padding:
-              const EdgeInsets.symmetric(horizontal: AppSizes.lg, vertical: 14),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSizes.lg,
+            vertical: 14,
+          ),
           decoration: BoxDecoration(
             color: AppColors.surface,
             borderRadius: AppRadii.md,
@@ -345,36 +401,18 @@ class _SampleField extends StatelessWidget {
             children: [
               Icon(icon, size: 18, color: AppColors.textTertiary),
               const SizedBox(width: AppSizes.md),
-              Expanded(child: Text(value, style: AppText.bodyStrong)),
+              Expanded(
+                child: Text(
+                  detected ? value! : 'Not found in photo — enter manually',
+                  style: detected
+                      ? AppText.bodyStrong
+                      : AppText.body.copyWith(color: AppColors.textTertiary),
+                ),
+              ),
             ],
           ),
         ),
       ],
-    );
-  }
-}
-
-/// "Demo" chip in the app bar so the simulated scan is never mistaken for real.
-class _DemoTag extends StatelessWidget {
-  const _DemoTag();
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppSizes.md, vertical: 6),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceMuted,
-        borderRadius: AppRadii.pill,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.science_outlined,
-              size: 14, color: AppColors.textPrimary),
-          const SizedBox(width: 4),
-          Text('Demo',
-              style: AppText.caption.copyWith(fontWeight: FontWeight.w700)),
-        ],
-      ),
     );
   }
 }

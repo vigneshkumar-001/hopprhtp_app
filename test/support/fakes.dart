@@ -95,6 +95,28 @@ class FakeAuthRepository implements AuthRepository {
   }) async => kTestUser;
 
   @override
+  Future<ApiUser> addPayoutAccount({
+    required String bank,
+    required String accountNumber,
+    required String accountName,
+    bool makeDefault = false,
+  }) async => kTestUser;
+
+  @override
+  Future<ApiUser> updatePayoutAccount(
+    String accountId, {
+    String? bank,
+    String? accountNumber,
+    String? accountName,
+  }) async => kTestUser;
+
+  @override
+  Future<ApiUser> removePayoutAccount(String accountId) async => kTestUser;
+
+  @override
+  Future<ApiUser> setDefaultPayoutAccount(String accountId) async => kTestUser;
+
+  @override
   Future<AuthSession> confirmRegister({
     required String phone,
     required String otp,

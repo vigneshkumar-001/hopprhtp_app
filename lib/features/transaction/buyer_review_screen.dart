@@ -388,12 +388,18 @@ class _DeliveryCard extends StatelessWidget {
   }
 }
 
+/// Mirrors Payment Setup's breakdown ([_BuyerBreakdownCard] in
+/// payment_setup_screen.dart) so the buyer sees the same figures/labels the
+/// seller already reviewed — shaped by [ApiTransaction.platformFeePayer]
+/// ('buyer' | 'seller' | 'split_50_50'), never re-decided here.
 class _EscrowSummaryCard extends StatelessWidget {
   const _EscrowSummaryCard({required this.tx});
   final ApiTransaction tx;
 
   @override
   Widget build(BuildContext context) {
+    final isSplit = tx.platformFeePayer == 'split_50_50';
+    final sellerBearsFee = tx.platformFeePayer != 'buyer';
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -401,7 +407,7 @@ class _EscrowSummaryCard extends StatelessWidget {
           const CardSectionLabel('Escrow payment summary'),
           const SizedBox(height: AppSizes.md),
           SummaryRow(
-            label: 'Item subtotal',
+            label: 'Product Amount',
             value: Money.format(tx.itemSubtotalNaira),
           ),
           const SizedBox(height: AppSizes.sm),
@@ -411,17 +417,36 @@ class _EscrowSummaryCard extends StatelessWidget {
           ),
           const SizedBox(height: AppSizes.sm),
           SummaryRow(
-            label: 'Trust protection fee',
-            value: Money.format(tx.buyerTrustShareNaira),
+            label: 'Hoppr Platform Fee',
+            value: Money.format(tx.trustFullNaira),
           ),
+          if (isSplit) ...[
+            const SizedBox(height: AppSizes.sm),
+            SummaryRow(
+              label: 'Buyer Fee Share',
+              value: Money.format(tx.buyerTrustShareNaira),
+            ),
+            const SizedBox(height: AppSizes.sm),
+            SummaryRow(
+              label: 'Seller Fee Share',
+              value: Money.format(tx.sellerTrustShareNaira ?? 0),
+            ),
+          ],
           const Padding(
             padding: EdgeInsets.symmetric(vertical: AppSizes.md),
             child: Divider(height: 1),
           ),
           SummaryRow(
-            label: 'Grand total payable',
+            label: 'Buyer Pays Total',
             value: Money.format(tx.grandTotalNaira),
             emphasized: true,
+          ),
+          const SizedBox(height: AppSizes.sm),
+          SummaryRow(
+            label: sellerBearsFee
+                ? 'Seller Receives (after fee deduction)'
+                : 'Seller Receives',
+            value: Money.format(tx.sellerReceivableNaira),
           ),
         ],
       ),

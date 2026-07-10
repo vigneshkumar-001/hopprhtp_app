@@ -11,6 +11,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
+import '../../data/dto/scan_dto.dart';
 import '../../data/models/models.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_button.dart';
@@ -39,14 +40,26 @@ class CreateTransactionScreen extends ConsumerStatefulWidget {
 class _CreateTransactionScreenState
     extends ConsumerState<CreateTransactionScreen> {
   final List<_ConsignmentForm> _forms = [_ConsignmentForm()];
-  FeeSplit _feeSplit = FeeSplit.split;
 
-  static const _feeHelp = {
-    FeeSplit.buyer: 'Buyer covers all fees on top of the item price.',
-    FeeSplit.split: 'Fees are shared equally between buyer and seller.',
-    FeeSplit.seller:
-        'Seller absorbs all fees — buyer pays the item price only.',
-  };
+  // Delivery method — "who delivers?" — a single, transaction-level choice,
+  // rendered once after Buyer/Delivery Information (not per consignment).
+  // Null means "not chosen yet" — there is deliberately no default; the
+  // seller must make an explicit choice before Continue proceeds (see
+  // _continue()). The Dispatcher Information section (name/phone/address,
+  // bound to the primary consignment) is only shown/required once this is
+  // requestDispatcher. There is no separate top-level dispatcher name/phone
+  // field: the same Dispatcher Information fields serve both the Hoppr
+  // dispatcher account link and the on-screen contact details, never a
+  // duplicate pair.
+  DeliveryMethod? _deliveryMethod;
+
+  // Platform Fee Payer — "who pays Hoppr Platform Fee?" — a SEPARATE decision
+  // from [_deliveryMethod]. Even "Deliver myself" still incurs the fee, since
+  // Hoppr still provides the payment link, escrow protection, buyer payment
+  // holding, delivery confirmation, dispute safety and seller wallet release.
+  // Null means "not chosen yet" — no default, required before Continue (see
+  // _continue()).
+  PlatformFeePayer? _platformFeePayer;
 
   @override
   void initState() {
@@ -125,13 +138,133 @@ class _CreateTransactionScreenState
     }
   }
 
-  /// Open Hoppr Vision; if the user confirms a scan, pre-fill the form.
+  /// Open Hoppr Vision; if the user confirms a scan, apply whatever it
+  /// actually detected to the first consignment (never a fabricated value —
+  /// see [_applyScanResult]).
   Future<void> _openVisionScan() async {
-    final confirmed = await AppNav.push<bool>(
+    final result = await AppNav.push<ScanResult>(
       context,
       const ScanVisionScreen(),
     );
-    if (confirmed == true && mounted) _autofill();
+    if (result != null && mounted) await _applyScanResult(result);
+  }
+
+  /// Applies Hoppr Vision's detected fields to the first consignment. Fields
+  /// left blank on the form are filled silently; fields the user already
+  /// typed something into are never overwritten without an explicit choice —
+  /// if any would conflict, one confirmation dialog covers all of them.
+  Future<void> _applyScanResult(ScanResult result) async {
+    final f = _forms.first;
+    final notes = [
+      result.fields.itemDescription,
+      result.fields.packageNotes,
+    ].where((v) => (v ?? '').trim().isNotEmpty).join(' — ');
+
+    final planned =
+        <(String label, TextEditingController controller, String value)>[
+          if ((result.fields.itemName ?? '').trim().isNotEmpty)
+            ('Product / Item', f.product, result.fields.itemName!.trim()),
+          if ((result.fields.buyerName ?? '').trim().isNotEmpty)
+            ('Buyer name', f.buyerName, result.fields.buyerName!.trim()),
+          if ((result.fields.buyerPhone ?? '').trim().isNotEmpty)
+            ('Buyer contact', f.buyerContact, result.fields.buyerPhone!.trim()),
+          if ((result.fields.dispatcherPhone ?? '').trim().isNotEmpty)
+            (
+              'Dispatcher phone number',
+              f.dispatcherPhone,
+              result.fields.dispatcherPhone!.trim(),
+            ),
+          if (result.fields.amount != null)
+            ('Amount', f.amount, result.fields.amount!.toStringAsFixed(2)),
+          if ((result.fields.deliveryAddress ?? '').trim().isNotEmpty)
+            (
+              'Delivery address',
+              f.deliveryAddress,
+              result.fields.deliveryAddress!.trim(),
+            ),
+          if ((result.fields.pickupAddress ?? '').trim().isNotEmpty)
+            (
+              'Package Collection Address',
+              f.dispatcherAddress,
+              result.fields.pickupAddress!.trim(),
+            ),
+          if ((result.fields.estimatedDelivery ?? '').trim().isNotEmpty)
+            (
+              'Estimated delivery date',
+              f.estimatedDeliveryDate,
+              result.fields.estimatedDelivery!.trim(),
+            ),
+          if (notes.isNotEmpty)
+            ('Special instruction / notes', f.specialInstructions, notes),
+        ];
+
+    if (planned.isEmpty) {
+      if (mounted) {
+        AppSnackbar.info(
+          context,
+          "Hoppr Vision didn't detect any fields from that photo. Please "
+          'enter the details manually.',
+        );
+      }
+      return;
+    }
+
+    final conflicts = [
+      for (final p in planned)
+        if (p.$2.text.trim().isNotEmpty && p.$2.text.trim() != p.$3) p.$1,
+    ];
+
+    var overwrite = true;
+    if (conflicts.isNotEmpty && mounted) {
+      overwrite =
+          await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Overwrite entered details?'),
+              content: Text(
+                "You've already entered: ${conflicts.join(', ')}. Replace "
+                'them with the scanned values, or keep what you typed?',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Keep my entries'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Overwrite'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+    }
+
+    var filled = 0;
+    setState(() {
+      for (final (_, controller, value) in planned) {
+        final isConflict =
+            controller.text.trim().isNotEmpty &&
+            controller.text.trim() != value;
+        if (isConflict && !overwrite) continue;
+        controller.text = value;
+        filled++;
+        // A detected dispatcher phone is useless while the Dispatcher
+        // Information section is hidden behind "Deliver myself" — switch so
+        // the seller sees it (still free to switch back, nothing is
+        // submitted yet).
+        if (controller == f.dispatcherPhone) {
+          _deliveryMethod = DeliveryMethod.requestDispatcher;
+        }
+      }
+    });
+
+    if (!mounted) return;
+    AppSnackbar.success(
+      context,
+      'Filled $filled field${filled == 1 ? '' : 's'} from your scan. Review '
+      'before continuing.',
+    );
   }
 
   Future<void> _pickDeliveryAddress(_ConsignmentForm form) async {
@@ -188,37 +321,6 @@ class _CreateTransactionScreenState
     });
   }
 
-  void _autofill() {
-    final f = _forms.first;
-    setState(() {
-      f.product.text = 'MacBook Pro M2';
-      f.amount.text = '1,230,087';
-      f.quantity.text = '1';
-      f.weight.text = '2.1';
-      f.buyerName.text = 'Amara Okafor';
-      f.buyerContact.text = '0901234 5678';
-      f.deliveryAddress.text = '12 Bode Thomas Street, Surulere, Lagos';
-      // Real coordinates for the demo address so Track Package works on
-      // demo-scan transactions (a map-picked address sets these itself). Without
-      // them the transaction has no buyer lat/lng and tracking is unavailable.
-      f.deliveryLat = 6.4969;
-      f.deliveryLng = 3.3619;
-      f.waybillTrackingNumber.text = 'TRK-8839201';
-      f.dispatcherName.text = 'Tunde Bello';
-      f.dispatcherPhone.text = '+234 706 740 8881';
-      f.dispatcherAddress.text = 'Ikeja logistics hub, Lagos';
-      f.bank.text = 'GTBank';
-      f.account.text = '0123456789';
-      f.accountName.text = 'Tunde Bello';
-      f.specialInstructions.text = 'Call buyer on arrival.';
-      f.payoutExpanded = true;
-    });
-    AppSnackbar.info(
-      context,
-      'Demo scan — sample details filled. Review & edit each field.',
-    );
-  }
-
   void _continue() {
     // Validate mandatory fields here so this guards EVERY entry path — the
     // Continue button AND the account-name field's keyboard "done" action,
@@ -230,9 +332,6 @@ class _CreateTransactionScreenState
       final invalid = f.firstInvalid();
       if (invalid == null) continue;
 
-      if (invalid.inPayout && !f.payoutExpanded) {
-        setState(() => f.payoutExpanded = true);
-      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         invalid.focus.requestFocus();
@@ -251,10 +350,48 @@ class _CreateTransactionScreenState
       return;
     }
 
+    final deliveryMethod = _deliveryMethod;
+    if (deliveryMethod == null) {
+      AppSnackbar.error(context, 'Please select a delivery method');
+      return;
+    }
+
+    final platformFeePayer = _platformFeePayer;
+    if (platformFeePayer == null) {
+      AppSnackbar.error(context, 'Please select who pays Hoppr Platform Fee');
+      return;
+    }
+
+    if (deliveryMethod == DeliveryMethod.requestDispatcher) {
+      final primary = _forms.first;
+      final invalid = primary.firstInvalidDispatcherField();
+      if (invalid != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          invalid.focus.requestFocus();
+          final ctx = invalid.focus.context;
+          if (ctx != null) {
+            Scrollable.ensureVisible(
+              ctx,
+              duration: AppDurations.normal,
+              curve: AppDurations.easeOut,
+              alignment: 0.2,
+            );
+          }
+        });
+        AppSnackbar.error(context, invalid.message);
+        return;
+      }
+    }
+
     final consignments = _forms.map((f) => f.toModel()).toList();
     AppNav.push(
       context,
-      PaymentSetupScreen(consignments: consignments, feeSplit: _feeSplit),
+      PaymentSetupScreen(
+        consignments: consignments,
+        deliveryMethod: deliveryMethod,
+        platformFeePayer: platformFeePayer,
+      ),
     );
   }
 
@@ -286,9 +423,7 @@ class _CreateTransactionScreenState
               index: i,
               total: _forms.length,
               onChanged: () => setState(() {}),
-              onContinue: _continue,
               onPickDeliveryAddress: (form) => _pickDeliveryAddress(form),
-              onPickDispatcherAddress: (form) => _pickDispatcherAddress(form),
               onPickEstimatedDeliveryDate: (form) =>
                   _pickEstimatedDeliveryDate(form),
               onPickEstimatedDeliveryTime: (form) =>
@@ -316,31 +451,86 @@ class _CreateTransactionScreenState
             ),
           ),
           const SizedBox(height: AppSizes.lg),
-          // Who pays the fees?
+          // Who physically handles pickup + delivery — immediately after
+          // Buyer/Delivery Information, before the dispatcher-conditional
+          // section it gates. No default: the seller must choose explicitly
+          // (see _continue()'s "Please select a delivery method" check).
           AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text('Who pays the fees?', style: AppText.h3),
-                    ),
-                    Text('Delivery & trust', style: AppText.caption),
-                  ],
-                ),
+                Text('Delivery method', style: AppText.h3),
                 const SizedBox(height: AppSizes.md),
                 SegmentedControl(
-                  segments: const ['Buyer', '50 : 50', 'Seller'],
-                  selected: _feeSplit.index,
-                  onChanged: (i) =>
-                      setState(() => _feeSplit = FeeSplit.values[i]),
+                  segments: const ['Deliver myself', 'Hoppr Dispatcher'],
+                  selected: _deliveryMethod?.index ?? -1,
+                  onChanged: (i) => setState(
+                    () => _deliveryMethod = DeliveryMethod.values[i],
+                  ),
                 ),
                 const SizedBox(height: AppSizes.sm),
-                Text(_feeHelp[_feeSplit]!, style: AppText.caption),
+                Text(switch (_deliveryMethod) {
+                  null =>
+                    'Choose who will handle pickup and delivery for this order.',
+                  DeliveryMethod.sellerSelf =>
+                    "You'll handle pickup and delivery yourself — no dispatcher needed.",
+                  DeliveryMethod.requestDispatcher =>
+                    'Enter your dispatcher below. They\'ll be notified once '
+                        'payment is secured.',
+                }, style: AppText.caption),
               ],
             ),
           ),
+          const SizedBox(height: AppSizes.md),
+          // Who pays Hoppr Platform Fee — a SEPARATE decision from delivery
+          // method (see field doc comment above). Applies regardless of
+          // whether the seller delivers themselves or requests a Hoppr
+          // Dispatcher: Hoppr still provides the payment link, escrow
+          // protection, buyer payment holding, delivery confirmation, dispute
+          // safety and seller wallet release either way. No default: the
+          // seller must choose explicitly (see _continue()'s "Please select
+          // who pays Hoppr Platform Fee" check).
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Who pays Hoppr Platform Fee?', style: AppText.h3),
+                const SizedBox(height: AppSizes.md),
+                SegmentedControl(
+                  segments: const ['Buyer', '50:50', 'Seller'],
+                  selected: _platformFeePayer?.index ?? -1,
+                  onChanged: (i) => setState(
+                    () => _platformFeePayer = PlatformFeePayer.values[i],
+                  ),
+                ),
+                const SizedBox(height: AppSizes.sm),
+                Text(switch (_platformFeePayer) {
+                  null =>
+                    'Hoppr still provides escrow protection and delivery '
+                        'confirmation even if you deliver it yourself — '
+                        'choose who covers the platform fee.',
+                  PlatformFeePayer.buyer =>
+                    'The buyer pays the platform fee on top of the item price.',
+                  PlatformFeePayer.seller =>
+                    'You absorb the platform fee — the buyer pays the item '
+                        'price only.',
+                  PlatformFeePayer.split50 =>
+                    'The platform fee is split equally between you and the '
+                        'buyer.',
+                }, style: AppText.caption),
+              ],
+            ),
+          ),
+          if (_deliveryMethod == DeliveryMethod.requestDispatcher) ...[
+            const SizedBox(height: AppSizes.md),
+            _DispatcherSection(
+              form: _forms.first,
+              onChanged: () => setState(() {}),
+              onContinue: _continue,
+              onPickDispatcherAddress: () =>
+                  _pickDispatcherAddress(_forms.first),
+            ),
+          ],
           const SizedBox(height: AppSizes.sm),
         ],
       ),
@@ -415,9 +605,7 @@ class _ConsignmentEditor extends ConsumerWidget {
     required this.index,
     required this.total,
     required this.onChanged,
-    required this.onContinue,
     required this.onPickDeliveryAddress,
-    required this.onPickDispatcherAddress,
     required this.onPickEstimatedDeliveryDate,
     required this.onPickEstimatedDeliveryTime,
     this.onRemove,
@@ -427,9 +615,7 @@ class _ConsignmentEditor extends ConsumerWidget {
   final int index;
   final int total;
   final VoidCallback onChanged;
-  final VoidCallback onContinue;
   final Future<void> Function(_ConsignmentForm form) onPickDeliveryAddress;
-  final Future<void> Function(_ConsignmentForm form) onPickDispatcherAddress;
   final Future<void> Function(_ConsignmentForm form)
   onPickEstimatedDeliveryDate;
   final Future<void> Function(_ConsignmentForm form)
@@ -842,8 +1028,7 @@ class _ConsignmentEditor extends ConsumerWidget {
               icon: Icons.receipt_long_outlined,
               controller: form.waybillTrackingNumber,
               focusNode: form.waybillTrackingFocus,
-              textInputAction: TextInputAction.next,
-              onSubmitted: (_) => focusNext(form.dispatcherNameFocus),
+              textInputAction: TextInputAction.done,
               onChanged: (_) => onChanged(),
             ),
           ),
@@ -855,82 +1040,95 @@ class _ConsignmentEditor extends ConsumerWidget {
             'to you.',
             style: AppText.caption,
           ),
-          const SizedBox(height: AppSizes.lg),
-          _SectionHeader(title: 'Dispatcher Information'),
-          const SizedBox(height: AppSizes.md),
-          ordered(
-            9,
-            AppTextField(
-              label: 'Dispatcher name',
-              required: true,
-              icon: Icons.person_outline_rounded,
-              controller: form.dispatcherName,
-              focusNode: form.dispatcherNameFocus,
-              textInputAction: TextInputAction.next,
-              onSubmitted: (_) => focusNext(form.dispatcherPhoneFocus),
-              onChanged: (_) => onChanged(),
-            ),
-          ),
-          const SizedBox(height: AppSizes.md),
-          ordered(
-            10,
-            AppTextField(
-              label: 'Dispatcher phone number',
-              required: true,
-              icon: Icons.phone_outlined,
-              controller: form.dispatcherPhone,
-              focusNode: form.dispatcherPhoneFocus,
-              keyboardType: TextInputType.phone,
-              textInputAction: TextInputAction.next,
-              onSubmitted: (_) => focusNext(form.dispatcherAddressFocus),
-              onChanged: (_) => onChanged(),
-            ),
-          ),
-          const SizedBox(height: AppSizes.md),
-          ordered(
-            11,
-            _LargeAddressField(
-              label: 'Dispatcher address',
-              required: true,
-              icon: Icons.map_outlined,
-              value: form.dispatcherAddress.text.trim(),
-              hint: 'Tap to select dispatcher address on map',
-              onTap: () => onPickDispatcherAddress(form),
-            ),
-          ),
-          const SizedBox(height: AppSizes.lg),
-          _SectionHeader(title: 'Additional Information (optional)'),
-          const SizedBox(height: AppSizes.md),
-          ordered(
-            12,
-            AppTextField(
-              label: 'Special instruction / notes',
-              controller: form.specialInstructions,
-              focusNode: form.specialInstructionsFocus,
-              keyboardType: TextInputType.multiline,
-              minLines: 3,
-              maxLines: 5,
-              textInputAction: TextInputAction.next,
-              onSubmitted: (_) {
-                form.payoutExpanded = true;
-                onChanged();
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (context.mounted) {
-                    FocusScope.of(context).requestFocus(form.bankFocus);
-                  }
-                });
-              },
-              onChanged: (_) => onChanged(),
-            ),
-          ),
-          const SizedBox(height: AppSizes.lg),
-          _CourierPayoutSection(
-            form: form,
-            onChanged: onChanged,
-            onContinue: onContinue,
-          ),
+          // Dispatcher Information is transaction-level, not per-consignment
+          // — see _CreateTransactionScreenState.build(), which renders it
+          // once, after the Delivery Method selector. No payout/bank details
+          // are ever collected here — see Payout Accounts / Wallet.
         ],
       ),
+    );
+  }
+}
+
+/// Hoppr Dispatcher fields (name/phone/Package Collection Address) +
+/// Additional Information — rendered once per transaction (bound to the
+/// primary consignment), only when Delivery Method is requestDispatcher. No
+/// payout/bank details — dispatcher settlement happens later via Dispatcher
+/// Wallet / Payout Accounts. See _CreateTransactionScreenState.build().
+class _DispatcherSection extends StatelessWidget {
+  const _DispatcherSection({
+    required this.form,
+    required this.onChanged,
+    required this.onContinue,
+    required this.onPickDispatcherAddress,
+  });
+
+  final _ConsignmentForm form;
+  final VoidCallback onChanged;
+  final VoidCallback onContinue;
+  final VoidCallback onPickDispatcherAddress;
+
+  @override
+  Widget build(BuildContext context) {
+    void focusNext(FocusNode node) => FocusScope.of(context).requestFocus(node);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _SectionHeader(title: 'Dispatcher Information'),
+              const SizedBox(height: AppSizes.md),
+              AppTextField(
+                label: 'Dispatcher name',
+                required: true,
+                icon: Icons.person_outline_rounded,
+                controller: form.dispatcherName,
+                focusNode: form.dispatcherNameFocus,
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => focusNext(form.dispatcherPhoneFocus),
+                onChanged: (_) => onChanged(),
+              ),
+              const SizedBox(height: AppSizes.md),
+              AppTextField(
+                label: 'Dispatcher phone number',
+                required: true,
+                icon: Icons.phone_outlined,
+                controller: form.dispatcherPhone,
+                focusNode: form.dispatcherPhoneFocus,
+                keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.next,
+                onChanged: (_) => onChanged(),
+              ),
+              const SizedBox(height: AppSizes.md),
+              _LargeAddressField(
+                label: 'Package Collection Address',
+                required: true,
+                icon: Icons.map_outlined,
+                value: form.dispatcherAddress.text.trim(),
+                hint: 'Tap to select the collection address on map',
+                onTap: onPickDispatcherAddress,
+              ),
+              const SizedBox(height: AppSizes.lg),
+              _SectionHeader(title: 'Additional Information (optional)'),
+              const SizedBox(height: AppSizes.md),
+              AppTextField(
+                label: 'Special instruction / notes',
+                controller: form.specialInstructions,
+                focusNode: form.specialInstructionsFocus,
+                keyboardType: TextInputType.multiline,
+                minLines: 3,
+                maxLines: 5,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => onContinue(),
+                onChanged: (_) => onChanged(),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1195,204 +1393,6 @@ class _UploadBoxState extends State<_UploadBox> {
   }
 }
 
-class _CourierPayoutSection extends StatelessWidget {
-  const _CourierPayoutSection({
-    required this.form,
-    required this.onChanged,
-    required this.onContinue,
-  });
-  final _ConsignmentForm form;
-  final VoidCallback onChanged;
-  final VoidCallback onContinue;
-
-  @override
-  Widget build(BuildContext context) {
-    final payout = form.payoutModel;
-    // Accent circle behind the truck icon follows the theme (lime / mono).
-    final accent = AppAccent.of(context);
-    Widget ordered(double order, Widget child) =>
-        FocusTraversalOrder(order: NumericFocusOrder(order), child: child);
-    void focusNext(FocusNode node) => FocusScope.of(context).requestFocus(node);
-
-    return AppCard(
-      color: const Color(0xFFFBFBFB),
-      padding: const EdgeInsets.all(AppSizes.md),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          InkWell(
-            onTap: () {
-              form.payoutExpanded = !form.payoutExpanded;
-              onChanged();
-            },
-            borderRadius: AppRadii.sm,
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: accent.accentSoft,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.local_shipping_outlined,
-                    size: 20,
-                    color: accent.onAccentSoft,
-                  ),
-                ),
-                const SizedBox(width: AppSizes.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Courier Payout Details', style: AppText.h3),
-                      const SizedBox(height: 4),
-                      Text(
-                        payout.isComplete
-                            ? payout.summary
-                            : 'Add dispatcher payout',
-                        style: AppText.caption,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                if (payout.isComplete)
-                  const StatusPill(
-                    label: 'Added',
-                    icon: Icons.check_rounded,
-                    background: AppColors.successSoft,
-                    foreground: AppColors.success,
-                    dense: true,
-                  )
-                else
-                  const StatusPill(
-                    label: 'REQUIRED',
-                    background: Color(0xFFECECEC),
-                    foreground: AppColors.textPrimary,
-                    border: AppColors.border,
-                    letterSpacing: 0.6,
-                    fontWeight: FontWeight.w700,
-                    dense: true,
-                  ),
-                const SizedBox(width: 4),
-                Icon(
-                  form.payoutExpanded
-                      ? Icons.keyboard_arrow_up_rounded
-                      : Icons.keyboard_arrow_down_rounded,
-                  color: AppColors.textTertiary,
-                ),
-              ],
-            ),
-          ),
-          AnimatedCrossFade(
-            duration: AppDurations.normal,
-            sizeCurve: AppDurations.easeOut,
-            crossFadeState: form.payoutExpanded
-                ? CrossFadeState.showSecond
-                : CrossFadeState.showFirst,
-            firstChild: const SizedBox(width: double.infinity),
-            secondChild: Padding(
-              padding: const EdgeInsets.only(top: AppSizes.md),
-              child: Column(
-                children: [
-                  ordered(
-                    13,
-                    AppTextField(
-                      label: 'Bank name',
-                      required: true,
-                      hint: 'GTBank',
-                      icon: Icons.account_balance_outlined,
-                      controller: form.bank,
-                      focusNode: form.bankFocus,
-                      textInputAction: TextInputAction.next,
-                      onSubmitted: (_) => focusNext(form.accountFocus),
-                      onChanged: (_) => onChanged(),
-                    ),
-                  ),
-                  const SizedBox(height: AppSizes.md),
-                  ordered(
-                    14,
-                    AppTextField(
-                      label: 'Account number',
-                      required: true,
-                      hint: '0000000000',
-                      controller: form.account,
-                      focusNode: form.accountFocus,
-                      keyboardType: TextInputType.number,
-                      textInputAction: TextInputAction.next,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(10),
-                      ],
-                      onSubmitted: (_) => focusNext(form.accountNameFocus),
-                      onChanged: (_) => onChanged(),
-                    ),
-                  ),
-                  const SizedBox(height: AppSizes.md),
-                  ordered(
-                    15,
-                    AppTextField(
-                      label: 'Account name',
-                      required: true,
-                      hint: 'As shown on the account',
-                      icon: Icons.verified_user_outlined,
-                      controller: form.accountName,
-                      focusNode: form.accountNameFocus,
-                      textInputAction: TextInputAction.done,
-                      onSubmitted: (_) => onContinue(),
-                      onChanged: (_) => onChanged(),
-                    ),
-                  ),
-                  const SizedBox(height: AppSizes.md),
-                  // Reassurance note — the courier's bank details are protected.
-                  // Matched to the AppTextField styling exactly (same white
-                  // fill, border colour, border width and radius) so it sits
-                  // flush with the inputs above it.
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSizes.lg,
-                      vertical: AppSizes.md,
-                    ),
-                    decoration: BoxDecoration(
-                      // Lilac in the Lime theme; soft grey in Mono.
-                      color: accent.isLime
-                          ? const Color(0xFFECE9FB)
-                          : const Color(0xFFF0F0F0),
-                      borderRadius: AppRadii.md,
-                      border: Border.all(color: AppColors.border, width: 1.2),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.lock_outline_rounded,
-                          size: 15,
-                          color: AppColors.textTertiary,
-                        ),
-                        const SizedBox(width: AppSizes.sm),
-                        Expanded(
-                          child: Text(
-                            'Payout metadata is encrypted and used only to '
-                            'settle the courier once delivery is verified.',
-                            style: AppText.caption,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 /// State holder for one consignment's controllers.
 class _ConsignmentForm {
   final product = TextEditingController();
@@ -1410,9 +1410,6 @@ class _ConsignmentForm {
   final dispatcherName = TextEditingController();
   final dispatcherPhone = TextEditingController();
   final dispatcherAddress = TextEditingController();
-  final bank = TextEditingController();
-  final account = TextEditingController();
-  final accountName = TextEditingController();
   final specialInstructions = TextEditingController();
   XFile? productPhoto;
   XFile? dispatchPhoto;
@@ -1423,7 +1420,6 @@ class _ConsignmentForm {
   bool uploadingProduct = false;
   bool uploadingDispatch = false;
   bool uploadingWaybill = false;
-  bool payoutExpanded = false;
   final productFocus = FocusNode();
   final amountFocus = FocusNode();
   final quantityFocus = FocusNode();
@@ -1438,9 +1434,6 @@ class _ConsignmentForm {
   final dispatcherPhoneFocus = FocusNode();
   final dispatcherAddressFocus = FocusNode();
   final specialInstructionsFocus = FocusNode();
-  final bankFocus = FocusNode();
-  final accountFocus = FocusNode();
-  final accountNameFocus = FocusNode();
 
   bool get hasDispatchPhoto => dispatchPhoto != null;
   bool get hasWaybill => waybillImage != null;
@@ -1462,12 +1455,9 @@ class _ConsignmentForm {
   /// Field order matches the on-screen order so the user is walked top-to-bottom.
   /// The min/max rules MIRROR the backend Zod schema (transaction.schema.ts) so
   /// a value can never slip through to a server-side 422.
-  ({FocusNode focus, String message, bool inPayout})? firstInvalid() {
-    ({FocusNode focus, String message, bool inPayout}) err(
-      FocusNode f,
-      String m, {
-      bool payout = false,
-    }) => (focus: f, message: m, inPayout: payout);
+  ({FocusNode focus, String message})? firstInvalid() {
+    ({FocusNode focus, String message}) err(FocusNode f, String m) =>
+        (focus: f, message: m);
 
     final productText = product.text.trim();
     if (productText.isEmpty) {
@@ -1548,6 +1538,21 @@ class _ConsignmentForm {
       );
     }
 
+    return null;
+  }
+
+  /// Dispatcher Information — only asked for (and only required) when a
+  /// Hoppr Dispatcher is requested, and only on the primary consignment (that
+  /// section renders once per transaction, not per item — see
+  /// _CreateTransactionScreenState.build()). The caller decides whether to
+  /// call this at all based on the chosen delivery method. Deliberately does
+  /// not ask for any payout/bank details — see Consignment/CourierPayout
+  /// removal: dispatcher payout is handled later via Dispatcher Wallet /
+  /// Admin Settlement, never collected here.
+  ({FocusNode focus, String message})? firstInvalidDispatcherField() {
+    ({FocusNode focus, String message}) err(FocusNode f, String m) =>
+        (focus: f, message: m);
+
     final dName = dispatcherName.text.trim();
     if (dName.length < 2) {
       return err(
@@ -1576,10 +1581,17 @@ class _ConsignmentForm {
       );
     }
 
-    if (dispatcherAddress.text.trim().length > 240) {
+    final dAddress = dispatcherAddress.text.trim();
+    if (dAddress.isEmpty) {
       return err(
         dispatcherAddressFocus,
-        'Dispatcher address must be 240 characters or fewer.',
+        'Enter the package collection address.',
+      );
+    }
+    if (dAddress.length > 240) {
+      return err(
+        dispatcherAddressFocus,
+        'Package Collection Address must be 240 characters or fewer.',
       );
     }
 
@@ -1590,52 +1602,8 @@ class _ConsignmentForm {
       );
     }
 
-    final bankText = bank.text.trim();
-    if (bankText.length < 2) {
-      return err(bankFocus, "Enter the courier's bank name.", payout: true);
-    }
-    if (bankText.length > 60) {
-      return err(
-        bankFocus,
-        'Bank name must be 60 characters or fewer.',
-        payout: true,
-      );
-    }
-
-    if (!RegExp(r'^\d{10}$').hasMatch(account.text.trim())) {
-      return err(
-        accountFocus,
-        'Account number must be exactly 10 digits.',
-        payout: true,
-      );
-    }
-
-    final acctName = accountName.text.trim();
-    if (acctName.length < 2) {
-      return err(
-        accountNameFocus,
-        "Enter the courier's account name.",
-        payout: true,
-      );
-    }
-    if (acctName.length > 80) {
-      return err(
-        accountNameFocus,
-        'Account name must be 80 characters or fewer.',
-        payout: true,
-      );
-    }
-
     return null;
   }
-
-  CourierPayout get payoutModel => CourierPayout(
-    dispatcherName: dispatcherName.text.trim(),
-    dispatcherPhone: dispatcherPhone.text.trim(),
-    bank: bank.text.trim(),
-    accountNumber: account.text.trim(),
-    accountName: accountName.text.trim(),
-  );
 
   Consignment toModel() => Consignment(
     product: product.text.trim(),
@@ -1650,9 +1618,10 @@ class _ConsignmentForm {
     estimatedDeliveryDate: estimatedDeliveryDate.text.trim(),
     estimatedDeliveryTime: estimatedDeliveryTime.text.trim(),
     waybillTrackingNumber: waybillTrackingNumber.text.trim(),
+    dispatcherName: dispatcherName.text.trim(),
+    dispatcherPhone: dispatcherPhone.text.trim(),
     dispatcherAddress: dispatcherAddress.text.trim(),
     specialInstructions: specialInstructions.text.trim(),
-    payout: payoutModel,
     hasDispatchPhoto: hasDispatchPhoto,
     hasWaybillImage: hasWaybill,
     productPhotoUrl: productPhotoUrl,
@@ -1675,9 +1644,6 @@ class _ConsignmentForm {
       dispatcherName,
       dispatcherPhone,
       dispatcherAddress,
-      bank,
-      account,
-      accountName,
       specialInstructions,
     ]) {
       c.dispose();
@@ -1697,9 +1663,6 @@ class _ConsignmentForm {
       dispatcherPhoneFocus,
       dispatcherAddressFocus,
       specialInstructionsFocus,
-      bankFocus,
-      accountFocus,
-      accountNameFocus,
     ]) {
       node.dispose();
     }

@@ -73,10 +73,12 @@ class _TransitMapScreenState extends ConsumerState<TransitMapScreen> {
       final a = pts[i], b = pts[i + 1];
       for (int s = 0; s < perSeg; s++) {
         final t = s / perSeg;
-        out.add(LatLng(
-          a.latitude + (b.latitude - a.latitude) * t,
-          a.longitude + (b.longitude - a.longitude) * t,
-        ));
+        out.add(
+          LatLng(
+            a.latitude + (b.latitude - a.latitude) * t,
+            a.longitude + (b.longitude - a.longitude) * t,
+          ),
+        );
       }
     }
     out.add(pts.last);
@@ -108,6 +110,9 @@ class _TransitMapScreenState extends ConsumerState<TransitMapScreen> {
       sellerName: tx?.merchantName ?? 'Seller',
       sellerCode: tx?.code ?? 'HTP-LGS-8881',
       itemSubtotal: tx?.itemSubtotalNaira ?? 1230087,
+      platformFeePayer: PlatformFeePayerX.fromWireValue(
+        tx?.platformFeePayer ?? 'split_50_50',
+      ),
     );
     AppNav.push(context, ConfirmDeliveryScreen(draft: draft));
   }
@@ -115,12 +120,16 @@ class _TransitMapScreenState extends ConsumerState<TransitMapScreen> {
   @override
   Widget build(BuildContext context) {
     final accent = AppAccent.of(context);
-    final tx = ref.watch(transactionsProvider).maybeWhen(
+    final tx = ref
+        .watch(transactionsProvider)
+        .maybeWhen(
           data: (list) {
             final moving = list
-                .where((t) =>
-                    t.status == ApiTxStatus.inTransit ||
-                    t.status == ApiTxStatus.outForDelivery)
+                .where(
+                  (t) =>
+                      t.status == ApiTxStatus.inTransit ||
+                      t.status == ApiTxStatus.outForDelivery,
+                )
                 .toList();
             if (moving.isNotEmpty) return moving.first;
             return list.isNotEmpty ? list.first : null;
@@ -151,14 +160,16 @@ class _TransitMapScreenState extends ConsumerState<TransitMapScreen> {
                   markerId: const MarkerId('destination'),
                   position: _dest,
                   icon: BitmapDescriptor.defaultMarkerWithHue(
-                      BitmapDescriptor.hueRed),
+                    BitmapDescriptor.hueRed,
+                  ),
                   infoWindow: const InfoWindow(title: 'Delivery address'),
                 ),
                 Marker(
                   markerId: const MarkerId('courier'),
                   position: _courier,
                   icon: BitmapDescriptor.defaultMarkerWithHue(
-                      BitmapDescriptor.hueAzure),
+                    BitmapDescriptor.hueAzure,
+                  ),
                   infoWindow: const InfoWindow(title: 'Tunde Bello'),
                 ),
               },
@@ -179,7 +190,11 @@ class _TransitMapScreenState extends ConsumerState<TransitMapScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
-                      AppSizes.md, AppSizes.sm, AppSizes.md, AppSizes.sm),
+                    AppSizes.md,
+                    AppSizes.sm,
+                    AppSizes.md,
+                    AppSizes.sm,
+                  ),
                   child: SizedBox(
                     height: 44,
                     child: Stack(
@@ -190,8 +205,9 @@ class _TransitMapScreenState extends ConsumerState<TransitMapScreen> {
                           alignment: Alignment.centerLeft,
                           child: AppIconButton(
                             icon: Icons.arrow_back_ios_new_rounded,
-                            background:
-                                accent.isLime ? const Color(0xFFE6E7DD) : null,
+                            background: accent.isLime
+                                ? const Color(0xFFE6E7DD)
+                                : null,
                             onTap: () => Navigator.of(context).maybePop(),
                           ),
                         ),
@@ -200,8 +216,9 @@ class _TransitMapScreenState extends ConsumerState<TransitMapScreen> {
                   ),
                 ),
                 Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: AppSizes.screenPad),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSizes.screenPad,
+                  ),
                   child: AppCard(
                     shadow: true,
                     padding: const EdgeInsets.all(AppSizes.md),
@@ -210,8 +227,9 @@ class _TransitMapScreenState extends ConsumerState<TransitMapScreen> {
                         InitialsAvatar(
                           initials: 'TB',
                           size: 38,
-                          background:
-                              accent.isLime ? const Color(0xFFF7EBB0) : null,
+                          background: accent.isLime
+                              ? const Color(0xFFF7EBB0)
+                              : null,
                         ),
                         const SizedBox(width: AppSizes.md),
                         Expanded(
@@ -220,8 +238,10 @@ class _TransitMapScreenState extends ConsumerState<TransitMapScreen> {
                             children: [
                               Text('Tunde Bello', style: AppText.bodyStrong),
                               const SizedBox(height: 2),
-                              Text('Dispatcher · holds your code',
-                                  style: AppText.caption),
+                              Text(
+                                'Dispatcher · holds your code',
+                                style: AppText.caption,
+                              ),
                             ],
                           ),
                         ),
@@ -279,11 +299,18 @@ class _ArrivalSheet extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-              color: AppColors.shadow, blurRadius: 24, offset: Offset(0, -6)),
+            color: AppColors.shadow,
+            blurRadius: 24,
+            offset: Offset(0, -6),
+          ),
         ],
       ),
-      padding: EdgeInsets.fromLTRB(AppSizes.xl, AppSizes.md, AppSizes.xl,
-          AppSizes.lg + MediaQuery.of(context).padding.bottom),
+      padding: EdgeInsets.fromLTRB(
+        AppSizes.xl,
+        AppSizes.md,
+        AppSizes.xl,
+        AppSizes.lg + MediaQuery.of(context).padding.bottom,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -293,7 +320,9 @@ class _ArrivalSheet extends StatelessWidget {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                  color: AppColors.border, borderRadius: AppRadii.pill),
+                color: AppColors.border,
+                borderRadius: AppRadii.pill,
+              ),
             ),
           ),
           const SizedBox(height: AppSizes.lg),

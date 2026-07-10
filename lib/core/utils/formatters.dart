@@ -59,6 +59,12 @@ class Dates {
     return '${l.day} ${_months[l.month - 1]} ${l.year}';
   }
 
+  /// "12 May" — compact form for tight spaces (e.g. a filter chip label).
+  static String short(DateTime d) {
+    final l = d.toLocal();
+    return '${l.day} ${_months[l.month - 1]}';
+  }
+
   /// Notification-style relative label: "2:14 PM" today, "Yesterday",
   /// "3 days ago", else the full date.
   static String relative(DateTime d) {
