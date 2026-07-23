@@ -259,7 +259,12 @@ class PaymentDraft {
     required this.sellerCode,
     required this.itemSubtotal,
     required this.platformFeePayer,
-    this.deliveryFee = 7500,
+    // Never a hardcoded/manual starting value — Payment Setup immediately
+    // overwrites this with either 0 (Deliver Myself) or a real distance +
+    // weight preview (Hoppr Dispatcher, see DeliveryFeeEstimator), and it's
+    // overwritten again with the authoritative backend figure once the
+    // transaction is actually created.
+    this.deliveryFee = 0,
     this.variant,
     this.transactionId,
   });
@@ -321,6 +326,8 @@ class Consignment {
     this.dispatcherName = '',
     this.dispatcherPhone = '',
     this.dispatcherAddress = '',
+    this.dispatcherLat,
+    this.dispatcherLng,
     this.specialInstructions = '',
     this.hasDispatchPhoto = false,
     this.hasWaybillImage = false,
@@ -363,6 +370,13 @@ class Consignment {
   /// Address" — never "Dispatcher Address" (reads like the dispatcher's own
   /// address) or "Pickup Address" (not a concept this app uses).
   String dispatcherAddress;
+
+  /// Package Collection Address coordinates from the map picker — required
+  /// for the backend to calculate the HTP Delivery Fee (distance between
+  /// this and [deliveryLat]/[deliveryLng]) for a Hoppr Dispatcher delivery.
+  /// Null when the address hasn't been picked via the map yet.
+  double? dispatcherLat;
+  double? dispatcherLng;
   String specialInstructions;
   bool hasDispatchPhoto;
   bool hasWaybillImage;

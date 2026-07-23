@@ -101,7 +101,9 @@ class _IdentityVerificationScreenState
     final user = ref.watch(authControllerProvider).valueOrNull?.user;
     return switch (user?.identityStatus) {
       'verified' => _VerifiedIdentityView(reviewedAt: user?.identityReviewedAt),
-      'pending' => const _PendingIdentityView(),
+      // An admin actively looking at the submission reads the same as
+      // "pending" to the submitter — no action is expected from them either way.
+      'pending' || 'under_review' => const _PendingIdentityView(),
       'rejected' => _RejectedIdentityView(
         reason: user?.identityRejectionReason,
       ),

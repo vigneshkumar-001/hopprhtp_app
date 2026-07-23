@@ -473,6 +473,40 @@ class _TransactionDetailScreenState
   bool _isTrackableStatus(ApiTxStatus? status) =>
       isTrackableTransactionStatus(status);
 
+  /// Dispatcher-flavoured wording for the unified Dispatcher Details card's
+  /// status row — combines whether a real Hoppr account is linked yet with
+  /// the transaction's delivery-leg status, matching the vocabulary a
+  /// dispatcher/seller actually cares about (vs. the generic
+  /// [ApiTxStatus.label] used elsewhere for the overall transaction status).
+  /// Falls back to that generic label for any status outside the
+  /// dispatcher-relevant range (e.g. disputed/cancelled) rather than
+  /// guessing a dispatcher-specific word for it.
+  String _dispatcherDeliveryStatusLabel({
+    required bool hasLinkedAccount,
+    required ApiTxStatus? status,
+  }) {
+    if (!hasLinkedAccount) return 'Waiting for dispatcher';
+    switch (status) {
+      case ApiTxStatus.paymentReceived:
+      case ApiTxStatus.awaitingDispatch:
+      case ApiTxStatus.readyForPickup:
+        return 'Assigned';
+      case ApiTxStatus.dispatcherGoingToPickup:
+        return 'Going to collection';
+      case ApiTxStatus.inTransit:
+        return 'Picked up';
+      case ApiTxStatus.outForDelivery:
+        return 'In transit';
+      case ApiTxStatus.delivered:
+      case ApiTxStatus.cooling:
+      case ApiTxStatus.released:
+      case ApiTxStatus.completed:
+        return 'Delivered';
+      default:
+        return status?.label ?? 'Unknown';
+    }
+  }
+
   /// Buyer-only: the delivery code to share with the seller once the product
   /// arrives. Gated on the FRESH transaction status (never the snapshot) so
   /// it can't keep showing after the seller has already confirmed delivery
@@ -672,7 +706,6 @@ class _TransactionDetailScreenState
     // buyer/seller themselves. Empty until one has actually been assigned;
     // the card shows a professional fallback rather than guessing.
     final dispatcherName = (tx.dispatcherName ?? '').trim();
-    final dispatcherPhone = (tx.dispatcherPhone ?? '').trim();
     // Same cached provider instance _buildCoolingSlot/_buildSellerActionSlot
     // already watch — no extra fetch. `.valueOrNull` (not `.maybeWhen(data:)`)
     // so this keeps the last-known status during a background refetch
@@ -709,15 +742,31 @@ class _TransactionDetailScreenState
     final dispatcherProfileAsync = dispatcherAccountId == null
         ? null
         : ref.watch(merchantProfileProvider(dispatcherAccountId));
-    final dispatcherDisplayName = isSelfDelivery
-        ? 'Seller is handling this delivery'
-        : dispatcherAccountId != null
-        ? (dispatcherProfileAsync?.valueOrNull?.name ?? 'Dispatcher')
-        : (dispatcherAccountPhone.isEmpty
-              ? 'Dispatcher will be assigned later'
-              : dispatcherAccountName.isEmpty
-              ? 'Dispatcher not registered yet'
-              : '$dispatcherAccountName — not registered yet');
+    // Unified Dispatcher Details name priority: the linked Hoppr account's
+    // real profile name first, then the seller-entered name stored on the
+    // transaction itself, then a professional fallback — never a raw "no
+    // data" gap. Deliberately does NOT fall back to a generic 'Dispatcher'
+    // placeholder while the linked profile is still loading — that would
+    // hide a perfectly good transaction-level name we already have.
+    final linkedDispatcherProfileName = dispatcherAccountId == null
+        ? ''
+        : (dispatcherProfileAsync?.valueOrNull?.name ?? '').trim();
+    final dispatcherCardName = linkedDispatcherProfileName.isNotEmpty
+        ? linkedDispatcherProfileName
+        : dispatcherAccountName.isNotEmpty
+        ? dispatcherAccountName
+        : 'Dispatcher not registered yet';
+    // Registration state is a distinct signal from the name/status above —
+    // whether a real Hoppr account is linked yet at all.
+    final dispatcherRegistrationState = dispatcherAccountId != null
+        ? 'Assigned Dispatcher'
+        : dispatcherAccountPhone.isNotEmpty
+        ? 'Waiting for dispatcher to join Hoppr'
+        : null;
+    final dispatcherStatusLabel = _dispatcherDeliveryStatusLabel(
+      hasLinkedAccount: dispatcherAccountId != null,
+      status: liveStatus ?? tx.apiStatus,
+    );
     // A refetch is in flight but we still have a previous value — surface the
     // small "Updating…" indicator rather than silently swapping data under
     // the user, or blocking the screen with a full-page spinner.
@@ -855,14 +904,15 @@ class _TransactionDetailScreenState
                           ),
                         ),
                         const SizedBox(height: AppSizes.md),
-                        _DispatcherAccountCard(
-                          name: dispatcherDisplayName,
+                        _DispatcherDetailsCard(
+                          isSelfDelivery: isSelfDelivery,
+                          name: dispatcherCardName,
                           phone: dispatcherAccountPhone,
+                          registrationState: dispatcherRegistrationState,
                           dispatcherAddress:
                               (detailAsync.valueOrNull?.dispatcherAddress ?? '')
                                   .trim(),
-                          statusLabel:
-                              (liveStatus ?? tx.apiStatus)?.label ?? 'Unknown',
+                          statusLabel: dispatcherStatusLabel,
                         ),
                         // Seller-only: a third-party/independent dispatcher has no
                         // Hoppr account to log into — share this secure, transaction-
@@ -906,28 +956,6 @@ class _TransactionDetailScreenState
                           const SizedBox(height: AppSizes.md),
                           _PaidCard(total: tx.amount),
                         ],
-                        const SizedBox(height: AppSizes.md),
-                        _DeliveryDetailsCard(
-                          address: deliveryAddress.isEmpty
-                              ? 'Not provided'
-                              : deliveryAddress,
-                          dispatcherName: dispatcherName,
-                          dispatcherPhone: dispatcherPhone,
-                          eta: deliveryEta.isEmpty
-                              ? 'Not available'
-                              : deliveryEta,
-                          onAddress: () => _copy(
-                            context,
-                            deliveryAddress,
-                            'Delivery address copied',
-                          ),
-                          onCopyDispatcher: () => _copy(
-                            context,
-                            dispatcherName,
-                            'Dispatcher name copied',
-                          ),
-                          onEta: _onTrackPackage,
-                        ),
                         const SizedBox(height: 24),
                       ],
                     ),
@@ -1041,7 +1069,7 @@ class _SkeletonProductCard extends StatelessWidget {
 }
 
 /// Generic "label + N icon rows" card skeleton — matches the shape shared by
-/// [_BuyerInfoCard], [_DispatcherAccountCard] and [_DeliveryDetailsCard].
+/// [_BuyerInfoCard] and [_DispatcherDetailsCard].
 class _SkeletonInfoCard extends StatelessWidget {
   const _SkeletonInfoCard({required this.rows});
   final int rows;
@@ -1759,30 +1787,57 @@ class _BuyerInfoCard extends StatelessWidget {
   }
 }
 
-/// The assigned Hoppr dispatcher ACCOUNT — entirely distinct from the
-/// courier payout contact shown further down in [_DeliveryDetailsCard].
-/// [name] is already a resolved display value (real account name, or one of
-/// the professional fallbacks below) — never a raw phone number.
-class _DispatcherAccountCard extends StatelessWidget {
-  const _DispatcherAccountCard({
+/// The single, unified delivery-actor card for Transaction Details — merges
+/// what used to be two separate cards (the linked-Hoppr-dispatcher-account
+/// card and a second, transaction-level card duplicating the same contact)
+/// into exactly one. [name] is already a resolved display value (real
+/// account name, or one of the professional fallbacks — never a raw phone
+/// number). For `seller_self_delivery` this renders the simple
+/// "Delivery details / Seller is handling this delivery" variant instead of
+/// a dispatcher card that doesn't apply to this transaction.
+class _DispatcherDetailsCard extends StatelessWidget {
+  const _DispatcherDetailsCard({
+    required this.isSelfDelivery,
     required this.name,
     required this.phone,
+    required this.registrationState,
     required this.dispatcherAddress,
     required this.statusLabel,
   });
 
+  final bool isSelfDelivery;
   final String name;
   final String phone;
+
+  /// "Assigned Dispatcher" once a real Hoppr account is linked, "Waiting for
+  /// dispatcher to join Hoppr" while only a phone has been entered, or null
+  /// when there's nothing meaningful to report yet — never shown as its own
+  /// row in that last case.
+  final String? registrationState;
 
   /// Where the dispatcher collects the product from the seller — shown as
   /// "Package Collection Address" (never "Dispatcher Address", which reads
   /// like the dispatcher's own address, and never "Pickup Address", not a
-  /// concept this app uses). Only this and Delivery Address exist.
+  /// concept this app uses). Only this and Delivery Address (shown on the
+  /// Buyer details card) exist.
   final String dispatcherAddress;
   final String statusLabel;
 
   @override
   Widget build(BuildContext context) {
+    if (isSelfDelivery) {
+      return AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CardSectionLabel('Delivery details'),
+            const SizedBox(height: AppSizes.md),
+            Text('Seller is handling this delivery', style: AppText.bodyStrong),
+          ],
+        ),
+      );
+    }
+
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1795,6 +1850,14 @@ class _DispatcherAccountCard extends StatelessWidget {
             name: name,
             phone: phone,
           ),
+          if (registrationState != null) ...[
+            const SizedBox(height: AppSizes.sm),
+            _InfoRow(
+              icon: Icons.verified_outlined,
+              label: 'Registration',
+              value: registrationState!,
+            ),
+          ],
           const SizedBox(height: AppSizes.sm),
           _InfoRow(
             icon: Icons.storefront_outlined,
@@ -2339,74 +2402,6 @@ class _PaidCard extends StatelessWidget {
             ),
           ),
           Text(Money.format(total), style: AppText.bodyStrong),
-        ],
-      ),
-    );
-  }
-}
-
-/// Dispatcher details — same professional row styling as [_BuyerInfoCard].
-/// The dispatcher is the courier the seller arranged at Create Transaction
-/// (`consignments[].payout`); until one is entered, this shows a plain
-/// fallback line rather than a broken/empty row.
-class _DeliveryDetailsCard extends StatelessWidget {
-  const _DeliveryDetailsCard({
-    required this.address,
-    required this.dispatcherName,
-    required this.dispatcherPhone,
-    required this.eta,
-    required this.onAddress,
-    required this.onCopyDispatcher,
-    required this.onEta,
-  });
-
-  final String address;
-  final String dispatcherName;
-  final String dispatcherPhone;
-  final String eta;
-  final VoidCallback onAddress;
-  final VoidCallback onCopyDispatcher;
-  final VoidCallback onEta;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CardSectionLabel('Dispatcher details'),
-          const SizedBox(height: AppSizes.md),
-          // This is the buyer's delivery destination (not the dispatcher's
-          // collection point — that's shown on the Dispatcher Details card
-          // above as "Package Collection Address") — labeled precisely so
-          // the two are never confused.
-          _InfoRow(
-            icon: Icons.location_on_outlined,
-            label: 'Delivery address',
-            value: address,
-            onTap: onAddress,
-          ),
-          const SizedBox(height: AppSizes.sm),
-          if (dispatcherName.isEmpty)
-            Text(
-              'Dispatcher not assigned yet',
-              style: AppText.caption.copyWith(color: AppColors.textTertiary),
-            )
-          else
-            _ContactInfoRow(
-              icon: Icons.local_shipping_outlined,
-              label: 'Dispatcher',
-              name: dispatcherName,
-              phone: dispatcherPhone,
-              onTap: onCopyDispatcher,
-            ),
-          const SizedBox(height: AppSizes.sm),
-          _InfoRow(
-            icon: Icons.schedule_rounded,
-            label: 'ETA',
-            value: eta,
-            onTap: onEta,
-          ),
         ],
       ),
     );

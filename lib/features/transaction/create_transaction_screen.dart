@@ -10,6 +10,7 @@ import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/utils/delivery_fee_estimator.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/dto/scan_dto.dart';
 import '../../data/models/models.dart';
@@ -288,6 +289,12 @@ class _CreateTransactionScreenState
     if (picked == null || !mounted) return;
     setState(() {
       form.dispatcherAddress.text = picked.address;
+      // Required for the backend to calculate the HTP Delivery Fee (distance
+      // between this and the delivery address) — previously discarded here,
+      // which silently forced every Hoppr Dispatcher transaction into a
+      // missing-coordinates state.
+      form.dispatcherLat = picked.location.latitude;
+      form.dispatcherLng = picked.location.longitude;
     });
   }
 
@@ -1410,6 +1417,8 @@ class _ConsignmentForm {
   final dispatcherName = TextEditingController();
   final dispatcherPhone = TextEditingController();
   final dispatcherAddress = TextEditingController();
+  double? dispatcherLat;
+  double? dispatcherLng;
   final specialInstructions = TextEditingController();
   XFile? productPhoto;
   XFile? dispatchPhoto;
@@ -1594,6 +1603,27 @@ class _ConsignmentForm {
         'Package Collection Address must be 240 characters or fewer.',
       );
     }
+    // The HTP Delivery Fee is calculated from map coordinates, not the
+    // address text — the field is map-picker-only (see _LargeAddressField
+    // above), so this only ever fires if the text was somehow set without
+    // ever tapping the picker.
+    if (dispatcherLat == null || dispatcherLng == null) {
+      return err(
+        dispatcherAddressFocus,
+        'Select the package collection address on the map to calculate the delivery fee.',
+      );
+    }
+
+    // Package weight — required for Hoppr Dispatcher (the HTP Delivery Fee's
+    // weight charge can't be calculated without it; see
+    // DeliveryFeeEstimator/backend deliveryFee.service.ts). Optional in
+    // firstInvalid() above since self-delivery never needs it.
+    if (DeliveryFeeEstimator.parseWeightKg(weight.text) == null) {
+      return err(
+        weightFocus,
+        'Enter a valid package weight (e.g. "1.5 kg") to calculate the delivery fee.',
+      );
+    }
 
     if (specialInstructions.text.trim().length > 500) {
       return err(
@@ -1621,6 +1651,8 @@ class _ConsignmentForm {
     dispatcherName: dispatcherName.text.trim(),
     dispatcherPhone: dispatcherPhone.text.trim(),
     dispatcherAddress: dispatcherAddress.text.trim(),
+    dispatcherLat: dispatcherLat,
+    dispatcherLng: dispatcherLng,
     specialInstructions: specialInstructions.text.trim(),
     hasDispatchPhoto: hasDispatchPhoto,
     hasWaybillImage: hasWaybill,

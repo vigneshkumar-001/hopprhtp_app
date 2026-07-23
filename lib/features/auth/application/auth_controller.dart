@@ -2,32 +2,76 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/auth/biometric_service.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/network/error_messages.dart';
 import '../../../core/providers.dart';
 import '../../../data/dto/user_dto.dart';
 import '../../../data/repositories/auth_repository.dart';
 
-enum AuthStatus { unauthenticated, locked, authenticated }
+enum AuthStatus { unauthenticated, locked, authenticated, blocked }
 
 /// Immutable session snapshot exposed to the UI.
 class AuthState {
-  const AuthState({required this.status, this.user});
+  const AuthState({
+    required this.status,
+    this.user,
+    this.blockedCode,
+    this.blockedMessage,
+  });
 
   const AuthState.unauthenticated()
     : status = AuthStatus.unauthenticated,
-      user = null;
+      user = null,
+      blockedCode = null,
+      blockedMessage = null;
 
   /// A stored session exists but is gated behind a biometric unlock.
-  const AuthState.locked() : status = AuthStatus.locked, user = null;
+  const AuthState.locked()
+    : status = AuthStatus.locked,
+      user = null,
+      blockedCode = null,
+      blockedMessage = null;
 
   const AuthState.authenticated(ApiUser this.user)
-    : status = AuthStatus.authenticated;
+    : status = AuthStatus.authenticated,
+      blockedCode = null,
+      blockedMessage = null;
+
+  /// The account was frozen or deleted server-side (an admin action) —
+  /// discovered while restoring a stored session. The session is already
+  /// dead (tokens cleared by the caller); this just carries what to tell
+  /// the person before they land back on sign-in. See [AccountBlockedScreen].
+  const AuthState.blocked({required String code, required String message})
+    : status = AuthStatus.blocked,
+      user = null,
+      blockedCode = code,
+      blockedMessage = message;
 
   final AuthStatus status;
   final ApiUser? user;
 
+  /// 'ACCOUNT_SUSPENDED' | 'ACCOUNT_DELETED', set only when [status] is
+  /// [AuthStatus.blocked].
+  final String? blockedCode;
+
+  /// The backend's human-friendly explanation, set only when [status] is
+  /// [AuthStatus.blocked].
+  final String? blockedMessage;
+
   bool get isAuthenticated => status == AuthStatus.authenticated;
   bool get isLocked => status == AuthStatus.locked;
+  bool get isBlocked => status == AuthStatus.blocked;
 }
+
+/// Error codes the backend returns (403) when an account is frozen or
+/// soft-deleted — checked wherever a stored session is restored or a login
+/// attempt fails, so the person sees a clear, branded explanation instead of
+/// a silent logout or a generic error.
+const _accountSuspendedCode = 'ACCOUNT_SUSPENDED';
+const _accountDeletedCode = 'ACCOUNT_DELETED';
+
+/// True for the two account-blocked error codes above.
+bool isAccountBlockedCode(String code) =>
+    code == _accountSuspendedCode || code == _accountDeletedCode;
 
 /// Owns the session lifecycle: restores it on launch, runs sign-in / sign-up,
 /// and reacts to the interceptor signalling an expired refresh token.
@@ -50,14 +94,28 @@ class AuthController extends AsyncNotifier<AuthState> {
   }
 
   /// Loads the profile for a stored session; clears + logs out if invalid.
+  /// A frozen/deleted account surfaces as [AuthState.blocked] with the
+  /// backend's explanation rather than silently dropping to sign-in — every
+  /// other failure (expired session, offline) keeps the previous silent
+  /// behaviour.
   Future<AuthState> _loadSession() async {
     try {
       final user = await _repo.me();
       return AuthState.authenticated(user);
-    } on ApiException {
+    } on ApiException catch (e) {
       await _tokens.clear();
+      if (isAccountBlockedCode(e.code)) {
+        return AuthState.blocked(code: e.code, message: e.userMessage);
+      }
       return const AuthState.unauthenticated();
     }
+  }
+
+  /// Dismiss the [AuthStatus.blocked] screen and return to sign-in. The
+  /// session is already cleared (see [_loadSession]) — this only resets the
+  /// in-memory state that's keeping [AccountBlockedScreen] on screen.
+  void acknowledgeBlocked() {
+    state = const AsyncData(AuthState.unauthenticated());
   }
 
   /// Throws [ApiException] on failure (invalid PIN, locked, network) so the

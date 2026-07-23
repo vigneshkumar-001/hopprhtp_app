@@ -120,6 +120,7 @@ class ApiUser {
     required this.walletAvailableKobo,
     required this.walletCoolingKobo,
     this.payoutAccounts = const [],
+    this.status = 'active',
   });
 
   final String id;
@@ -157,6 +158,13 @@ class ApiUser {
 
   /// Saved bank accounts for settlements / withdrawals.
   final List<PayoutAccount> payoutAccounts;
+
+  /// 'active' | 'suspended' | 'deleted'. The backend already rejects requests
+  /// from a non-active account before returning a user object (see
+  /// [AuthState.blocked]), so in practice this is almost always 'active' —
+  /// kept for parity with the admin panel's model and any future in-session
+  /// display use.
+  final String status;
 
   /// The default payout account (or the first, or null when none are saved).
   PayoutAccount? get defaultPayoutAccount {
@@ -200,5 +208,6 @@ class ApiUser {
     payoutAccounts: asList(
       j['payoutAccounts'],
     ).map((e) => PayoutAccount.fromJson(asMap(e))).toList(growable: false),
+    status: asString(j['status'], 'active'),
   );
 }

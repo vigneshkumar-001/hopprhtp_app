@@ -9,6 +9,7 @@ import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/utils/delivery_fee_estimator.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/app_state.dart';
 import '../../data/models/models.dart';
@@ -56,8 +57,16 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
   /// It's the same object held in [widget.consignments], so editing the address
   /// here flows straight through to [_buildBody] (and on to the backend).
   late final Consignment _primary;
-  late final TextEditingController _deliveryCtrl;
   bool _busy = false;
+
+  /// Whether the HTP Delivery Fee could actually be calculated — always true
+  /// for Deliver Myself (nothing to calculate, always ₦0). For Hoppr
+  /// Dispatcher, true only once distance (both addresses picked via the map)
+  /// and a valid package weight are all present. False blocks Generate
+  /// Payment Link with a clear message rather than ever falling back to a
+  /// guessed number (client spec: "block payment until distance is
+  /// available" — no manual-entry fallback is offered).
+  late final bool _deliveryFeeCalculable;
 
   double _parse(String s) =>
       double.tryParse(s.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0;
@@ -81,15 +90,41 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
       variant: 'Yemi Stores',
       platformFeePayer: widget.platformFeePayer,
     );
-    _deliveryCtrl = TextEditingController(
-      text: Money.format(_draft.deliveryFee, symbol: false),
-    );
-  }
 
-  @override
-  void dispose() {
-    _deliveryCtrl.dispose();
-    super.dispose();
+    // HTP Delivery Fee — never manual/static (see DeliveryFeeEstimator, a
+    // 1:1 mirror of the backend formula). This is only ever a PREVIEW; the
+    // authoritative figure is whatever the backend actually computes at
+    // creation, synced onto _draft in _generate() once that response lands.
+    if (widget.deliveryMethod == DeliveryMethod.sellerSelf) {
+      _draft.deliveryFee = 0;
+      _deliveryFeeCalculable = true;
+    } else {
+      final weightKg = DeliveryFeeEstimator.parseWeightKg(_primary.weight);
+      final pickupLat = _primary.dispatcherLat;
+      final pickupLng = _primary.dispatcherLng;
+      final dropLat = _primary.deliveryLat;
+      final dropLng = _primary.deliveryLng;
+      if (weightKg != null &&
+          pickupLat != null &&
+          pickupLng != null &&
+          dropLat != null &&
+          dropLng != null) {
+        final distanceKm = DeliveryFeeEstimator.distanceKm(
+          pickupLat,
+          pickupLng,
+          dropLat,
+          dropLng,
+        );
+        _draft.deliveryFee = DeliveryFeeEstimator.computeFee(
+          distanceKm: distanceKm,
+          weightKg: weightKg,
+        );
+        _deliveryFeeCalculable = true;
+      } else {
+        _draft.deliveryFee = 0;
+        _deliveryFeeCalculable = false;
+      }
+    }
   }
 
   /// Edit the delivery address inline. Mutating [_primary] is enough — it's the
@@ -186,6 +221,19 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
       );
       return;
     }
+    // Block rather than guess a delivery fee (client spec's chosen "safe
+    // fallback") — the backend would reject this anyway (see
+    // transaction.schema.ts's refine()s), but catching it here gives a
+    // clearer, screen-specific message than a generic 422.
+    if (widget.deliveryMethod == DeliveryMethod.requestDispatcher &&
+        !_deliveryFeeCalculable) {
+      AppSnackbar.error(
+        context,
+        'Delivery fee could not be calculated. Go back and re-select the '
+        'Package Collection Address, Delivery Address, and package weight.',
+      );
+      return;
+    }
     if (!ref.isOnline) {
       AppSnackbar.error(
         context,
@@ -206,6 +254,10 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
           .read(transactionRepositoryProvider)
           .create(_buildBody(pin));
       if (!mounted) return;
+      // Backend is the authoritative source for the HTP Delivery Fee — sync
+      // the preview to whatever it actually calculated (should match the
+      // client-side estimate exactly, but this is never assumed).
+      _draft.deliveryFee = tx.deliveryFeeNaira;
       // Land it on the dashboard (demo bridge) + refresh the provider-backed list.
       AppScope.read(context).addFromApi(tx);
       ref.invalidate(transactionsProvider);
@@ -250,6 +302,8 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
             'waybillTrackingNumber': c.waybillTrackingNumber,
           if (c.dispatcherAddress.trim().isNotEmpty)
             'dispatcherAddress': c.dispatcherAddress,
+          if (c.dispatcherLat != null) 'dispatcherLat': c.dispatcherLat,
+          if (c.dispatcherLng != null) 'dispatcherLng': c.dispatcherLng,
           if (c.specialInstructions.trim().isNotEmpty)
             'specialInstructions': c.specialInstructions,
           // Three independent, optional photos — each to its own backend field.
@@ -262,7 +316,8 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
         },
     ],
     'platformFeePayer': widget.platformFeePayer.wireValue,
-    'deliveryFeeNaira': _draft.deliveryFee,
+    // No manual delivery fee sent — the backend always computes the HTP
+    // Delivery Fee itself from distance + weight (or 0 for Deliver Myself).
     'dispatcherMode': widget.deliveryMethod.wireValue,
     // Sourced from the primary consignment's own Dispatcher Information
     // fields (Create Transaction) — never a separate/duplicate field here.
@@ -351,26 +406,17 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
             onEdit: _editDeliveryAddress,
           ),
           const SizedBox(height: AppSizes.md),
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Delivery fee', style: AppText.h3),
-                const SizedBox(height: AppSizes.md),
-                _AmountField(
-                  controller: _deliveryCtrl,
-                  onChanged: (v) {
-                    setState(() => _draft.deliveryFee = _parse(v));
-                  },
-                ),
-                const SizedBox(height: AppSizes.sm),
-                Text(
-                  'Enter any amount — up to ${Money.format(999999)}',
-                  style: AppText.caption,
-                ),
-              ],
-            ),
+          _DeliveryFeeCard(
+            deliveryMethod: widget.deliveryMethod,
+            deliveryFee: _draft.deliveryFee,
+            calculable: _deliveryFeeCalculable,
           ),
+          if (widget.deliveryMethod == DeliveryMethod.requestDispatcher &&
+              _deliveryFeeCalculable &&
+              _draft.deliveryFee > _draft.itemSubtotal) ...[
+            const SizedBox(height: AppSizes.md),
+            const _DeliveryFeeWarningBanner(),
+          ],
           const SizedBox(height: AppSizes.md),
           _TrustProtocolBanner(onTap: _showTrustInfo),
           const SizedBox(height: AppSizes.md),
@@ -712,37 +758,82 @@ class _EditAddressSheetState extends State<_EditAddressSheet> {
   }
 }
 
-class _AmountField extends StatelessWidget {
-  const _AmountField({required this.controller, required this.onChanged});
-  final TextEditingController controller;
-  final ValueChanged<String> onChanged;
+/// Read-only — the HTP Delivery Fee is always backend-calculated from
+/// distance + weight (Hoppr Dispatcher) or simply ₦0 (Deliver Myself). The
+/// seller can no longer type in an arbitrary amount here: the client spec's
+/// only sanctioned fallback for a missing calculation is to block Generate
+/// Payment Link (see PaymentSetupScreen._generate()), never a manual-entry
+/// substitute.
+class _DeliveryFeeCard extends StatelessWidget {
+  const _DeliveryFeeCard({
+    required this.deliveryMethod,
+    required this.deliveryFee,
+    required this.calculable,
+  });
+
+  final DeliveryMethod deliveryMethod;
+  final double deliveryFee;
+  final bool calculable;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: AppSizes.fieldHeight,
-      padding: const EdgeInsets.symmetric(horizontal: AppSizes.lg),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: AppRadii.md,
-        border: Border.all(color: AppColors.border, width: 1.2),
-      ),
-      child: Row(
+    final isSelfDelivery = deliveryMethod == DeliveryMethod.sellerSelf;
+    final showsAmount = isSelfDelivery || calculable;
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(Money.naira, style: AppText.h3),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(child: Text('Delivery fee', style: AppText.h3)),
+              Text(
+                showsAmount ? Money.format(deliveryFee) : '—',
+                style: AppText.h3,
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSizes.sm),
+          Text(
+            isSelfDelivery
+                ? 'No delivery fee applied because seller is handling delivery.'
+                : calculable
+                ? 'Delivery fee is calculated from distance and package weight.'
+                : 'Delivery fee will be confirmed before payment — go back '
+                      'and select the Package Collection Address, Delivery '
+                      'Address, and package weight.',
+            style: AppText.caption,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Non-blocking notice — shown only when the (real, backend-shaped) delivery
+/// fee preview exceeds the item value, per client spec. Never prevents
+/// Generate Payment Link on its own.
+class _DeliveryFeeWarningBanner extends StatelessWidget {
+  const _DeliveryFeeWarningBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      color: AppColors.warning.withValues(alpha: 0.12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            size: 20,
+            color: AppColors.warning,
+          ),
           const SizedBox(width: AppSizes.sm),
           Expanded(
-            child: TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              inputFormatters: [ThousandsFormatter()],
-              onChanged: onChanged,
-              style: AppText.h3,
-              decoration: const InputDecoration(
-                isCollapsed: true,
-                border: InputBorder.none,
-                hintText: '0',
-              ),
+            child: Text(
+              'Delivery fee is higher than item value because of distance '
+              'or weight. Please review before continuing.',
+              style: AppText.caption,
             ),
           ),
         ],

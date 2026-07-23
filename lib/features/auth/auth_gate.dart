@@ -6,6 +6,7 @@ import '../../data/app_state.dart';
 import '../../widgets/common.dart';
 import '../home/home_shell.dart';
 import '../onboarding/onboarding_screen.dart';
+import 'account_blocked_screen.dart';
 import 'application/auth_controller.dart';
 import 'signin_screen.dart';
 
@@ -47,6 +48,14 @@ class AuthGate extends ConsumerWidget {
         // A biometric-protected session shows the sign-in screen, which surfaces
         // biometrics as the primary action (with PIN as the fallback).
         if (state?.isLocked ?? false) return const SignInScreen();
+        // A stored session belonged to a now frozen/deleted account — explain
+        // why, instead of silently dropping to onboarding.
+        if (state?.isBlocked ?? false) {
+          return AccountBlockedScreen(
+            code: state!.blockedCode!,
+            message: state.blockedMessage!,
+          );
+        }
         return const OnboardingScreen();
       },
     );

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -101,10 +103,44 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
       // route to reveal it (no manual navigation to a screen).
       if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
     } on ApiException catch (e) {
-      if (mounted) AppSnackbar.error(context, e.userMessage, onRetry: _enter);
+      if (!mounted) return;
+      if (isAccountBlockedCode(e.code)) {
+        unawaited(_showBlockedDialog(code: e.code, message: e.userMessage));
+      } else {
+        AppSnackbar.error(context, e.userMessage, onRetry: _enter);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// A frozen/deleted account gets a deliberate modal instead of a snackbar
+  /// that could be missed or swiped away — same messaging as
+  /// [AccountBlockedScreen], just as a dialog since sign-in is already the
+  /// right place to land (no navigation needed).
+  Future<void> _showBlockedDialog({
+    required String code,
+    required String message,
+  }) {
+    final isDeleted = code == 'ACCOUNT_DELETED';
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: Icon(
+          isDeleted ? Icons.person_off_rounded : Icons.lock_person_rounded,
+          color: AppColors.danger,
+          size: 32,
+        ),
+        title: Text(isDeleted ? 'Account no longer available' : 'Account frozen'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
