@@ -49,16 +49,15 @@ class PaymentLinkReadyScreen extends StatefulWidget {
 }
 
 class _PaymentLinkReadyScreenState extends State<PaymentLinkReadyScreen> {
-  static const int _validDays = 7;
-
   // Brief "Copied" confirmations on the link + the transaction-ID rows.
   bool _linkCopied = false;
   bool _codeCopied = false;
 
-  // Computed once so the expiry doesn't drift on every rebuild.
-  late final DateTime _expiresAt = DateTime.now().add(
-    const Duration(days: _validDays),
-  );
+  /// Real, admin-configured expiry from the backend (Settings → Payment
+  /// Link Expiry Days) — never a fabricated client-side date. Null when
+  /// [widget.tx] wasn't passed (demo/preview path) or predates this field,
+  /// meaning "no expiry enforced yet" rather than a guessed one.
+  DateTime? get _expiresAt => widget.tx?.paymentLinkExpiresAt;
 
   String get _code => widget.code ?? widget.draft.sellerCode;
   String get _link => '${AppConfig.webBaseUrl}/pay/$_code';
@@ -291,21 +290,11 @@ class _PaymentLinkReadyScreenState extends State<PaymentLinkReadyScreen> {
                   padding: EdgeInsets.symmetric(vertical: AppSizes.md),
                   child: Divider(height: 1),
                 ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _LabeledValue(
-                        label: 'Link valid for',
-                        value: '$_validDays Days',
-                      ),
-                    ),
-                    Expanded(
-                      child: _LabeledValue(
-                        label: 'Expires on',
-                        value: _formatExpiry(_expiresAt),
-                      ),
-                    ),
-                  ],
+                _LabeledValue(
+                  label: 'Payment link validity',
+                  value: _expiresAt == null
+                      ? 'Valid until payment or cancellation'
+                      : 'Valid until ${_formatExpiry(_expiresAt!)}',
                 ),
               ],
             ),

@@ -1,12 +1,15 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/error_messages.dart';
+import '../../core/network/socket_service.dart';
 import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/utils/app_logger.dart';
 import '../../data/dto/transaction_dto.dart';
 import '../../data/models/models.dart';
 import '../../widgets/app_scaffold.dart';
@@ -39,7 +42,8 @@ class TransactionHistoryScreen extends ConsumerStatefulWidget {
 }
 
 class _TransactionHistoryScreenState
-    extends ConsumerState<TransactionHistoryScreen> {
+    extends ConsumerState<TransactionHistoryScreen>
+    with WidgetsBindingObserver {
   static const _filters = [
     _Filter('All'),
     _Filter('Active', stage: 'active'),
@@ -57,12 +61,32 @@ class _TransactionHistoryScreenState
   bool _firstLoad = true;
   Object? _error;
 
+  // This screen keeps its own paginated `_items` list rather than watching
+  // `transactionsProvider` (infinite-scroll pagination doesn't map cleanly
+  // onto a single cached list) — which means app.dart's global socket
+  // listener invalidating that provider has no effect here. This subscription
+  // is what actually keeps History live: any transaction event for this user
+  // (payment, delivery, dispute...) reloads page 1, same as pull-to-refresh.
+  StreamSubscription<TransactionSocketEvent>? _socketSub;
+  Timer? _reloadDebounce;
+  late final SocketService _socket;
+
   @override
   void initState() {
     super.initState();
     _tab = _tabIndexFor(widget.initialStage);
     _scroll.addListener(_onScroll);
     _loadFirst();
+
+    WidgetsBinding.instance.addObserver(this);
+    _socket = ref.read(socketServiceProvider);
+    _socketSub = _socket.events.listen((event) {
+      AppLogger.debug(
+        '[socket] history reload scheduled: tx=${event.transactionId} '
+        'type=${event.type}',
+      );
+      _scheduleReload();
+    });
   }
 
   static int _tabIndexFor(ApiTxStage? stage) {
@@ -73,8 +97,29 @@ class _TransactionHistoryScreenState
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _socketSub?.cancel();
+    _reloadDebounce?.cancel();
     _scroll.dispose();
     super.dispose();
+  }
+
+  /// Fallback for when the socket never connects or is mid-reconnect: coming
+  /// back to the foreground re-syncs History the same way
+  /// TransactionDetailScreen re-syncs on resume.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _loadFirst();
+  }
+
+  /// Coalesces a burst of socket events (e.g. payment + escrow-funded firing
+  /// close together) into a single page-1 reload instead of reloading once
+  /// per event.
+  void _scheduleReload() {
+    _reloadDebounce?.cancel();
+    _reloadDebounce = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) _loadFirst();
+    });
   }
 
   void _onScroll() {

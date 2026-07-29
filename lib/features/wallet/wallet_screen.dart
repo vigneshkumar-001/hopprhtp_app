@@ -1,13 +1,16 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/network/error_messages.dart';
+import '../../core/network/socket_service.dart';
 import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/utils/app_logger.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/dto/user_dto.dart';
 import '../../data/dto/wallet_dto.dart';
@@ -25,6 +28,7 @@ import '../../widgets/premium_card.dart';
 import '../auth/application/auth_controller.dart';
 import '../profile/payout_accounts_screen.dart';
 import '../transaction/widgets/transaction_widgets.dart';
+import 'withdrawal_history_screen.dart';
 
 /// Wallet — live balance, cooling settlement, and the recent ledger activity,
 /// all from the `/wallet` API.
@@ -35,10 +39,61 @@ class WalletScreen extends ConsumerStatefulWidget {
   ConsumerState<WalletScreen> createState() => _WalletScreenState();
 }
 
-class _WalletScreenState extends ConsumerState<WalletScreen> {
+class _WalletScreenState extends ConsumerState<WalletScreen>
+    with WidgetsBindingObserver {
   // Recent Activity opens on the current month by default — the most useful
   // default for most users, rather than an unbounded "All" fetch.
   WalletActivityFilter _filter = WalletActivityFilter.thisMonth();
+
+  StreamSubscription<WithdrawalSocketEvent>? _withdrawalSocketSub;
+
+  /// Cached at [initState] and reused in [dispose] — see
+  /// TransactionDetailScreen's own `_socket` field for why `ref.read` isn't
+  /// safe to call inside `dispose()`.
+  late final SocketService _socket;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _socket = ref.read(socketServiceProvider);
+    // Realtime — an admin approving/rejecting/paying this user's withdrawal
+    // updates the Withdrawal Requests section (and balance, since a
+    // reject/fail returns funds) without waiting for a manual refresh. Same
+    // "socket triggers a refetch, never trusts the payload as data" contract
+    // as TransactionDetailScreen's own socket listener.
+    _withdrawalSocketSub = _socket.withdrawalEvents.listen((event) {
+      AppLogger.debug(
+        '[socket] withdrawal invalidation triggered: '
+        'withdrawal=${event.withdrawalId} status=${event.status}',
+      );
+      _refetchAfterWithdrawalChange();
+      if (mounted) {
+        AppSnackbar.info(context, 'Withdrawal status updated');
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _withdrawalSocketSub?.cancel();
+    super.dispose();
+  }
+
+  /// Fallback for when the socket never connects or is mid-reconnect: coming
+  /// back to the foreground re-syncs the wallet the same way
+  /// TransactionDetailScreen re-syncs a transaction on resume.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refetchAfterWithdrawalChange();
+  }
+
+  void _refetchAfterWithdrawalChange() {
+    ref.invalidate(walletWithdrawalsProvider);
+    ref.invalidate(walletBalanceProvider);
+    ref.invalidate(walletLedgerProvider);
+  }
 
   Future<void> _openFilterSheet() async {
     final picked = await showBlurredSheet<WalletActivityFilter>(
@@ -75,6 +130,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
         onPressed: () {
           ref.invalidate(walletBalanceProvider);
           ref.invalidate(walletLedgerProvider);
+          ref.invalidate(walletWithdrawalsProvider);
         },
       ),
       body: balanceAsync.when(
@@ -89,6 +145,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             const SizedBox(height: AppSizes.sm),
             _WalletBalanceCard(balance: balance),
             const SizedBox(height: AppSizes.xxl),
+            const _WithdrawalHistorySection(),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -524,6 +581,11 @@ class _WithdrawSheetState extends ConsumerState<_WithdrawSheet> {
           .withdraw(amountNaira: value, accountId: account.id);
       ref.invalidate(walletBalanceProvider);
       ref.invalidate(walletLedgerProvider);
+      // Refetches the full Withdrawal Requests list rather than parsing the
+      // response's own partial `withdrawalRequest` summary — the new request
+      // then shows up with the same complete, backend-canonical field set as
+      // every other row instead of a hand-assembled partial one.
+      ref.invalidate(walletWithdrawalsProvider);
       if (mounted) Navigator.of(context).pop();
       if (widget.rootContext.mounted) {
         AppSnackbar.success(
@@ -1122,6 +1184,147 @@ class _DetailRow extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(value, style: AppText.bodyStrong),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Latest withdrawal (payout) requests this user has made, real backend
+/// status only — lives directly on Wallet, right below the balance card
+/// (the first thing worth checking after tapping Withdraw). Always visible
+/// once the balance has loaded (title, subtitle and View All), with a clean
+/// empty state rather than being hidden when there's no history yet.
+class _WithdrawalHistorySection extends ConsumerWidget {
+  const _WithdrawalHistorySection();
+
+  static const _latestCount = 3;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(walletWithdrawalsProvider);
+    ref.listen(walletWithdrawalsProvider, (previous, next) {
+      final err = next.error;
+      if (err != null) {
+        AppSnackbar.error(
+          context,
+          friendlyError(err),
+          onRetry: () => ref.invalidate(walletWithdrawalsProvider),
+        );
+      }
+    });
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSizes.xxl),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'WITHDRAWAL HISTORY',
+                      style: AppText.caption.copyWith(
+                        letterSpacing: 1.1,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF3F4652),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text('Track your recent payout requests', style: AppText.caption),
+                  ],
+                ),
+              ),
+              GestureDetector(
+                onTap: () => ref.invalidate(walletWithdrawalsProvider),
+                behavior: HitTestBehavior.opaque,
+                child: const Padding(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(
+                    Icons.refresh_rounded,
+                    size: 17,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSizes.md),
+          async.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.symmetric(vertical: AppSizes.lg),
+              child: Center(
+                child: AppCircularLoader(size: 20, strokeWidth: 2.5),
+              ),
+            ),
+            error: (_, _) => const SizedBox.shrink(),
+            data: (requests) {
+              if (requests.isEmpty) {
+                return AppCard(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSizes.lg,
+                    vertical: AppSizes.xl,
+                  ),
+                  child: Column(
+                    children: [
+                      const Icon(
+                        Icons.receipt_long_outlined,
+                        size: 30,
+                        color: AppColors.textTertiary,
+                      ),
+                      const SizedBox(height: AppSizes.sm),
+                      Text(
+                        'No withdrawal requests yet.',
+                        style: AppText.bodyStrong,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'When you request a withdrawal, it will appear here.',
+                        style: AppText.caption,
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                );
+              }
+              final latest = requests.take(_latestCount).toList(growable: false);
+              return AppCard(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSizes.lg,
+                  vertical: AppSizes.xs,
+                ),
+                child: Column(
+                  children: [
+                    for (int i = 0; i < latest.length; i++) ...[
+                      WithdrawalHistoryRow(request: latest[i]),
+                      if (i != latest.length - 1) const Divider(height: 1),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: AppSizes.md),
+          Center(
+            child: GestureDetector(
+              onTap: () =>
+                  AppNav.push(context, const WithdrawalHistoryScreen()),
+              behavior: HitTestBehavior.opaque,
+              child: Text(
+                'View All Withdrawal History',
+                style: AppText.label.copyWith(
+                  color: AppColors.ink,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
           ),
         ],

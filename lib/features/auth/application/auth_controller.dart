@@ -132,15 +132,16 @@ class AuthController extends AsyncNotifier<AuthState> {
     state = AsyncData(AuthState.authenticated(session.user));
   }
 
-  /// Sign-up step 1 — does not change session state; returns the dev OTP (non-prod).
-  Future<String?> requestOtp({
+  /// Sign-up step 1 — does not change session state; returns the resend
+  /// cooldown the server enforced (plus the dev OTP, non-prod only).
+  Future<OtpRequestResult> requestOtp({
     required String fullName,
     required String phone,
     String? email,
   }) => _repo.requestOtp(fullName: fullName, phone: phone, email: email);
 
   /// Re-send the registration OTP (server enforces the resend cooldown).
-  Future<String?> resendOtp({required String phone}) =>
+  Future<OtpRequestResult> resendOtp({required String phone}) =>
       _repo.resendOtp(phone: phone);
 
   /// Verify the OTP on the Verify screen (throws [ApiException] on a wrong code).
@@ -158,6 +159,31 @@ class AuthController extends AsyncNotifier<AuthState> {
       phone: phone,
       otp: otp,
       pin: pin,
+    );
+    await _tokens.save(
+      access: session.accessToken,
+      refresh: session.refreshToken,
+    );
+    resetUserScopedProviders(ref);
+    state = AsyncData(AuthState.authenticated(session.user));
+  }
+
+  /// Firebase Phone Auth registration — creates the account and signs the
+  /// user in. Throws [ApiException] on failure (duplicate phone/email,
+  /// invalid token).
+  Future<void> confirmRegisterWithFirebase({
+    required String fullName,
+    required String phone,
+    String? email,
+    required String pin,
+    required String firebaseIdToken,
+  }) async {
+    final session = await _repo.confirmRegisterWithFirebase(
+      fullName: fullName,
+      phone: phone,
+      email: email,
+      pin: pin,
+      firebaseIdToken: firebaseIdToken,
     );
     await _tokens.save(
       access: session.accessToken,
@@ -193,6 +219,14 @@ class AuthController extends AsyncNotifier<AuthState> {
       documentBackUrl: documentBackUrl,
       selfieUrl: selfieUrl,
     );
+    state = AsyncData(AuthState.authenticated(user));
+  }
+
+  /// Submit a Firebase Phone Auth ID token for server-side verification;
+  /// updates the session user (`phoneVerified` now true) on success. Throws
+  /// [ApiException] on failure (e.g. the phone is already linked elsewhere).
+  Future<void> verifyPhoneWithFirebase(String idToken) async {
+    final user = await _repo.verifyPhoneWithFirebase(idToken: idToken);
     state = AsyncData(AuthState.authenticated(user));
   }
 

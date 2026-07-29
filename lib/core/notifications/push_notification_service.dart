@@ -35,6 +35,10 @@ class PushNotificationService {
   final FlutterLocalNotificationsPlugin _local =
       FlutterLocalNotificationsPlugin();
   final _tapController = StreamController<(String, String?)>.broadcast();
+  final _withdrawalTapController =
+      StreamController<(String, String?)>.broadcast();
+  final _supportTicketTapController =
+      StreamController<(String, String?)>.broadcast();
 
   /// Called with a real, non-empty device token whenever one becomes
   /// available (initial fetch or a refresh) — the actual `POST
@@ -69,6 +73,20 @@ class PushNotificationService {
   /// navigating; the payload is never trusted as data, `screen` is only ever
   /// used to pick which real, re-fetched screen to open.
   Stream<(String, String?)> get transactionTaps => _tapController.stream;
+
+  /// Same contract as [transactionTaps], for a withdrawal-lifecycle push
+  /// instead (withdrawal_under_review/approved/paid/rejected/failed — see
+  /// pushMessages.ts on the backend). A withdrawal payload never carries a
+  /// transactionId, so without this stream those taps had nowhere to go —
+  /// [transactionTaps] only ever fires when transactionId is non-empty.
+  Stream<(String, String?)> get withdrawalTaps =>
+      _withdrawalTapController.stream;
+
+  /// Same contract as [transactionTaps]/[withdrawalTaps], for a
+  /// support-ticket-replied push (a ticket payload carries `ticketId`,
+  /// never a transactionId/withdrawalId).
+  Stream<(String, String?)> get supportTicketTaps =>
+      _supportTicketTapController.stream;
 
   /// True once [initializeFirebase] actually succeeded. Every other method
   /// on this class no-ops when false instead of throwing.
@@ -129,15 +147,27 @@ class PushNotificationService {
       onDidReceiveNotificationResponse: (response) {
         final payload = response.payload;
         if (payload == null || payload.isEmpty) return;
-        // Encoded as "transactionId|screen" by _onForegroundMessage below —
-        // flutter_local_notifications only carries a single string payload.
-        final parts = payload.split('|');
+        // Encoded as "tx:<id>|<screen>" or "wd:<id>|<screen>" by
+        // _onForegroundMessage below — flutter_local_notifications only
+        // carries a single string payload, so the type prefix is what lets
+        // this tell a transaction tap from a withdrawal tap apart.
+        final typeSplit = payload.indexOf(':');
+        if (typeSplit < 0) return;
+        final type = payload.substring(0, typeSplit);
+        final rest = payload.substring(typeSplit + 1);
+        final parts = rest.split('|');
         final id = parts.isNotEmpty ? parts[0] : '';
         if (id.isEmpty) return;
         final screen = parts.length > 1 && parts[1].isNotEmpty
             ? parts[1]
             : null;
-        _tapController.add((id, screen));
+        if (type == 'wd') {
+          _withdrawalTapController.add((id, screen));
+        } else if (type == 'sp') {
+          _supportTicketTapController.add((id, screen));
+        } else {
+          _tapController.add((id, screen));
+        }
       },
     );
     await _local
@@ -183,6 +213,8 @@ class PushNotificationService {
     final notification = message.notification;
     if (notification == null) return;
     final transactionId = message.data['transactionId'] as String?;
+    final withdrawalId = message.data['withdrawalId'] as String?;
+    final ticketId = message.data['ticketId'] as String?;
     final screen = message.data['screen'] as String?;
     final id =
         (message.messageId ?? notification.hashCode.toString()).hashCode &
@@ -201,10 +233,17 @@ class PushNotificationService {
         ),
         iOS: const DarwinNotificationDetails(),
       ),
-      // Encoded as "transactionId|screen" — decoded in
-      // onDidReceiveNotificationResponse above (a single string is all this
-      // plugin's payload supports).
-      payload: transactionId == null ? null : '$transactionId|${screen ?? ''}',
+      // Encoded as "tx:<id>|<screen>" / "wd:<id>|<screen>" / "sp:<id>|<screen>"
+      // — decoded in onDidReceiveNotificationResponse above (a single string
+      // is all this plugin's payload supports). transactionId takes priority
+      // in the rare case a payload somehow carried more than one.
+      payload: transactionId != null && transactionId.isNotEmpty
+          ? 'tx:$transactionId|${screen ?? ''}'
+          : withdrawalId != null && withdrawalId.isNotEmpty
+          ? 'wd:$withdrawalId|${screen ?? ''}'
+          : ticketId != null && ticketId.isNotEmpty
+          ? 'sp:$ticketId|${screen ?? ''}'
+          : null,
     );
   }
 
@@ -212,6 +251,22 @@ class PushNotificationService {
     final transactionId = message.data['transactionId'] as String?;
     if (transactionId != null && transactionId.isNotEmpty) {
       _tapController.add((transactionId, message.data['screen'] as String?));
+      return;
+    }
+    final withdrawalId = message.data['withdrawalId'] as String?;
+    if (withdrawalId != null && withdrawalId.isNotEmpty) {
+      _withdrawalTapController.add((
+        withdrawalId,
+        message.data['screen'] as String?,
+      ));
+      return;
+    }
+    final ticketId = message.data['ticketId'] as String?;
+    if (ticketId != null && ticketId.isNotEmpty) {
+      _supportTicketTapController.add((
+        ticketId,
+        message.data['screen'] as String?,
+      ));
     }
   }
 
@@ -233,5 +288,7 @@ class PushNotificationService {
 
   void dispose() {
     _tapController.close();
+    _withdrawalTapController.close();
+    _supportTicketTapController.close();
   }
 }

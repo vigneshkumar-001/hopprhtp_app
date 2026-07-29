@@ -182,6 +182,14 @@ class TransactionRepository {
     (d) => ApiTransaction.fromJson(asMap(d)),
   );
 
+  /// Seller-only: extends the buyer's payment review link/code without
+  /// recreating the transaction (same code, fresh expiresAt) — see backend
+  /// transactionService.renewPaymentLinkAsSeller.
+  Future<ApiTransaction> renewPaymentLink(String id) => apiCall(
+    () => _dio.patch('/transactions/$id/renew-payment-link'),
+    (d) => ApiTransaction.fromJson(asMap(asMap(d)['transaction'])),
+  );
+
   /// Create a transaction (seller). [body] follows the create schema:
   /// `{ consignments:[{product, amountNaira, buyerContact, dispatchPhotoUrl?,
   /// waybillImageUrl?}], platformFeePayer, dispatcherMode, deliveryFeeNaira?,

@@ -16,16 +16,25 @@ class SupportRepository {
       );
 
   /// Opens a support request and returns it (with its `SUP-xxxx` code).
+  /// [transactionId]/[withdrawalId]/[attachmentUrl] are all optional context
+  /// — ownership of the transaction/withdrawal is re-verified server-side,
+  /// never trusted just because the app sent an id.
   Future<SupportTicket> createTicket({
     required String category,
     required String subject,
     required String message,
+    String? transactionId,
+    String? withdrawalId,
+    String? attachmentUrl,
   }) =>
       apiCall(
         () => _dio.post('/support/tickets', data: {
           'category': category,
           'subject': subject,
           'message': message,
+          'transactionId': ?transactionId,
+          'withdrawalId': ?withdrawalId,
+          'attachmentUrl': ?attachmentUrl,
         }),
         (d) => SupportTicket.fromJson(asMap(d)),
       );

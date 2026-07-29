@@ -13,9 +13,11 @@ import 'data/app_state.dart';
 import 'data/models/models.dart';
 import 'features/auth/application/auth_controller.dart';
 import 'features/auth/auth_gate.dart';
+import 'features/profile/support_ticket_form_screen.dart';
 import 'features/transaction/application/transactions_provider.dart';
 import 'features/transaction/package_tracking_screen.dart';
 import 'features/transaction/transaction_detail_screen.dart';
+import 'features/wallet/withdrawal_history_screen.dart';
 import 'widgets/theme_reveal.dart';
 
 /// Root widget. Owns the single [AppState] and shares it through [AppScope].
@@ -47,12 +49,21 @@ class _HopprAppState extends ConsumerState<HopprApp>
   /// A notification was tapped — see [PushNotificationService.transactionTaps].
   StreamSubscription<(String, String?)>? _pushTapSub;
 
+  /// A withdrawal-lifecycle notification was tapped — see
+  /// [PushNotificationService.withdrawalTaps].
+  StreamSubscription<(String, String?)>? _pushWithdrawalTapSub;
+
+  /// A support-ticket-replied notification was tapped — see
+  /// [PushNotificationService.supportTicketTaps].
+  StreamSubscription<(String, String?)>? _pushSupportTicketTapSub;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(googleApiKeyProvider.future);
+      ref.read(feeSettingsProvider.future);
     });
     _txEventsSub = ref.read(socketServiceProvider).events.listen((event) {
       AppLogger.debug(
@@ -68,6 +79,12 @@ class _HopprAppState extends ConsumerState<HopprApp>
     final push = ref.read(pushNotificationServiceProvider);
     push.init();
     _pushTapSub = push.transactionTaps.listen(_onPushTransactionTap);
+    _pushWithdrawalTapSub = push.withdrawalTaps.listen(
+      _onPushWithdrawalTap,
+    );
+    _pushSupportTicketTapSub = push.supportTicketTaps.listen(
+      _onPushSupportTicketTap,
+    );
   }
 
   @override
@@ -75,6 +92,8 @@ class _HopprAppState extends ConsumerState<HopprApp>
     WidgetsBinding.instance.removeObserver(this);
     _txEventsSub?.cancel();
     _pushTapSub?.cancel();
+    _pushWithdrawalTapSub?.cancel();
+    _pushSupportTicketTapSub?.cancel();
     _state.dispose();
     super.dispose();
   }
@@ -108,6 +127,34 @@ class _HopprAppState extends ConsumerState<HopprApp>
     } catch (e) {
       AppLogger.debug('[push] could not open transaction $transactionId: $e');
     }
+  }
+
+  /// Opens Withdrawal History for a tapped withdrawal-lifecycle notification
+  /// (under review/approved/paid/rejected/failed). The payload's
+  /// withdrawalId is never trusted as data — it's only used so
+  /// [WithdrawalHistoryScreen] can auto-open that specific request's detail
+  /// sheet once it has fetched the real, current list from the backend.
+  void _onPushWithdrawalTap((String, String?) tap) {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) return;
+    final (withdrawalId, _) = tap;
+    navigator.push(
+      AppNav.route(
+        WithdrawalHistoryScreen(
+          openWithdrawalId: withdrawalId.isEmpty ? null : withdrawalId,
+        ),
+      ),
+    );
+  }
+
+  /// Opens the support form/tracking screen for a tapped "support replied"
+  /// notification — no per-ticket detail screen exists yet, and "My support
+  /// requests" there already shows real, freshly-fetched status for every
+  /// ticket (including the admin's reply).
+  void _onPushSupportTicketTap((String, String?) tap) {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) return;
+    navigator.push(AppNav.route(const SupportTicketFormScreen()));
   }
 
   /// Self-heal on resume: a socket that silently died while backgrounded

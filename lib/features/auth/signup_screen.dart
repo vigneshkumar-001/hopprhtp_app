@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/data/countries.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/network/connectivity.dart';
 import '../../core/network/error_messages.dart';
@@ -17,13 +19,16 @@ import '../../widgets/app_scaffold.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/boxed_code_input.dart';
 import '../../widgets/common.dart';
+import '../../widgets/country_picker_sheet.dart';
 import '../../widgets/feedback/app_snackbar.dart';
 import '../profile/identity_verification_screen.dart';
 import 'application/auth_controller.dart';
 import 'signin_screen.dart';
 
 /// Multi-step sign-up wizard (4 steps). Step 1 matches the mockup exactly;
-/// the remaining steps (phone OTP, set PIN, done) complete the flow.
+/// the remaining steps (phone OTP, set PIN, done) complete the flow. Phone
+/// verification is a backend-generated OTP delivered over Termii — see
+/// `AuthController.requestOtp`/`verifyOtp`/`confirmRegister`.
 class SignUpScreen extends ConsumerStatefulWidget {
   const SignUpScreen({super.key});
 
@@ -37,15 +42,20 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   int _step = 0; // 0-based
   bool _busy = false;
 
-  // Resend cooldown (mirrors the server's OTP_RESEND_COOLDOWN_SECONDS).
-  static const int _resendCooldown = 30;
   Timer? _resendTimer;
   int _resendIn = 0;
+  // Whether the Admin Panel currently has Test Mode on for phone
+  // verification (see VerificationSettingsPanel), and the admin-configured
+  // code to enter in that case — only ever drives a dev-only hint below,
+  // never bypasses the real verify call.
+  bool _testMode = false;
+  String? _testCode;
 
   // Step 1
   final _name = TextEditingController();
   final _phone = TextEditingController();
   final _email = TextEditingController();
+  Country _phoneCountry = countryByIso2(kDefaultCountryIso2) ?? kCountries.first;
 
   // Step 2 (OTP, 6 digits) & Step 3 (PIN, 6 digits)
   final _otp = TextEditingController();
@@ -122,10 +132,11 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
 
   void _advance() => _goToStep(_step + 1);
 
-  /// Starts/restarts the 30s resend countdown shown on the Verify step.
-  void _startResendCountdown() {
+  /// Starts/restarts the resend countdown shown on the Verify step, using
+  /// the cooldown the backend actually enforced.
+  void _startResendCountdown(int seconds) {
     _resendTimer?.cancel();
-    setState(() => _resendIn = _resendCooldown);
+    setState(() => _resendIn = seconds);
     _resendTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) {
         t.cancel();
@@ -136,13 +147,39 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
     });
   }
 
+  Future<void> _pickPhoneCountry() async {
+    final c = await showCountryPicker(context, selectedIso2: _phoneCountry.iso2);
+    if (c != null) setState(() => _phoneCountry = c);
+  }
+
+  /// E.164-ish phone sent to the backend. A Google-picked number often already
+  /// arrives with a "+" country code — used as-is in that case; otherwise
+  /// the selected country's dial code is prepended to the typed digits.
+  String _buildE164Phone() {
+    final raw = _phone.text.trim();
+    if (raw.startsWith('+')) return raw.replaceAll(RegExp(r'[\s()-]'), '');
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    return '${_phoneCountry.dialCode}$digits';
+  }
+
+  /// Maps a backend OTP-verification failure to the exact copy this screen
+  /// requires, falling back to the generic [ApiException.userMessage] for
+  /// anything else (rate-limited, network, etc.).
+  String _otpErrorMessage(ApiException e) {
+    final m = e.message.toLowerCase();
+    if (m.contains('expired')) return 'Verification code expired.';
+    if (m.contains('incorrect')) return 'Verification code is incorrect.';
+    return e.userMessage;
+  }
+
   Future<void> _next() async {
     FocusScope.of(context).unfocus();
     if (_busy) return;
     final notifier = ref.read(authControllerProvider.notifier);
 
     switch (_step) {
-      // Step 1 → request an OTP for the entered phone, then advance.
+      // Step 1 → request a backend-generated OTP for the entered number,
+      // delivered over Termii (see AuthRepository.requestOtp).
       case 0:
         if (!ref.isOnline) {
           AppSnackbar.error(
@@ -151,24 +188,40 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
           );
           return;
         }
+        final rawDigits = _phone.text.trim();
+        if (rawDigits.startsWith('+') &&
+            rawDigits.replaceAll(RegExp(r'\D'), '').length < 8) {
+          AppSnackbar.error(context, 'Please include country code.');
+          return;
+        }
+        final e164Phone = _buildE164Phone();
+        if (e164Phone.replaceAll(RegExp(r'\D'), '').length < 8) {
+          AppSnackbar.error(context, 'Invalid phone number.');
+          return;
+        }
         setState(() => _busy = true);
         try {
           final email = _email.text.trim();
-          await notifier.requestOtp(
+          final result = await notifier.requestOtp(
             fullName: _name.text.trim(),
-            phone: _phone.text.trim(),
+            phone: e164Phone,
             email: email.isEmpty ? null : email,
           );
           if (!mounted) return;
+          setState(() {
+            _testMode = result.testMode;
+            _testCode = result.testCode;
+          });
           _advance();
-          _startResendCountdown();
+          _startResendCountdown(result.cooldownSeconds);
         } on ApiException catch (e) {
           if (mounted) AppSnackbar.error(context, e.userMessage);
         } finally {
           if (mounted) setState(() => _busy = false);
         }
 
-      // Step 2 → verify the code now (123456 in dev; the real OTP when live).
+      // Step 2 → verify the OTP against the backend. Does not yet create the
+      // account — that happens once the PIN is set at step 3.
       case 1:
         if (!ref.isOnline) {
           AppSnackbar.error(
@@ -179,25 +232,20 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
         }
         setState(() => _busy = true);
         try {
-          await ref
-              .read(authControllerProvider.notifier)
-              .verifyOtp(phone: _phone.text.trim(), otp: _otp.text.trim());
+          await notifier.verifyOtp(
+            phone: _buildE164Phone(),
+            otp: _otp.text.trim(),
+          );
           if (mounted) _advance();
         } on ApiException catch (e) {
-          if (!mounted) return;
-          if (e.message.toLowerCase().contains('verification code')) {
-            AppSnackbar.error(
-              context,
-              'The verification code entered is incorrect.',
-            );
-          } else {
-            AppSnackbar.error(context, e.userMessage);
-          }
+          if (mounted) AppSnackbar.error(context, _otpErrorMessage(e));
         } finally {
           if (mounted) setState(() => _busy = false);
         }
 
-      // Step 3 → confirm registration (verifies OTP + sets PIN), then show done.
+      // Step 3 → create the account: the OTP (re-checked server-side) plus
+      // the PIN just set. fullName/email were already captured server-side
+      // as part of the OTP challenge's context at step 1.
       case 2:
         if (!ref.isOnline) {
           AppSnackbar.error(
@@ -209,7 +257,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
         setState(() => _busy = true);
         try {
           await notifier.confirmRegister(
-            phone: _phone.text.trim(),
+            phone: _buildE164Phone(),
             otp: _otp.text.trim(),
             pin: _pin.text,
           );
@@ -217,16 +265,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
           if (mounted) _advance();
         } on ApiException catch (e) {
           if (!mounted) return;
-          // A wrong code bounces back to the Verify step with a clear message.
-          if (e.message.toLowerCase().contains('verification code')) {
-            _goToStep(1);
-            AppSnackbar.error(
-              context,
-              'The verification code entered is incorrect.',
-            );
-          } else {
-            AppSnackbar.error(context, e.userMessage);
-          }
+          AppSnackbar.error(context, _otpErrorMessage(e));
         } finally {
           if (mounted) setState(() => _busy = false);
         }
@@ -237,7 +276,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
     }
   }
 
-  /// Re-request the OTP from the verify step.
+  /// Re-request the OTP from the verify step (server enforces the cooldown).
   Future<void> _resendOtp() async {
     if (_busy || _resendIn > 0) return;
     if (!ref.isOnline) {
@@ -247,16 +286,30 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
       );
       return;
     }
+    final notifier = ref.read(authControllerProvider.notifier);
     try {
-      await ref
-          .read(authControllerProvider.notifier)
-          .resendOtp(phone: _phone.text.trim());
+      final result = await notifier.resendOtp(phone: _buildE164Phone());
       if (!mounted) return;
-      _startResendCountdown();
+      setState(() {
+        _testMode = result.testMode;
+        _testCode = result.testCode;
+      });
+      _startResendCountdown(result.cooldownSeconds);
       AppSnackbar.success(context, 'A new code has been sent.');
     } on ApiException catch (e) {
-      if (mounted) AppSnackbar.error(context, e.userMessage);
+      if (mounted) AppSnackbar.error(context, _otpErrorMessage(e));
     }
+  }
+
+  /// Lets the user back out of the OTP step to fix a mistyped number.
+  /// Cancels the resend countdown and clears the code field — both are
+  /// meaningless once the phone number changes, since a new OTP will need
+  /// to be requested for the corrected number.
+  void _changePhone() {
+    _resendTimer?.cancel();
+    setState(() => _resendIn = 0);
+    _otp.clear();
+    _goToStep(0);
   }
 
   @override
@@ -315,13 +368,22 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                   controller: _pager,
                   physics: const NeverScrollableScrollPhysics(),
                   children: [
-                    _StepAccount(name: _name, phone: _phone, email: _email),
+                    _StepAccount(
+                      name: _name,
+                      phone: _phone,
+                      email: _email,
+                      country: _phoneCountry,
+                      onPickCountry: _pickPhoneCountry,
+                    ),
                     _StepOtp(
                       otp: _otp,
-                      phone: _phone.text,
+                      phone: _buildE164Phone(),
                       onResend: _resendOtp,
+                      onChangePhone: _changePhone,
                       resendIn: _resendIn,
                       focusNode: _otpFocus,
+                      testMode: _testMode,
+                      testCode: _testCode,
                     ),
                     _StepPin(pin: _pin, focusNode: _pinFocus),
                     _StepDone(
@@ -395,11 +457,15 @@ class _StepAccount extends StatelessWidget {
     required this.name,
     required this.phone,
     required this.email,
+    required this.country,
+    required this.onPickCountry,
   });
 
   final TextEditingController name;
   final TextEditingController phone;
   final TextEditingController email;
+  final Country country;
+  final VoidCallback onPickCountry;
 
   @override
   Widget build(BuildContext context) {
@@ -427,27 +493,39 @@ class _StepAccount extends StatelessWidget {
           autofocus: true,
         ),
         const SizedBox(height: AppSizes.lg),
-        AppTextField(
-          label: 'Phone number',
-          hint: '+234 800 000 0000',
-          icon: Icons.phone_outlined,
-          controller: phone,
-          keyboardType: TextInputType.phone,
-          textInputAction: TextInputAction.next,
-          autofillHints: const [AutofillHints.telephoneNumber],
-          // Field is freely editable (tap → keyboard). The Google number
-          // picker is an opt-in trailing action, so cancelling it never blocks
-          // manual entry.
-          trailing: _GooglePickButton(
-            onPicked: (n) {
-              phone.text = n;
-              phone.selection = TextSelection.collapsed(offset: n.length);
-            },
-          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            SizedBox(
+              width: 96,
+              child: _CountryPickerField(country: country, onTap: onPickCountry),
+            ),
+            const SizedBox(width: AppSizes.sm),
+            Expanded(
+              child: AppTextField(
+                label: 'Phone number',
+                hint: '800 000 0000',
+                icon: Icons.phone_outlined,
+                controller: phone,
+                keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.next,
+                autofillHints: const [AutofillHints.telephoneNumber],
+                // Field is freely editable (tap → keyboard). The Google
+                // number picker is an opt-in trailing action, so cancelling
+                // it never blocks manual entry.
+                trailing: _GooglePickButton(
+                  onPicked: (n) {
+                    phone.text = n;
+                    phone.selection = TextSelection.collapsed(offset: n.length);
+                  },
+                ),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: AppSizes.xs),
         Text(
-          'Type your number, or tap Google to pick one from your phone.',
+          'We\'ll text a verification code to this number.',
           style: AppText.caption.copyWith(color: AppColors.textTertiary),
         ),
         const SizedBox(height: AppSizes.lg),
@@ -471,14 +549,20 @@ class _StepOtp extends StatelessWidget {
     required this.otp,
     required this.phone,
     required this.onResend,
+    required this.onChangePhone,
     required this.resendIn,
+    required this.testMode,
+    this.testCode,
     this.focusNode,
   });
   final TextEditingController otp;
   final String phone;
   final VoidCallback onResend;
+  final VoidCallback onChangePhone;
   final int resendIn;
   final FocusNode? focusNode;
+  final bool testMode;
+  final String? testCode;
 
   @override
   Widget build(BuildContext context) {
@@ -528,8 +612,53 @@ class _StepOtp extends StatelessWidget {
               ),
           ],
         ),
+        const SizedBox(height: AppSizes.sm),
+        GestureDetector(
+          onTap: onChangePhone,
+          child: Text(
+            'Change phone number',
+            style: AppText.body.copyWith(
+              color: AppColors.textSecondary,
+              decoration: TextDecoration.underline,
+            ),
+          ),
+        ),
         const SizedBox(height: AppSizes.lg),
         const _DemoHint('6-digit code · check your SMS'),
+        // Dev/internal-build-only — the Admin Panel's Test Mode is meant for
+        // QA, so this never renders in a release build regardless of what
+        // the backend reports, even if a production server is left in test
+        // mode by mistake.
+        if (testMode && !kReleaseMode) ...[
+          const SizedBox(height: AppSizes.md),
+          Container(
+            padding: const EdgeInsets.all(AppSizes.md),
+            decoration: BoxDecoration(
+              color: AppColors.warning.withValues(alpha: 0.12),
+              borderRadius: AppRadii.md,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.science_outlined,
+                  size: 18,
+                  color: AppColors.warning,
+                ),
+                const SizedBox(width: AppSizes.sm),
+                Expanded(
+                  child: Text(
+                    'Test mode enabled. Use ${testCode ?? '123456'}.',
+                    style: AppText.caption.copyWith(
+                      color: AppColors.warning,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -673,6 +802,51 @@ class _StepDone extends StatelessWidget {
           icon: Icons.verified_outlined,
           variant: AppButtonVariant.outline,
           onPressed: () => _verifyNow(context),
+        ),
+      ],
+    );
+  }
+}
+
+/// Country dial-code picker beside the phone field — matches the field's own
+/// label-above-box structure (AppTextField) so the two sit flush together.
+class _CountryPickerField extends StatelessWidget {
+  const _CountryPickerField({required this.country, required this.onTap});
+  final Country country;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Code', style: AppText.label),
+        const SizedBox(height: AppSizes.sm),
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            height: AppSizes.fieldHeight,
+            padding: const EdgeInsets.symmetric(horizontal: AppSizes.sm),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: AppRadii.md,
+              border: Border.all(color: AppColors.border, width: 1.2),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(country.flag, style: const TextStyle(fontSize: 18)),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    country.dialCode,
+                    style: AppText.bodyStrong,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ],
     );

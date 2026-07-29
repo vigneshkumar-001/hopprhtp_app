@@ -2,8 +2,10 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logger/logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../data/models/models.dart';
 import '../data/repositories/auth_repository.dart';
 import '../data/repositories/dispute_repository.dart';
+import '../data/repositories/fee_settings_repository.dart';
 import '../data/repositories/merchant_repository.dart';
 import '../data/repositories/public_config_repository.dart';
 import '../data/dto/merchant_dto.dart';
@@ -21,6 +23,7 @@ import 'network/auth_interceptor.dart';
 import 'network/logging_interceptor.dart';
 import 'notifications/push_notification_service.dart';
 import 'storage/token_store.dart';
+import 'utils/delivery_fee_estimator.dart';
 
 // Re-export so feature files can import a single `core/providers.dart`.
 export 'storage/token_store.dart' show TokenStore;
@@ -159,6 +162,46 @@ final googleApiKeyProvider = FutureProvider<String?>((ref) async {
   return cached;
 });
 
+final feeSettingsRepositoryProvider = Provider<FeeSettingsRepository>(
+  (ref) => FeeSettingsRepository(ref.watch(dioProvider)),
+);
+
+final _feeSettingsLog = Logger(printer: PrettyPrinter(methodCount: 0));
+
+/// Fetched once per app session (see `HopprApp.initState`) and applied
+/// straight onto the [DeliveryFeeEstimator] / [PaymentDraft] statics that
+/// Payment Setup previews with, so an admin's Fees & Charges change is
+/// reflected the next time the app opens instead of the shipped defaults
+/// silently drifting from what the backend actually charges. Display-only:
+/// the backend always recomputes and is the authoritative figure once a
+/// transaction is created. Failures are swallowed — the shipped defaults
+/// (already identical to the backend's own defaults) are a safe fallback.
+final feeSettingsProvider = FutureProvider<PublicFeeSettings?>((ref) async {
+  try {
+    final settings = await ref.read(feeSettingsRepositoryProvider).fetch();
+    DeliveryFeeEstimator.applyRemoteConfig(
+      baseFee: settings.deliveryBaseFee,
+      perKmFee: settings.deliveryPerKmFee,
+      freeWeightKg: settings.deliveryFreeWeightKg,
+      extraWeightFeePerKg: settings.deliveryExtraWeightFee,
+      minimumFee: settings.deliveryMinimumFee,
+    );
+    if (settings.platformFeeMode == 'percentage') {
+      PaymentDraft.trustRate = settings.platformFeePercentage / 100;
+    } else {
+      _feeSettingsLog.w(
+        'Platform fee mode is "${settings.platformFeeMode}" — local '
+        'preview only supports percentage mode, leaving trustRate as-is.',
+      );
+    }
+    _feeSettingsLog.i('Fee settings preview synced from backend.');
+    return settings;
+  } catch (_) {
+    _feeSettingsLog.w('Fee settings fetch failed, keeping shipped defaults.');
+    return null;
+  }
+});
+
 final notificationRepositoryProvider = Provider<NotificationRepository>(
   (ref) => NotificationRepository(ref.watch(dioProvider)),
 );
@@ -181,6 +224,14 @@ final walletLedgerProvider = FutureProvider.autoDispose
           .ledger(page: 1, perPage: 30, from: filter.from, to: filter.to),
     );
 
+/// This user's withdrawal (payout) requests — auto-disposed so it re-fetches
+/// each time the Wallet screen is opened; also invalidated after creating a
+/// new request and on withdrawal socket events (see [SocketService]).
+final walletWithdrawalsProvider =
+    FutureProvider.autoDispose<List<WithdrawalRequest>>(
+      (ref) => ref.watch(walletRepositoryProvider).withdrawals(),
+    );
+
 /// Unread-notification count for the home bell badge. Invalidate it after the
 /// notifications screen marks items read so the badge updates.
 final unreadNotificationsProvider = FutureProvider<int>(
@@ -201,5 +252,6 @@ void resetUserScopedProviders(Ref ref) {
   ref.invalidate(merchantProfileProvider);
   ref.invalidate(walletBalanceProvider);
   ref.invalidate(walletLedgerProvider);
+  ref.invalidate(walletWithdrawalsProvider);
   ref.invalidate(unreadNotificationsProvider);
 }

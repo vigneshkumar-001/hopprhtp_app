@@ -289,7 +289,14 @@ class PaymentDraft {
   /// transaction actually exists.
   PlatformFeePayer platformFeePayer;
 
-  static const double trustRate = 0.015;
+  // Seeded with the backend's shipped default (see backend
+  // /admin/feeSettings.service.ts defaultPlatformFeeSettings()) and
+  // overwritten once GET /fee-settings/public loads (see
+  // `feeSettingsProvider`) — only when the admin's fee mode is
+  // 'percentage', since this preview has no field for a fixed-fee
+  // component. Not `const` for that reason; still display-only, as the
+  // backend recomputes and is the authoritative source at creation time.
+  static double trustRate = 0.015;
 
   double get trustFull => _round2(itemSubtotal * trustRate);
 

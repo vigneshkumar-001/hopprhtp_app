@@ -145,6 +145,128 @@ class WalletLedgerEntry {
       );
 }
 
+/// One withdrawal (payout) request and its admin-review status — from
+/// `GET /wallet/withdrawals`. Deliberately a narrower field set than the
+/// admin panel's own withdrawal row: no admin-only fields (reviewedBy,
+/// payoutAccountId, metadata), and the account number is always pre-masked
+/// by the backend, never the full number.
+class WithdrawalRequest {
+  const WithdrawalRequest({
+    required this.id,
+    required this.amountKobo,
+    required this.currency,
+    required this.status,
+    required this.requestedAt,
+    required this.updatedAt,
+    this.reviewedAt,
+    this.approvedAt,
+    this.processingAt,
+    this.paidAt,
+    this.rejectedAt,
+    this.failedAt,
+    this.cancelledAt,
+    this.rejectionReason,
+    this.failureReason,
+    this.adminNote,
+    required this.payoutAccountMasked,
+    required this.bankName,
+    this.accountHolderName,
+    this.payoutMethod,
+  });
+
+  final String id;
+  final int amountKobo;
+  final String currency;
+
+  /// pending | under_review | approved | processing | paid | rejected |
+  /// failed | cancelled — the same WithdrawalStatus enum the backend model
+  /// uses; never re-derived client-side.
+  final String status;
+  final DateTime? requestedAt;
+  final DateTime? updatedAt;
+
+  /// Real per-stage timestamps, null until that stage is actually reached —
+  /// power the Withdrawal History detail sheet's timeline. Never fabricated:
+  /// a step with a null timestamp simply hasn't happened yet.
+  final DateTime? reviewedAt;
+  final DateTime? approvedAt;
+  final DateTime? processingAt;
+  final DateTime? paidAt;
+  final DateTime? rejectedAt;
+  final DateTime? failedAt;
+  final DateTime? cancelledAt;
+
+  final String? rejectionReason;
+  final String? failureReason;
+
+  /// Admin's payment note, only ever set once paid — never the admin's
+  /// internal review/audit notes.
+  final String? adminNote;
+  final String payoutAccountMasked;
+  final String bankName;
+  final String? accountHolderName;
+
+  /// Always 'bank_transfer' today — the only payout method this platform
+  /// supports. Null only guards a response predating this field.
+  final String? payoutMethod;
+
+  double get amountNaira => amountKobo / 100;
+
+  bool get isRejected => status == 'rejected';
+  bool get isFailed => status == 'failed';
+  bool get isPaid => status == 'paid';
+  bool get isTerminal => isRejected || isFailed || isPaid || status == 'cancelled';
+
+  /// Last 6 characters of the real backend id, uppercased — a short,
+  /// presentational reference (matching the app's "HTP-XXXX" style
+  /// transaction codes) rather than showing the full Mongo ObjectId.
+  String get shortId =>
+      id.length >= 6 ? id.substring(id.length - 6).toUpperCase() : id.toUpperCase();
+
+  String get payoutMethodLabel => switch (payoutMethod) {
+    'bank_transfer' || null => 'Bank Transfer',
+    _ => payoutMethod!,
+  };
+
+  /// Presentational only — matches wallet_screen.dart's own per-status
+  /// labels so "Pending" etc. never drifts between the two places it's shown.
+  String get statusLabel => switch (status) {
+    'pending' => 'Pending',
+    'under_review' => 'Under Review',
+    'approved' => 'Approved',
+    'processing' => 'Processing',
+    'paid' => 'Paid',
+    'rejected' => 'Rejected',
+    'failed' => 'Failed',
+    'cancelled' => 'Cancelled',
+    _ => status,
+  };
+
+  factory WithdrawalRequest.fromJson(Map<String, dynamic> m) =>
+      WithdrawalRequest(
+        id: asId(m['id'] ?? m['_id']),
+        amountKobo: asInt(m['amountKobo']),
+        currency: asString(m['currency'], 'NGN'),
+        status: asString(m['status'], 'pending'),
+        requestedAt: asDateTime(m['requestedAt']),
+        updatedAt: asDateTime(m['updatedAt']),
+        reviewedAt: asDateTime(m['reviewedAt']),
+        approvedAt: asDateTime(m['approvedAt']),
+        processingAt: asDateTime(m['processingAt']),
+        paidAt: asDateTime(m['paidAt']),
+        rejectedAt: asDateTime(m['rejectedAt']),
+        failedAt: asDateTime(m['failedAt']),
+        cancelledAt: asDateTime(m['cancelledAt']),
+        rejectionReason: asStringOrNull(m['rejectionReason']),
+        failureReason: asStringOrNull(m['failureReason']),
+        adminNote: asStringOrNull(m['adminNote']),
+        payoutAccountMasked: asString(m['payoutAccountMasked']),
+        bankName: asString(m['bankName']),
+        accountHolderName: asStringOrNull(m['accountHolderName']),
+        payoutMethod: asStringOrNull(m['payoutMethod']),
+      );
+}
+
 /// A Recent Activity date filter — Today / Yesterday / a custom range / all
 /// time. [from]/[to] are inclusive local-day bounds sent straight to the
 /// backend's `createdAt` range query; null on either side means unbounded.

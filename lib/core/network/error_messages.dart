@@ -11,6 +11,12 @@ extension ApiExceptionMessage on ApiException {
     if (isNetwork) {
       return "Can't reach our servers right now. Please check your connection and try again.";
     }
+    // Upstream (e.g. SMS/WhatsApp provider) failure — the backend already
+    // crafts a specific, actionable message for these; surface it as-is
+    // instead of the generic 5xx fallback below.
+    if (code == 'UPSTREAM_ERROR' && message.isNotEmpty) {
+      return message;
+    }
     final status = statusCode ?? 0;
     if (status >= 500 || status == 0) {
       return "We're having trouble reaching our services. Please try again shortly.";

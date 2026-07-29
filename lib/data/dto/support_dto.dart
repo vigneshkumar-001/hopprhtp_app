@@ -66,6 +66,12 @@ class SupportTicket {
     required this.message,
     required this.status,
     this.createdAt,
+    this.updatedAt,
+    this.transactionId,
+    this.withdrawalId,
+    this.attachmentUrl,
+    this.adminResponse,
+    this.respondedAt,
   });
 
   final String id;
@@ -73,8 +79,32 @@ class SupportTicket {
   final String category;
   final String subject;
   final String message;
+
+  /// open | in_progress | resolved | closed — the same real backend status
+  /// the admin panel uses; see [statusLabel] for the matching display text
+  /// rather than re-deriving it ad hoc.
   final String status;
   final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final String? transactionId;
+  final String? withdrawalId;
+  final String? attachmentUrl;
+  final String? adminResponse;
+  final DateTime? respondedAt;
+
+  /// Presentational only — 'resolved' reads as "Replied" (an admin has
+  /// responded), matching the admin panel's own status-label mapping. See
+  /// backend support.model.ts's status comment for why no 5th stored value
+  /// was added just for this.
+  String get statusLabel => switch (status) {
+    'open' => 'Open',
+    'in_progress' => 'In Review',
+    'resolved' => 'Replied',
+    'closed' => 'Closed',
+    _ => status,
+  };
+
+  bool get isClosed => status == 'closed';
 
   factory SupportTicket.fromJson(Map<String, dynamic> m) => SupportTicket(
         id: asString(m['id'] ?? m['_id']),
@@ -84,5 +114,11 @@ class SupportTicket {
         message: asString(m['message']),
         status: asString(m['status'], 'open'),
         createdAt: asDateTime(m['createdAt']),
+        updatedAt: asDateTime(m['updatedAt']),
+        transactionId: asStringOrNull(m['transactionId']),
+        withdrawalId: asStringOrNull(m['withdrawalId']),
+        attachmentUrl: asStringOrNull(m['attachmentUrl']),
+        adminResponse: asStringOrNull(m['adminResponse']),
+        respondedAt: asDateTime(m['respondedAt']),
       );
 }

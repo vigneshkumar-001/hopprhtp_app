@@ -108,6 +108,9 @@ class ApiUser {
     this.dob,
     this.phoneCountry,
     this.address,
+    this.phoneVerified = false,
+    this.phoneVerifiedAt,
+    this.phoneVerificationProvider,
     required this.trustScore,
     required this.trustCategory,
     required this.deals,
@@ -136,6 +139,13 @@ class ApiUser {
   final ProfileDob? dob;
   final String? phoneCountry; // ISO-3166 alpha-2
   final ProfileAddress? address;
+
+  /// Optional Firebase Phone Auth verification — additional to (never a
+  /// replacement for) the account's own login/session auth. Not the same
+  /// concept as [verified]/[identityStatus], which is KYC.
+  final bool phoneVerified;
+  final DateTime? phoneVerifiedAt;
+  final String? phoneVerificationProvider;
 
   final int trustScore; // 0..1000 — the Hoppr Trust Score
   final String
@@ -192,6 +202,9 @@ class ApiUser {
     dob: ProfileDob.fromJson(asMap(j['dob'])),
     phoneCountry: asStringOrNull(j['phoneCountry']),
     address: ProfileAddress.fromJson(asMap(j['address'])),
+    phoneVerified: asBool(j['phoneVerified']),
+    phoneVerifiedAt: asDateTime(j['phoneVerifiedAt']),
+    phoneVerificationProvider: asStringOrNull(j['phoneVerificationProvider']),
     trustScore: asInt(j['trustScore'], 600),
     trustCategory: asString(j['trustCategory'], 'Fair'),
     deals: asInt(j['deals']),

@@ -95,6 +95,10 @@ class FakeAuthRepository implements AuthRepository {
   }) async => kTestUser;
 
   @override
+  Future<ApiUser> verifyPhoneWithFirebase({required String idToken}) async =>
+      kTestUser;
+
+  @override
   Future<ApiUser> addPayoutAccount({
     required String bank,
     required String accountNumber,
@@ -125,14 +129,25 @@ class FakeAuthRepository implements AuthRepository {
       const AuthSession(user: kTestUser, accessToken: 'a', refreshToken: 'r');
 
   @override
-  Future<String?> requestOtp({
+  Future<AuthSession> confirmRegisterWithFirebase({
     required String fullName,
     required String phone,
     String? email,
-  }) async => '123456';
+    required String pin,
+    required String firebaseIdToken,
+  }) async =>
+      const AuthSession(user: kTestUser, accessToken: 'a', refreshToken: 'r');
 
   @override
-  Future<String?> resendOtp({required String phone}) async => '123456';
+  Future<OtpRequestResult> requestOtp({
+    required String fullName,
+    required String phone,
+    String? email,
+  }) async => (devOtp: '123456', cooldownSeconds: 30, testMode: false, testCode: null);
+
+  @override
+  Future<OtpRequestResult> resendOtp({required String phone}) async =>
+      (devOtp: '123456', cooldownSeconds: 30, testMode: false, testCode: null);
 
   @override
   Future<void> verifyOtp({required String phone, required String otp}) async {}

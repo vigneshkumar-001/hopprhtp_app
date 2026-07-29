@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/network/api_exception.dart';
 import '../../core/network/error_messages.dart';
 import '../../core/providers.dart';
+import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
@@ -11,14 +11,33 @@ import '../../core/theme/app_typography.dart';
 import '../../data/dto/support_dto.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
-import '../../widgets/app_dropdown.dart';
 import '../../widgets/app_scaffold.dart';
-import '../../widgets/app_text_field.dart';
 import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/app_snackbar.dart';
+import 'support_ticket_form_screen.dart';
 
-/// More → Help & support. Contact channels, an FAQ accordion, and a "contact
-/// us" form that opens a support ticket. Fully theme-aware (Mono / Lime).
+/// A Quick Help category — tapping one jumps straight to
+/// [SupportTicketFormScreen] with that category pre-selected, so "I have a
+/// withdrawal issue" takes one tap instead of hunting through a dropdown.
+class _QuickHelp {
+  const _QuickHelp(this.icon, this.label, this.category);
+  final IconData icon;
+  final String label;
+  final String category;
+}
+
+const _quickHelp = <_QuickHelp>[
+  _QuickHelp(Icons.payments_rounded, 'Payment Issue', 'payments'),
+  _QuickHelp(Icons.account_balance_rounded, 'Withdrawal Issue', 'withdrawal'),
+  _QuickHelp(Icons.local_shipping_rounded, 'Delivery / OTP Issue', 'transactions'),
+  _QuickHelp(Icons.gavel_rounded, 'Dispute Help', 'disputes'),
+  _QuickHelp(Icons.verified_user_rounded, 'KYC / Verification', 'verification'),
+  _QuickHelp(Icons.person_rounded, 'Account / Login', 'account'),
+];
+
+/// More → Help & support. A premium dark hero, Quick Help shortcuts, an FAQ
+/// accordion, and a single CTA into [SupportTicketFormScreen] for anything
+/// not covered above. Fully theme-aware (Mono / Lime).
 class HelpSupportScreen extends ConsumerStatefulWidget {
   const HelpSupportScreen({super.key});
 
@@ -27,25 +46,11 @@ class HelpSupportScreen extends ConsumerStatefulWidget {
 }
 
 class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
-  static const _categories = <String, String>{
-    'transactions': 'Transactions & escrow',
-    'payments': 'Payments & payouts',
-    'disputes': 'Disputes',
-    'verification': 'Verification',
-    'account': 'Account & security',
-    'other': 'Something else',
-  };
-
   late Future<SupportOverview> _future;
 
   // Tracks the error last surfaced via snackbar so a rebuild while still in
   // the same error state doesn't re-show it — only a fresh failed fetch does.
   Object? _lastNotifiedError;
-
-  final _subject = TextEditingController();
-  final _message = TextEditingController();
-  String _category = 'transactions';
-  bool _sending = false;
 
   @override
   void initState() {
@@ -53,59 +58,13 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
     _future = ref.read(supportRepositoryProvider).overview();
   }
 
-  @override
-  void dispose() {
-    _subject.dispose();
-    _message.dispose();
-    super.dispose();
-  }
-
   void _reload() => setState(() {
     _lastNotifiedError = null;
     _future = ref.read(supportRepositoryProvider).overview();
   });
 
-  void _copy(String label, String value) {
-    Clipboard.setData(ClipboardData(text: value));
-    AppSnackbar.success(context, '$label copied');
-  }
-
-  Future<void> _submit() async {
-    final subject = _subject.text.trim();
-    final message = _message.text.trim();
-    if (subject.length < 3) {
-      AppSnackbar.error(context, 'Add a short subject.');
-      return;
-    }
-    if (message.length < 10) {
-      AppSnackbar.error(
-        context,
-        'Please describe your issue (at least 10 characters).',
-      );
-      return;
-    }
-    FocusScope.of(context).unfocus();
-    setState(() => _sending = true);
-    try {
-      final ticket = await ref
-          .read(supportRepositoryProvider)
-          .createTicket(
-            category: _category,
-            subject: subject,
-            message: message,
-          );
-      if (!mounted) return;
-      _subject.clear();
-      _message.clear();
-      AppSnackbar.success(
-        context,
-        'Request sent — ref ${ticket.code}. We’ll reply by email.',
-      );
-    } on ApiException catch (e) {
-      if (mounted) AppSnackbar.error(context, e.userMessage);
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
+  void _openForm({String? category}) {
+    AppNav.push(context, SupportTicketFormScreen(initialCategory: category));
   }
 
   @override
@@ -148,155 +107,74 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: AppSizes.sm),
-        Text('How can we help?', style: AppText.h1),
-        const SizedBox(height: AppSizes.sm),
-        Text(
-          'Find a quick answer below, or message our team — we usually reply '
-          'within a few hours.',
-          style: AppText.body.copyWith(color: AppColors.textSecondary),
-        ),
+        const _SupportHero(),
         const SizedBox(height: AppSizes.xxl),
 
-        // ── Contact channels ────────────────────────────────────────────────
-        _SectionHeader(
-          icon: Icons.support_agent_rounded,
-          title: 'Get in touch',
-        ),
+        // ── Quick Help ──────────────────────────────────────────────────────
+        _SectionHeader(icon: Icons.bolt_rounded, title: 'Quick Help'),
         const SizedBox(height: AppSizes.md),
-        _ContactCard(contact: data.contact, onCopy: _copy),
+        _QuickHelpGrid(onTap: (h) => _openForm(category: h.category)),
         const SizedBox(height: AppSizes.xxl),
 
         // ── FAQ accordion ───────────────────────────────────────────────────
-        _SectionHeader(
-          icon: Icons.help_outline_rounded,
-          title: 'Popular questions',
-        ),
+        _SectionHeader(icon: Icons.help_outline_rounded, title: 'Popular questions'),
         const SizedBox(height: AppSizes.md),
         _FaqList(faqs: data.faqs),
         const SizedBox(height: AppSizes.xxl),
 
-        // ── Contact form ────────────────────────────────────────────────────
-        _SectionHeader(icon: Icons.edit_outlined, title: 'Send us a message'),
-        const SizedBox(height: AppSizes.sm),
-        Text(
-          'Can’t find it above? Tell us and we’ll reply by email.',
-          style: AppText.caption,
-        ),
-        const SizedBox(height: AppSizes.lg),
-        Text('Category', style: AppText.label),
-        const SizedBox(height: AppSizes.sm),
-        AppDropdown<String>(
-          value: _category,
-          icon: Icons.category_outlined,
-          items: [
-            for (final e in _categories.entries)
-              DropdownMenuItem(value: e.key, child: Text(e.value)),
-          ],
-          onChanged: (v) => setState(() => _category = v ?? _category),
-        ),
-        const SizedBox(height: AppSizes.lg),
-        AppTextField(
-          label: 'Subject',
-          hint: 'Brief summary',
-          controller: _subject,
-          icon: Icons.subject_rounded,
-          textInputAction: TextInputAction.next,
-        ),
-        const SizedBox(height: AppSizes.lg),
-        Text('Message', style: AppText.label),
-        const SizedBox(height: AppSizes.sm),
-        _MultilineField(controller: _message, hint: 'Tell us what’s going on…'),
-        const SizedBox(height: AppSizes.xl),
-        AppButton(
-          label: 'Send message',
-          icon: Icons.send_rounded,
-          loading: _sending,
-          accentInLime: true,
-          onPressed: _submit,
-        ),
+        // ── Still need help? ────────────────────────────────────────────────
+        _StillNeedHelpCard(onPressed: () => _openForm()),
         const SizedBox(height: AppSizes.xl),
       ],
     );
   }
 }
 
-/// Clean section header — small accent icon + title.
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.icon, required this.title});
-  final IconData icon;
-  final String title;
+/// Dark gradient hero — same brand treatment as the Wallet balance card and
+/// Profile header ([DarkCard]), just with a support-specific icon + copy
+/// instead of a money figure.
+class _SupportHero extends StatelessWidget {
+  const _SupportHero();
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: AppAccent.of(context).onAccentSoft),
-        const SizedBox(width: AppSizes.sm),
-        Text(title, style: AppText.h3),
-      ],
-    );
-  }
-}
-
-/// Card listing the support contact channels (+ hours footer). Rows copy value.
-class _ContactCard extends StatelessWidget {
-  const _ContactCard({required this.contact, required this.onCopy});
-
-  final SupportContact contact;
-  final void Function(String label, String value) onCopy;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSizes.sm,
-        vertical: AppSizes.xs,
-      ),
+    return DarkCard(
+      radius: AppRadii.xl,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _ContactRow(
-            icon: Icons.chat_bubble_outline_rounded,
-            label: 'WhatsApp',
-            value: contact.whatsapp,
-            onTap: () => onCopy('WhatsApp number', contact.whatsapp),
-          ),
-          const _RowDivider(),
-          _ContactRow(
-            icon: Icons.mail_outline_rounded,
-            label: 'Email',
-            value: contact.email,
-            onTap: () => onCopy('Email', contact.email),
-          ),
-          const _RowDivider(),
-          _ContactRow(
-            icon: Icons.call_outlined,
-            label: 'Phone',
-            value: contact.phone,
-            onTap: () => onCopy('Phone number', contact.phone),
-          ),
-          const _RowDivider(),
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSizes.sm,
-              vertical: AppSizes.md,
+          Container(
+            width: 52,
+            height: 52,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withValues(alpha: 0.12),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
             ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.schedule_rounded,
-                  size: 16,
-                  color: AppColors.textTertiary,
-                ),
-                const SizedBox(width: AppSizes.sm),
-                Expanded(
-                  child: Text(
-                    contact.hours,
-                    style: AppText.caption.copyWith(
-                      color: AppColors.textTertiary,
-                    ),
-                  ),
-                ),
-              ],
+            child: const Icon(Icons.support_agent_rounded, color: Colors.white, size: 26),
+          ),
+          const SizedBox(height: AppSizes.lg),
+          const Text(
+            'How can we help?',
+            style: TextStyle(
+              fontFamily: AppText.fontFamily,
+              fontSize: 26,
+              height: 1.1,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.6,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Get help with payments, delivery, withdrawals, disputes, or account verification.',
+            style: TextStyle(
+              fontFamily: AppText.fontFamily,
+              fontSize: 14,
+              height: 1.45,
+              fontWeight: FontWeight.w400,
+              color: Colors.white.withValues(alpha: 0.72),
             ),
           ),
         ],
@@ -305,59 +183,83 @@ class _ContactCard extends StatelessWidget {
   }
 }
 
-class _ContactRow extends StatelessWidget {
-  const _ContactRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.onTap,
-  });
+/// 2-column grid of quick-help category shortcuts — a solid accent icon chip
+/// (the app's own theme colour, not an invented palette) and a tactile
+/// press-scale (matching [AppButton]'s press feel).
+class _QuickHelpGrid extends StatelessWidget {
+  const _QuickHelpGrid({required this.onTap});
+  final void Function(_QuickHelp) onTap;
 
-  final IconData icon;
-  final String label;
-  final String value;
+  @override
+  Widget build(BuildContext context) {
+    return GridView.count(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisCount: 2,
+      mainAxisSpacing: AppSizes.md,
+      crossAxisSpacing: AppSizes.md,
+      childAspectRatio: 2.15,
+      children: [for (final h in _quickHelp) _QuickHelpCard(help: h, onTap: () => onTap(h))],
+    );
+  }
+}
+
+class _QuickHelpCard extends StatefulWidget {
+  const _QuickHelpCard({required this.help, required this.onTap});
+  final _QuickHelp help;
   final VoidCallback onTap;
+
+  @override
+  State<_QuickHelpCard> createState() => _QuickHelpCardState();
+}
+
+class _QuickHelpCardState extends State<_QuickHelpCard> {
+  bool _down = false;
 
   @override
   Widget build(BuildContext context) {
     final accent = AppAccent.of(context);
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: AppRadii.md,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSizes.sm,
-            vertical: AppSizes.md,
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _down = true),
+      onTapUp: (_) => setState(() => _down = false),
+      onTapCancel: () => setState(() => _down = false),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        widget.onTap();
+      },
+      child: AnimatedScale(
+        scale: _down ? 0.96 : 1,
+        duration: AppDurations.fast,
+        curve: AppDurations.easeOut,
+        child: Container(
+          padding: const EdgeInsets.all(AppSizes.md),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: AppRadii.card,
+            border: Border.all(color: AppColors.border, width: 1),
           ),
           child: Row(
             children: [
               Container(
-                width: 40,
-                height: 40,
+                width: 38,
+                height: 38,
                 alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: accent.accentSoft,
-                  borderRadius: AppRadii.sm,
-                ),
-                child: Icon(icon, size: 20, color: accent.onAccentSoft),
+                decoration: BoxDecoration(color: accent.accent, borderRadius: AppRadii.sm),
+                child: Icon(widget.help.icon, size: 18, color: accent.onAccent),
               ),
-              const SizedBox(width: AppSizes.md),
+              const SizedBox(width: AppSizes.sm),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(label, style: AppText.bodyStrong),
-                    const SizedBox(height: 2),
-                    Text(value, style: AppText.caption),
-                  ],
+                child: Text(
+                  widget.help.label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.caption.copyWith(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                    height: 1.25,
+                  ),
                 ),
-              ),
-              const Icon(
-                Icons.copy_rounded,
-                size: 17,
-                color: AppColors.textTertiary,
               ),
             ],
           ),
@@ -367,18 +269,33 @@ class _ContactRow extends StatelessWidget {
   }
 }
 
-class _RowDivider extends StatelessWidget {
-  const _RowDivider();
+/// Section header with a soft accent icon chip instead of a bare icon.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.icon, required this.title});
+  final IconData icon;
+  final String title;
+
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(horizontal: AppSizes.sm),
-      child: Divider(height: 1),
+    final accent = AppAccent.of(context);
+    return Row(
+      children: [
+        Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(color: accent.accentSoft, borderRadius: AppRadii.sm),
+          child: Icon(icon, size: 15, color: accent.onAccentSoft),
+        ),
+        const SizedBox(width: AppSizes.sm),
+        Text(title, style: AppText.h3),
+      ],
     );
   }
 }
 
-/// All FAQs in one neat card, each a tap-to-expand row separated by dividers.
+/// All FAQs in one elevated card, each a tap-to-expand row with its own
+/// small icon chip, separated by dividers.
 class _FaqList extends StatelessWidget {
   const _FaqList({required this.faqs});
   final List<SupportFaq> faqs;
@@ -386,6 +303,7 @@ class _FaqList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AppCard(
+      shadow: true,
       padding: const EdgeInsets.symmetric(horizontal: AppSizes.lg),
       child: Column(
         children: [
@@ -412,6 +330,7 @@ class _FaqRowState extends State<_FaqRow> {
 
   @override
   Widget build(BuildContext context) {
+    final accent = AppAccent.of(context);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => setState(() => _open = !_open),
@@ -421,7 +340,28 @@ class _FaqRowState extends State<_FaqRow> {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: AppSizes.md),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  margin: const EdgeInsets.only(top: 1),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: _open ? accent.accent : accent.accentSoft,
+                    borderRadius: AppRadii.sm,
+                  ),
+                  child: Text(
+                    '?',
+                    style: TextStyle(
+                      fontFamily: AppText.fontFamily,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: _open ? accent.onAccent : accent.onAccentSoft,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSizes.md),
                 Expanded(
                   child: Text(widget.faq.question, style: AppText.bodyStrong),
                 ),
@@ -444,7 +384,7 @@ class _FaqRowState extends State<_FaqRow> {
             alignment: Alignment.topCenter,
             child: _open
                 ? Padding(
-                    padding: const EdgeInsets.only(bottom: AppSizes.md),
+                    padding: const EdgeInsets.only(left: 40, bottom: AppSizes.md),
                     child: Text(
                       widget.faq.answer,
                       style: AppText.body.copyWith(
@@ -461,67 +401,43 @@ class _FaqRowState extends State<_FaqRow> {
   }
 }
 
-/// Multiline text box styled to match [AppTextField] (same fill/border/radius).
-class _MultilineField extends StatefulWidget {
-  const _MultilineField({required this.controller, this.hint});
-  final TextEditingController controller;
-  final String? hint;
-
-  @override
-  State<_MultilineField> createState() => _MultilineFieldState();
-}
-
-class _MultilineFieldState extends State<_MultilineField> {
-  final _focus = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    _focus.addListener(() => setState(() {}));
-  }
-
-  @override
-  void dispose() {
-    _focus.dispose();
-    super.dispose();
-  }
+/// The closing CTA block — icon + heading + subtext + button inside one
+/// elevated card, instead of a bare floating button.
+class _StillNeedHelpCard extends StatelessWidget {
+  const _StillNeedHelpCard({required this.onPressed});
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final focused = _focus.hasFocus;
-    return AnimatedContainer(
-      duration: AppDurations.fast,
-      curve: AppDurations.easeOut,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSizes.lg,
-        vertical: AppSizes.md,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: AppRadii.md,
-        border: Border.all(
-          color: focused ? AppColors.borderStrong : AppColors.border,
-          width: focused ? 1.6 : 1.2,
-        ),
-      ),
-      child: TextField(
-        controller: widget.controller,
-        focusNode: _focus,
-        minLines: 4,
-        maxLines: 7,
-        maxLength: 2000,
-        cursorColor: AppColors.ink,
-        style: AppText.bodyStrong,
-        decoration: InputDecoration(
-          isCollapsed: true,
-          border: InputBorder.none,
-          counterText: '',
-          hintText: widget.hint,
-          hintStyle: AppText.body.copyWith(
-            color: AppColors.textTertiary,
-            fontWeight: FontWeight.w400,
+    final accent = AppAccent.of(context);
+    return AppCard(
+      shadow: true,
+      padding: const EdgeInsets.all(AppSizes.xl),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: accent.accentSoft, borderRadius: AppRadii.md),
+            child: Icon(Icons.chat_bubble_outline_rounded, size: 21, color: accent.onAccentSoft),
           ),
-        ),
+          const SizedBox(height: AppSizes.md),
+          Text('Still need help?', style: AppText.h3),
+          const SizedBox(height: 4),
+          Text(
+            'Send us a message and we’ll get back to you here and by email.',
+            style: AppText.body,
+          ),
+          const SizedBox(height: AppSizes.lg),
+          AppButton(
+            label: 'Send us a message',
+            icon: Icons.send_rounded,
+            accentInLime: true,
+            onPressed: onPressed,
+          ),
+        ],
       ),
     );
   }

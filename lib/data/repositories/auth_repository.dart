@@ -4,6 +4,15 @@ import '../../core/network/json.dart';
 import '../dto/auth_dto.dart';
 import '../dto/user_dto.dart';
 
+/// Result of requesting/resending the registration phone OTP: the resend
+/// cooldown the server actually enforced (so the UI's countdown always
+/// matches reality), the dev-only echoed code in non-prod, and whether the
+/// Admin Panel currently has Test Mode on for phone verification — when it
+/// is, [testCode] carries the actual admin-configured code to enter (never
+/// a secret; only present while test mode is on) for signup_screen.dart's
+/// dev-only hint.
+typedef OtpRequestResult = ({String? devOtp, int cooldownSeconds, bool testMode, String? testCode});
+
 /// Thin wrapper over the `/auth` and `/users/me` endpoints. Returns DTOs or
 /// throws [ApiException]; performs no token storage itself (the controller owns
 /// that, so this stays a pure data source).
@@ -12,23 +21,31 @@ class AuthRepository {
 
   final Dio _dio;
 
-  /// Step 1 of sign-up. Returns the dev OTP in non-prod (server echoes it),
-  /// `null` in production.
-  Future<String?> requestOtp({
+  /// Step 1 of sign-up — sends a backend-generated OTP via Termii (see
+  /// backend `auth.service.ts` deliverOtp()/termii.client.ts).
+  Future<OtpRequestResult> requestOtp({
     required String fullName,
     required String phone,
     String? email,
   }) {
     return apiCall(
       () => _dio.post(
-        '/auth/register/request-otp',
+        '/auth/register/request-phone-otp',
         data: {
           'fullName': fullName,
           'phone': phone,
           if (email != null && email.isNotEmpty) 'email': email,
         },
       ),
-      (d) => asStringOrNull(asMap(d)['devOtp']),
+      (d) {
+        final m = asMap(d);
+        return (
+          devOtp: asStringOrNull(m['devOtp']),
+          cooldownSeconds: asInt(m['cooldownSeconds'], 30),
+          testMode: asBool(m['testMode']),
+          testCode: asStringOrNull(m['testCode']),
+        );
+      },
     );
   }
 
@@ -47,11 +64,47 @@ class AuthRepository {
     );
   }
 
+  /// Firebase Phone Auth registration — call after Firebase has already
+  /// verified the phone client-side (FirebasePhoneAuthService.confirmCode())
+  /// and returned an ID token. Creates the account and signs the user in
+  /// (same session shape as [confirmRegister]). The backend derives the
+  /// real, stored phone from the verified token itself — [phone] here is
+  /// informational only, never trusted on its own.
+  Future<AuthSession> confirmRegisterWithFirebase({
+    required String fullName,
+    required String phone,
+    String? email,
+    required String pin,
+    required String firebaseIdToken,
+  }) {
+    return apiCall(
+      () => _dio.post(
+        '/auth/register/firebase',
+        data: {
+          'fullName': fullName,
+          'phone': phone,
+          if (email != null && email.isNotEmpty) 'email': email,
+          'pin': pin,
+          'firebaseIdToken': firebaseIdToken,
+        },
+      ),
+      (d) => AuthSession.fromJson(asMap(d)),
+    );
+  }
+
   /// Re-send the registration OTP for a pending sign-up (server enforces cooldown).
-  Future<String?> resendOtp({required String phone}) {
+  Future<OtpRequestResult> resendOtp({required String phone}) {
     return apiCall(
       () => _dio.post('/auth/resend-otp', data: {'phone': phone}),
-      (d) => asStringOrNull(asMap(d)['devOtp']),
+      (d) {
+        final m = asMap(d);
+        return (
+          devOtp: asStringOrNull(m['devOtp']),
+          cooldownSeconds: asInt(m['cooldownSeconds'], 30),
+          testMode: asBool(m['testMode']),
+          testCode: asStringOrNull(m['testCode']),
+        );
+      },
     );
   }
 
@@ -59,7 +112,7 @@ class AuthRepository {
   /// account is created at confirm). Throws [ApiException] on a wrong/expired code.
   Future<void> verifyOtp({required String phone, required String otp}) {
     return apiCall<void>(
-      () => _dio.post('/auth/verify-otp', data: {'phone': phone, 'otp': otp}),
+      () => _dio.post('/auth/register/verify-phone-otp', data: {'phone': phone, 'otp': otp}),
       (_) {},
     );
   }
@@ -162,6 +215,22 @@ class AuthRepository {
     ),
     (d) => ApiUser.fromJson(asMap(d)),
   );
+
+  /// Submit a Firebase Phone Auth ID token for server-side verification
+  /// (POST /users/me/phone-verification/firebase). The backend verifies the
+  /// token itself via the Firebase Admin SDK — this call never sends a raw
+  /// phone number, only the token proving the user already confirmed it
+  /// with Firebase. Returns the saved user (`phoneVerified` now true) on
+  /// success; throws [ApiException] with a friendly message otherwise (e.g.
+  /// "This phone number is already linked to another account.").
+  Future<ApiUser> verifyPhoneWithFirebase({required String idToken}) =>
+      apiCall(
+        () => _dio.post(
+          '/users/me/phone-verification/firebase',
+          data: {'idToken': idToken},
+        ),
+        (d) => ApiUser.fromJson(asMap(d)),
+      );
 
   /// Add a payout account (Payout Accounts / Wallet settings only — never
   /// part of Create Transaction). Returns the full saved user.

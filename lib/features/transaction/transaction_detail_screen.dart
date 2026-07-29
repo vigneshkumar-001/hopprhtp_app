@@ -4,6 +4,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/env/app_config.dart';
 import '../../core/network/api_exception.dart';
@@ -78,7 +79,18 @@ class _TransactionDetailScreenState
   /// Guards the seller's Start Delivery / Out-for-delivery actions.
   bool _shipping = false;
 
+  /// Guards the seller's "Renew Link" tap on _PaymentLinkCard.
+  bool _renewingPaymentLink = false;
+
   StreamSubscription<TransactionSocketEvent>? _socketSub;
+
+  /// Fallback for when the socket never connects or drops mid-session
+  /// (flaky network, server restart) — a light poll, only while this screen
+  /// is open and only while the socket is actually disconnected, so a
+  /// healthy socket connection never causes redundant polling on top of its
+  /// own realtime events.
+  Timer? _pollTimer;
+  static const _pollInterval = Duration(seconds: 20);
 
   /// Cached at [initState] and reused in [dispose] — `ref.read` is not safe
   /// to call inside `dispose()`: when an element is torn down via Flutter's
@@ -111,6 +123,15 @@ class _TransactionDetailScreenState
         'type=${event.type} status=${event.status}',
       );
       _invalidateTx();
+      if (mounted) AppSnackbar.info(context, 'Transaction updated.');
+    });
+    _pollTimer = Timer.periodic(_pollInterval, (_) {
+      if (!_socket.isConnected) {
+        AppLogger.debug(
+          '[poll] socket disconnected — fallback refresh tx=${tx.id}',
+        );
+        _invalidateTx();
+      }
     });
   }
 
@@ -118,6 +139,7 @@ class _TransactionDetailScreenState
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _socketSub?.cancel();
+    _pollTimer?.cancel();
     _socket.leaveTransaction(tx.id);
     super.dispose();
   }
@@ -170,6 +192,31 @@ class _TransactionDetailScreenState
       }
     } finally {
       if (mounted) setState(() => _checkingTracking = false);
+    }
+  }
+
+  /// Seller renews an expired (or expiring) payment link — same transaction,
+  /// same code, just a fresh expiresAt (see transactionService
+  /// renewPaymentLinkAsSeller). Never creates a new transaction.
+  Future<void> _renewPaymentLink() async {
+    if (_renewingPaymentLink) return;
+    setState(() => _renewingPaymentLink = true);
+    try {
+      await ref.read(transactionRepositoryProvider).renewPaymentLink(tx.id);
+      if (!mounted) return;
+      _invalidateTx();
+      AppSnackbar.success(context, 'Payment link renewed successfully.');
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.userMessage);
+    } catch (_) {
+      if (mounted) {
+        AppSnackbar.error(
+          context,
+          'Could not renew the payment link. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _renewingPaymentLink = false);
     }
   }
 
@@ -720,6 +767,12 @@ class _TransactionDetailScreenState
     final merchantAsync = sellerId == null
         ? null
         : ref.watch(merchantProfileProvider(sellerId));
+    // Backend-populated public-safe seller/buyer identity (name/business/
+    // phone/email/trust/verification, never payout/bank data) — see
+    // transaction.service.ts partyProfile(). Distinct from merchantAsync
+    // above, which carries the richer trust-label/completed-deals stats.
+    final sellerParty = detailAsync.valueOrNull?.seller;
+    final buyerParty = detailAsync.valueOrNull?.buyer;
     // Buyer/dispatcher ACCOUNT identity — same public-safe profile lookup the
     // Seller Card already uses (any signed-in user can view any user's
     // profile by id), reused rather than adding a new backend lookup. Null id
@@ -875,12 +928,19 @@ class _TransactionDetailScreenState
                         _SellerCard(
                           tx: tx,
                           merchantAsync: merchantAsync,
+                          party: sellerParty,
+                          hasLoaded: detailAsync.hasValue,
                           onTap: sellerId == null
                               ? () {}
                               : () => AppNav.push(
                                   context,
                                   MerchantProfileScreen(merchantId: sellerId),
                                 ),
+                          onCopyEmail: () => _copy(
+                            context,
+                            sellerParty?.email ?? '',
+                            'Seller email copied',
+                          ),
                         ),
                         const SizedBox(height: AppSizes.md),
                         _ProductCard(tx: tx, category: _category),
@@ -892,6 +952,7 @@ class _TransactionDetailScreenState
                           buyerPhone: buyerContact,
                           deliveryAddress: deliveryAddress,
                           eta: deliveryEta,
+                          party: buyerParty,
                           onCopyAddress: () => _copy(
                             context,
                             deliveryAddress,
@@ -901,6 +962,11 @@ class _TransactionDetailScreenState
                             context,
                             buyerDisplayName,
                             'Buyer name copied',
+                          ),
+                          onCopyEmail: () => _copy(
+                            context,
+                            buyerParty?.email ?? '',
+                            'Buyer email copied',
                           ),
                         ),
                         const SizedBox(height: AppSizes.md),
@@ -933,7 +999,14 @@ class _TransactionDetailScreenState
                         ],
                         const SizedBox(height: AppSizes.md),
                         if (showPaymentLink) ...[
-                          _PaymentLinkCard(code: tx.code, amount: tx.amount),
+                          _PaymentLinkCard(
+                            code: tx.code,
+                            amount: tx.amount,
+                            expiresAt:
+                                detailAsync.valueOrNull?.paymentLinkExpiresAt,
+                            isRenewing: _renewingPaymentLink,
+                            onRenew: _renewPaymentLink,
+                          ),
                           const SizedBox(height: AppSizes.md),
                         ],
                         _buildPickupCodeSlot(context),
@@ -1417,93 +1490,165 @@ class _SellerCard extends StatelessWidget {
   const _SellerCard({
     required this.tx,
     required this.merchantAsync,
+    required this.party,
+    required this.hasLoaded,
     required this.onTap,
+    required this.onCopyEmail,
   });
 
   final EscrowTransaction tx;
   // Null while the sellerId isn't known yet (first paint, before the live
   // transaction detail resolves) — never a fabricated trust/verified value.
   final AsyncValue<MerchantProfile>? merchantAsync;
+
+  /// Backend-populated public-safe seller identity (name/business/phone/
+  /// email/trust/verification) — see transaction.service.ts partyProfile().
+  /// Never includes payout/bank details; those are never returned by the
+  /// backend at all. Null while [hasLoaded] is false (still loading), or —
+  /// rarely — if the seller record genuinely couldn't be resolved.
+  final TxPartyProfile? party;
+
+  /// Whether the live transaction detail has resolved at least once — lets
+  /// this card tell "still loading" apart from "seller not available"
+  /// without ever guessing.
+  final bool hasLoaded;
   final VoidCallback onTap;
+  final VoidCallback onCopyEmail;
 
   @override
   Widget build(BuildContext context) {
     final profile = merchantAsync?.valueOrNull;
-    final verified = profile?.isVerified ?? false;
+    final verified = profile?.isVerified ?? party?.isVerified ?? false;
+    final sellerMissing = hasLoaded && party == null;
+    final businessName = party?.businessName;
+    final phone = party?.phone ?? '';
+    final email = party?.email;
+
     return AppCard(
-      onTap: onTap,
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Hero(
-            tag: 'txn-avatar-${tx.id}',
-            child: InitialsAvatar(initials: tx.merchantInitials, size: 46),
-          ),
-          const SizedBox(width: AppSizes.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          CardSectionLabel('Seller details'),
+          const SizedBox(height: AppSizes.md),
+          InkWell(
+            onTap: onTap,
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        tx.merchantName,
-                        style: AppText.h3,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (verified) ...[
-                      const SizedBox(width: 5),
-                      const VerifiedBadge(size: 16),
-                    ],
-                  ],
+                Hero(
+                  tag: 'txn-avatar-${tx.id}',
+                  child: InitialsAvatar(initials: tx.merchantInitials, size: 46),
                 ),
-                if (verified) ...[
-                  const SizedBox(height: 3),
-                  Row(
+                const SizedBox(width: AppSizes.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(
-                        Icons.verified_user_outlined,
-                        size: 13,
-                        color: AppColors.textSecondary,
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              tx.merchantName,
+                              style: AppText.h3,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (verified) ...[
+                            const SizedBox(width: 5),
+                            const VerifiedBadge(size: 16),
+                          ],
+                        ],
                       ),
-                      const SizedBox(width: 4),
-                      Text('HTP Verified Seller', style: AppText.caption),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 7),
-                if (profile == null)
-                  const AppShimmerBox(width: 140, height: 14)
-                else
-                  Row(
-                    children: [
-                      Text('Trust score', style: AppText.caption),
-                      const SizedBox(width: 6),
-                      StatusPill(
-                        label: profile.stats.trustLabel,
-                        dense: true,
-                        background: AppColors.successSoft,
-                        foreground: AppColors.success,
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          '· ${profile.stats.completedTransactions} successful transactions',
+                      if (businessName != null && businessName.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          businessName,
                           style: AppText.caption,
                           overflow: TextOverflow.ellipsis,
                         ),
-                      ),
+                      ],
+                      if (verified) ...[
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.verified_user_outlined,
+                              size: 13,
+                              color: AppColors.textSecondary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text('HTP Verified Seller', style: AppText.caption),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 7),
+                      if (profile == null)
+                        const AppShimmerBox(width: 140, height: 14)
+                      else
+                        Row(
+                          children: [
+                            Text('Trust score', style: AppText.caption),
+                            const SizedBox(width: 6),
+                            StatusPill(
+                              label: profile.stats.trustLabel,
+                              dense: true,
+                              background: AppColors.successSoft,
+                              foreground: AppColors.success,
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                '· ${profile.stats.completedTransactions} successful transactions',
+                                style: AppText.caption,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
                     ],
                   ),
+                ),
+                const SizedBox(width: AppSizes.sm),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppColors.textTertiary,
+                ),
               ],
             ),
           ),
-          const SizedBox(width: AppSizes.sm),
-          const Icon(
-            Icons.chevron_right_rounded,
-            color: AppColors.textTertiary,
-          ),
+          if (sellerMissing) ...[
+            const SizedBox(height: AppSizes.sm),
+            Text(
+              'Seller not available',
+              style: AppText.caption.copyWith(color: AppColors.textTertiary),
+            ),
+          ] else ...[
+            if (phone.isNotEmpty) ...[
+              const SizedBox(height: AppSizes.sm),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.call_outlined,
+                    size: 17,
+                    color: AppColors.textSecondary,
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text('Contact seller', style: AppText.bodyStrong),
+                  ),
+                  _CallIconButton(phone: phone),
+                ],
+              ),
+            ],
+            if (email != null && email.isNotEmpty) ...[
+              const SizedBox(height: AppSizes.sm),
+              _InfoRow(
+                icon: Icons.mail_outline_rounded,
+                label: 'Email',
+                value: email,
+                onTap: onCopyEmail,
+              ),
+            ],
+          ],
         ],
       ),
     );
@@ -1744,6 +1889,8 @@ class _BuyerInfoCard extends StatelessWidget {
     required this.eta,
     required this.onCopyAddress,
     required this.onCopyName,
+    this.party,
+    this.onCopyEmail,
   });
 
   final String buyerName;
@@ -1753,8 +1900,17 @@ class _BuyerInfoCard extends StatelessWidget {
   final VoidCallback onCopyAddress;
   final VoidCallback onCopyName;
 
+  /// Backend-populated public-safe buyer identity — adds email/identity
+  /// status once a real Hoppr account is linked. [buyerName]/[buyerPhone]
+  /// stay the source of truth for the header row (seller-entered contact,
+  /// available even before an account links) — this only adds to it, never
+  /// replaces it, so an unlinked buyer's row keeps working exactly as before.
+  final TxPartyProfile? party;
+  final VoidCallback? onCopyEmail;
+
   @override
   Widget build(BuildContext context) {
+    final email = party?.email;
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1768,6 +1924,15 @@ class _BuyerInfoCard extends StatelessWidget {
             phone: buyerPhone,
             onTap: onCopyName,
           ),
+          if (email != null && email.isNotEmpty) ...[
+            const SizedBox(height: AppSizes.sm),
+            _InfoRow(
+              icon: Icons.mail_outline_rounded,
+              label: 'Email',
+              value: email,
+              onTap: onCopyEmail,
+            ),
+          ],
           const SizedBox(height: AppSizes.sm),
           _InfoRow(
             icon: Icons.location_on_outlined,
@@ -2582,9 +2747,25 @@ class _DispatchProofSheetState extends ConsumerState<_DispatchProofSheet> {
 /// explicit note says so. Removed the moment the buyer pays (status leaves the
 /// unpaid set), replaced by the "Paid into escrow" banner.
 class _PaymentLinkCard extends StatelessWidget {
-  const _PaymentLinkCard({required this.code, required this.amount});
+  const _PaymentLinkCard({
+    required this.code,
+    required this.amount,
+    this.expiresAt,
+    this.isRenewing = false,
+    this.onRenew,
+  });
   final String code;
   final double amount;
+
+  /// Real, admin-configured expiry from the backend (Settings → Payment
+  /// Link Expiry Days) — never fabricated client-side. Null when the
+  /// transaction predates this field, meaning "no expiry enforced yet".
+  final DateTime? expiresAt;
+  final bool isRenewing;
+  final VoidCallback? onRenew;
+
+  bool get _isExpired =>
+      expiresAt != null && expiresAt!.isBefore(DateTime.now());
 
   String get _link => '${AppConfig.webBaseUrl}/pay/$code';
   String get _linkDisplay => _link.replaceFirst(RegExp(r'^https?://'), '');
@@ -2674,28 +2855,68 @@ class _PaymentLinkCard extends StatelessWidget {
               vertical: AppSizes.md,
             ),
             decoration: BoxDecoration(
-              color: const Color(0xFFFCF4E5),
+              color: _isExpired
+                  ? const Color(0xFFFBEAEA)
+                  : const Color(0xFFFCF4E5),
               borderRadius: AppRadii.md,
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(
-                  Icons.schedule_rounded,
-                  size: 18,
-                  color: AppColors.warning,
+                Row(
+                  children: [
+                    Icon(
+                      _isExpired
+                          ? Icons.error_outline_rounded
+                          : Icons.schedule_rounded,
+                      size: 18,
+                      color: _isExpired ? AppColors.danger : AppColors.warning,
+                    ),
+                    const SizedBox(width: AppSizes.sm),
+                    Expanded(
+                      child: Text(
+                        _isExpired
+                            ? 'Payment link expired'
+                            : 'Waiting for buyer payment',
+                        style: AppText.bodyStrong.copyWith(
+                          color: _isExpired
+                              ? AppColors.danger
+                              : const Color(0xFF9A6B14),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: AppSizes.sm),
-                Expanded(
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.only(left: 26),
                   child: Text(
-                    'Waiting for buyer payment',
-                    style: AppText.bodyStrong.copyWith(
-                      color: const Color(0xFF9A6B14),
+                    expiresAt == null
+                        ? 'Valid until payment or cancellation.'
+                        : _isExpired
+                        ? 'Renew it below so the buyer can pay — no need to '
+                              'create a new transaction.'
+                        : 'Valid until ${_formatExpiry(expiresAt!)}.',
+                    style: AppText.caption.copyWith(
+                      color: _isExpired
+                          ? AppColors.danger
+                          : const Color(0xFF9A6B14),
                     ),
                   ),
                 ),
               ],
             ),
           ),
+          if (_isExpired) ...[
+            const SizedBox(height: AppSizes.md),
+            AppButton(
+              label: isRenewing ? 'Renewing…' : 'Renew Link',
+              icon: Icons.refresh_rounded,
+              loading: isRenewing,
+              enabled: !isRenewing,
+              onPressed: onRenew,
+            ),
+          ],
           const SizedBox(height: AppSizes.md),
           Row(
             children: [
@@ -2719,6 +2940,66 @@ class _PaymentLinkCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSizes.md),
+          Container(
+            padding: const EdgeInsets.all(AppSizes.md),
+            decoration: BoxDecoration(
+              color: AppColors.cardSoft,
+              borderRadius: AppRadii.md,
+              border: Border.all(color: AppColors.border, width: 1.2),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Or scan to open', style: AppText.bodyStrong),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Buyer can scan this QR code to open the payment page.',
+                        style: AppText.caption,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSizes.md),
+                Container(
+                  padding: const EdgeInsets.all(AppSizes.sm),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: AppRadii.md,
+                    border: Border.all(color: accent.ring, width: 1.4),
+                  ),
+                  child: QrImageView(
+                    data: _link,
+                    version: QrVersions.auto,
+                    size: 88,
+                    gapless: true,
+                    eyeStyle: const QrEyeStyle(
+                      eyeShape: QrEyeShape.square,
+                      color: AppColors.ink,
+                    ),
+                    dataModuleStyle: const QrDataModuleStyle(
+                      dataModuleShape: QrDataModuleShape.square,
+                      color: AppColors.ink,
+                    ),
+                    errorStateBuilder: (ctx, err) => SizedBox(
+                      width: 88,
+                      height: 88,
+                      child: Center(
+                        child: Text(
+                          'QR unavailable',
+                          textAlign: TextAlign.center,
+                          style: AppText.caption,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSizes.md),
           const NoteBanner(
             icon: Icons.info_outline_rounded,
             text:
@@ -2728,6 +3009,14 @@ class _PaymentLinkCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  static String _formatExpiry(DateTime d) {
+    final l = d.toLocal();
+    final h = l.hour % 12 == 0 ? 12 : l.hour % 12;
+    final m = l.minute.toString().padLeft(2, '0');
+    final ampm = l.hour < 12 ? 'AM' : 'PM';
+    return '${Dates.medium(l)}, ${h.toString().padLeft(2, '0')}:$m $ampm';
   }
 }
 

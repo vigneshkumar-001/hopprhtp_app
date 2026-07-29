@@ -178,6 +178,10 @@ class ApiTransaction {
     this.nearBuyerAt,
     this.deliveryConfirmedAt,
     this.dispatcherAddress,
+    this.seller,
+    this.buyer,
+    this.paymentLinkExpiresAt,
+    this.paymentLinkRenewCount = 0,
   });
 
   final String id;
@@ -313,6 +317,25 @@ class ApiTransaction {
   /// and [deliveryAddress] exist. Shown in the UI as "Package Collection
   /// Address" — never "Dispatcher Address" or "Pickup Address".
   final String? dispatcherAddress;
+
+  /// Public-safe seller identity for the Transaction Details "Seller
+  /// details" card — see backend transaction.service.ts partyProfile().
+  /// Null while the live detail hasn't resolved yet (never fabricated).
+  final TxPartyProfile? seller;
+
+  /// Public-safe buyer identity for the "Buyer details" card — a trimmed
+  /// subset of [seller]'s shape (no trust score/verified badge, since those
+  /// describe SELLING history). Null until a real buyer account is linked.
+  final TxPartyProfile? buyer;
+
+  /// When the buyer's payment review link/code stops being payable — long-
+  /// lived (admin-configurable, default 30 days), never a short OTP-style
+  /// expiry. Null on a transaction created before this field existed
+  /// (treated as still valid — see Payment Setup / Payment Link Ready).
+  final DateTime? paymentLinkExpiresAt;
+
+  /// How many times the seller/admin has renewed the link — 0 if never.
+  final int paymentLinkRenewCount;
 
   /// Whoever actually handles pickup + delivery for this transaction — the
   /// self-delivering seller, or the assigned Hoppr dispatcher. Screens
@@ -460,6 +483,60 @@ class ApiTransaction {
       nearBuyerAt: asDateTime(delivery['nearBuyerAt']),
       deliveryConfirmedAt: asDateTime(delivery['confirmedAt']),
       dispatcherAddress: asStringOrNull(firstConsignment['dispatcherAddress']),
+      seller: j['seller'] == null
+          ? null
+          : TxPartyProfile.fromJson(asMap(j['seller'])),
+      buyer: j['buyer'] == null
+          ? null
+          : TxPartyProfile.fromJson(asMap(j['buyer'])),
+      paymentLinkExpiresAt: asDateTime(j['paymentLinkExpiresAt']),
+      paymentLinkRenewCount: asInt(j['paymentLinkRenewCount']),
     );
   }
+}
+
+/// Public-safe seller/buyer identity — see backend transaction.service.ts
+/// partyProfile(). `phone` is only ever meant to drive a tap-to-call action
+/// (see _CallIconButton in transaction_detail_screen.dart), never printed
+/// as raw text; payout/bank details are never included by the backend.
+class TxPartyProfile {
+  const TxPartyProfile({
+    required this.id,
+    required this.fullName,
+    this.businessName,
+    this.phone,
+    this.email,
+    this.trustScore,
+    this.identityStatus,
+    this.htpVerifiedBadge = false,
+  });
+
+  final String id;
+  final String fullName;
+
+  /// Null — no business-name field exists on the backend User record yet.
+  final String? businessName;
+  final String? phone;
+  final String? email;
+
+  /// Null for the buyer view (backend omits it — see buyerView()); the
+  /// seller view always has one.
+  final int? trustScore;
+  final String? identityStatus; // 'unverified' | 'pending' | 'under_review' | 'verified' | 'rejected'
+
+  /// Only ever populated on the seller view — buyer view has no badge.
+  final bool htpVerifiedBadge;
+
+  bool get isVerified => identityStatus == 'verified';
+
+  factory TxPartyProfile.fromJson(Map<String, dynamic> j) => TxPartyProfile(
+    id: asId(j['id'] ?? j['_id']),
+    fullName: asString(j['fullName']),
+    businessName: asStringOrNull(j['businessName']),
+    phone: asStringOrNull(j['phone']),
+    email: asStringOrNull(j['email']),
+    trustScore: j['trustScore'] == null ? null : asInt(j['trustScore']),
+    identityStatus: asStringOrNull(j['identityStatus']),
+    htpVerifiedBadge: asBool(j['htpVerifiedBadge']),
+  );
 }

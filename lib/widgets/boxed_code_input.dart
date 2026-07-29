@@ -52,11 +52,22 @@ class _BoxedCodeInputState extends State<BoxedCodeInput>
   @override
   void initState() {
     super.initState();
-    _focus.addListener(() => setState(() => _focused = _focus.hasFocus));
+    _focus.addListener(_handleFocusChange);
+  }
+
+  // Named (not inline) so dispose() can remove exactly this listener — an
+  // externally-supplied FocusNode (widget.focusNode != null) outlives this
+  // State and can still fire the listener after this widget is gone if it's
+  // never detached, which previously crashed with "setState() called after
+  // dispose()".
+  void _handleFocusChange() {
+    if (!mounted) return;
+    setState(() => _focused = _focus.hasFocus);
   }
 
   @override
   void dispose() {
+    _focus.removeListener(_handleFocusChange);
     _blink.dispose();
     if (_ownsFocus) _focus.dispose();
     super.dispose();

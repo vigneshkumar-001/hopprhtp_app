@@ -40,7 +40,12 @@ class WalletRepository {
     (d) => WalletLedgerEntry.fromJson(asMap(d)),
   );
 
-  /// Withdraw available funds to a saved payout account. Returns the new balance.
+  /// Withdraw available funds to a saved payout account. Returns the new
+  /// balance. The response also carries a `withdrawalRequest` summary of the
+  /// just-created request, but that's deliberately not parsed here — callers
+  /// should refetch [withdrawals] instead so the new request always shows up
+  /// with the full, backend-canonical field set rather than a hand-assembled
+  /// partial one.
   Future<WalletBalance> withdraw({
     required double amountNaira,
     required String accountId,
@@ -50,5 +55,15 @@ class WalletRepository {
       data: {'amountNaira': amountNaira, 'accountId': accountId},
     ),
     (d) => WalletBalance.fromJson(asMap(d)),
+  );
+
+  /// This user's own withdrawal requests, newest first — powers the Wallet
+  /// screen's Withdrawal Requests section (status, reason if rejected/failed,
+  /// masked payout account).
+  Future<List<WithdrawalRequest>> withdrawals() => apiCall(
+    () => _dio.get('/wallet/withdrawals'),
+    (d) => asList(d)
+        .map((e) => WithdrawalRequest.fromJson(asMap(e)))
+        .toList(growable: false),
   );
 }

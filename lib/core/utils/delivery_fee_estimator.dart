@@ -11,15 +11,36 @@ import 'dart:math';
 class DeliveryFeeEstimator {
   DeliveryFeeEstimator._();
 
-  // ── Tunable rates (naira) — MUST stay in sync with the backend constants
-  // in common/utils/deliveryFee.ts. Kept in naira here (not kobo) to match
-  // this app's existing convention of doing money math in naira on-screen
-  // (see PaymentDraft) and converting to kobo only at the network boundary.
-  static const double baseFee = 500; // ₦500
-  static const double perKmFee = 150; // ₦150/km
-  static const double freeWeightKg = 2;
-  static const double extraWeightFeePerKg = 200; // ₦200/kg
-  static const double minimumFee = 500; // ₦500
+  // ── Tunable rates (naira) — seeded with the backend's shipped defaults
+  // (see backend/src/modules/admin/feeSettings.service.ts
+  // defaultLogisticsFeeSettings()) and overwritten by [applyRemoteConfig]
+  // once GET /fee-settings/public loads, so this preview follows whatever
+  // the admin has actually configured instead of silently drifting from it.
+  // Not `const` for that reason — still safe as a display-only preview,
+  // since the backend recomputes and is the authoritative source once the
+  // transaction is actually created.
+  static double baseFee = 500; // ₦500
+  static double perKmFee = 150; // ₦150/km
+  static double freeWeightKg = 2;
+  static double extraWeightFeePerKg = 200; // ₦200/kg
+  static double minimumFee = 500; // ₦500
+
+  /// Overwrites the tunable rates with the admin's live logistics fee
+  /// config. Call once at app startup (see `feeSettingsProvider`); never
+  /// called mid-flow, so a screen's rates stay stable once it has opened.
+  static void applyRemoteConfig({
+    required double baseFee,
+    required double perKmFee,
+    required double freeWeightKg,
+    required double extraWeightFeePerKg,
+    required double minimumFee,
+  }) {
+    DeliveryFeeEstimator.baseFee = baseFee;
+    DeliveryFeeEstimator.perKmFee = perKmFee;
+    DeliveryFeeEstimator.freeWeightKg = freeWeightKg;
+    DeliveryFeeEstimator.extraWeightFeePerKg = extraWeightFeePerKg;
+    DeliveryFeeEstimator.minimumFee = minimumFee;
+  }
 
   /// Great-circle distance between two coordinates, in kilometres — same
   /// haversine math as the backend's common/utils/geo.ts.
