@@ -1,13 +1,13 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/data/countries.dart';
+import '../../core/native/firebase_phone_auth_service.dart';
+import '../../core/native/phone_hint_service.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/network/connectivity.dart';
 import '../../core/network/error_messages.dart';
-import '../../core/native/phone_hint_service.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
@@ -26,9 +26,9 @@ import 'application/auth_controller.dart';
 import 'signin_screen.dart';
 
 /// Multi-step sign-up wizard (4 steps). Step 1 matches the mockup exactly;
-/// the remaining steps (phone OTP, set PIN, done) complete the flow. Phone
-/// verification is a backend-generated OTP delivered over Termii — see
-/// `AuthController.requestOtp`/`verifyOtp`/`confirmRegister`.
+/// the remaining steps (phone OTP via Firebase, set PIN, done) complete the flow.
+/// Phone verification uses Firebase Phone Auth client-side with server-side
+/// verification — see `FirebasePhoneAuthService` and `confirmRegisterWithFirebase`.
 class SignUpScreen extends ConsumerStatefulWidget {
   const SignUpScreen({super.key});
 
@@ -39,17 +39,13 @@ class SignUpScreen extends ConsumerStatefulWidget {
 class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   static const int _totalSteps = 4;
   final PageController _pager = PageController();
+  late final _phoneAuth = FirebasePhoneAuthService();
   int _step = 0; // 0-based
   bool _busy = false;
 
   Timer? _resendTimer;
   int _resendIn = 0;
-  // Whether the Admin Panel currently has Test Mode on for phone
-  // verification (see VerificationSettingsPanel), and the admin-configured
-  // code to enter in that case — only ever drives a dev-only hint below,
-  // never bypasses the real verify call.
-  bool _testMode = false;
-  String? _testCode;
+  String? _firebaseIdToken;
 
   // Step 1
   final _name = TextEditingController();
@@ -162,24 +158,13 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
     return '${_phoneCountry.dialCode}$digits';
   }
 
-  /// Maps a backend OTP-verification failure to the exact copy this screen
-  /// requires, falling back to the generic [ApiException.userMessage] for
-  /// anything else (rate-limited, network, etc.).
-  String _otpErrorMessage(ApiException e) {
-    final m = e.message.toLowerCase();
-    if (m.contains('expired')) return 'Verification code expired.';
-    if (m.contains('incorrect')) return 'Verification code is incorrect.';
-    return e.userMessage;
-  }
-
   Future<void> _next() async {
     FocusScope.of(context).unfocus();
     if (_busy) return;
     final notifier = ref.read(authControllerProvider.notifier);
 
     switch (_step) {
-      // Step 1 → request a backend-generated OTP for the entered number,
-      // delivered over Termii (see AuthRepository.requestOtp).
+      // Step 1 → start Firebase phone verification (SMS sent by Firebase).
       case 0:
         if (!ref.isOnline) {
           AppSnackbar.error(
@@ -201,27 +186,32 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
         }
         setState(() => _busy = true);
         try {
-          final email = _email.text.trim();
-          final result = await notifier.requestOtp(
-            fullName: _name.text.trim(),
-            phone: e164Phone,
-            email: email.isEmpty ? null : email,
+          await _phoneAuth.startVerification(
+            phoneNumber: e164Phone,
+            onCodeSent: (cooldown) {
+              if (!mounted) return;
+              setState(() => _busy = false);
+              _advance();
+              _startResendCountdown(cooldown);
+            },
+            onError: (e) {
+              if (!mounted) return;
+              setState(() => _busy = false);
+              AppSnackbar.error(context, e.message);
+            },
+            onAutoVerified: (_) {
+              // Auto-verify rarely happens; user will enter code manually.
+            },
           );
-          if (!mounted) return;
-          setState(() {
-            _testMode = result.testMode;
-            _testCode = result.testCode;
-          });
-          _advance();
-          _startResendCountdown(result.cooldownSeconds);
-        } on ApiException catch (e) {
-          if (mounted) AppSnackbar.error(context, e.userMessage);
-        } finally {
-          if (mounted) setState(() => _busy = false);
+        } catch (e) {
+          if (mounted) {
+            setState(() => _busy = false);
+            AppSnackbar.error(context, 'Failed to start phone verification.');
+          }
         }
 
-      // Step 2 → verify the OTP against the backend. Does not yet create the
-      // account — that happens once the PIN is set at step 3.
+      // Step 2 → verify the Firebase OTP code. The idToken is then used
+      // to create the account at step 3.
       case 1:
         if (!ref.isOnline) {
           AppSnackbar.error(
@@ -232,20 +222,18 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
         }
         setState(() => _busy = true);
         try {
-          await notifier.verifyOtp(
-            phone: _buildE164Phone(),
-            otp: _otp.text.trim(),
-          );
-          if (mounted) _advance();
-        } on ApiException catch (e) {
-          if (mounted) AppSnackbar.error(context, _otpErrorMessage(e));
+          final idToken = await _phoneAuth.confirmCode(_otp.text.trim());
+          if (!mounted) return;
+          setState(() => _firebaseIdToken = idToken);
+          _advance();
+        } on PhoneAuthException catch (e) {
+          if (mounted) AppSnackbar.error(context, e.message);
         } finally {
           if (mounted) setState(() => _busy = false);
         }
 
-      // Step 3 → create the account: the OTP (re-checked server-side) plus
-      // the PIN just set. fullName/email were already captured server-side
-      // as part of the OTP challenge's context at step 1.
+      // Step 3 → create the account using the Firebase ID token plus
+      // the PIN just set.
       case 2:
         if (!ref.isOnline) {
           AppSnackbar.error(
@@ -254,18 +242,25 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
           );
           return;
         }
+        if (_firebaseIdToken == null) {
+          AppSnackbar.error(context, 'Phone verification failed. Please try again.');
+          return;
+        }
         setState(() => _busy = true);
         try {
-          await notifier.confirmRegister(
+          final email = _email.text.trim();
+          await notifier.confirmRegisterWithFirebase(
+            fullName: _name.text.trim(),
             phone: _buildE164Phone(),
-            otp: _otp.text.trim(),
+            email: email.isEmpty ? null : email,
             pin: _pin.text,
+            firebaseIdToken: _firebaseIdToken!,
           );
           // Session is now authenticated; HomeShell is live under this route.
           if (mounted) _advance();
         } on ApiException catch (e) {
           if (!mounted) return;
-          AppSnackbar.error(context, _otpErrorMessage(e));
+          AppSnackbar.error(context, e.userMessage);
         } finally {
           if (mounted) setState(() => _busy = false);
         }
@@ -276,7 +271,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
     }
   }
 
-  /// Re-request the OTP from the verify step (server enforces the cooldown).
+  /// Re-request the code from Firebase (isResend=true).
   Future<void> _resendOtp() async {
     if (_busy || _resendIn > 0) return;
     if (!ref.isOnline) {
@@ -286,18 +281,29 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
       );
       return;
     }
-    final notifier = ref.read(authControllerProvider.notifier);
+    setState(() => _busy = true);
     try {
-      final result = await notifier.resendOtp(phone: _buildE164Phone());
-      if (!mounted) return;
-      setState(() {
-        _testMode = result.testMode;
-        _testCode = result.testCode;
-      });
-      _startResendCountdown(result.cooldownSeconds);
-      AppSnackbar.success(context, 'A new code has been sent.');
-    } on ApiException catch (e) {
-      if (mounted) AppSnackbar.error(context, _otpErrorMessage(e));
+      await _phoneAuth.startVerification(
+        phoneNumber: _buildE164Phone(),
+        isResend: true,
+        onCodeSent: (cooldown) {
+          if (!mounted) return;
+          setState(() => _busy = false);
+          _startResendCountdown(cooldown);
+          AppSnackbar.success(context, 'A new code has been sent.');
+        },
+        onError: (e) {
+          if (!mounted) return;
+          setState(() => _busy = false);
+          AppSnackbar.error(context, e.message);
+        },
+        onAutoVerified: (_) {},
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        AppSnackbar.error(context, 'Failed to resend code.');
+      }
     }
   }
 
@@ -380,10 +386,9 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                       phone: _buildE164Phone(),
                       onResend: _resendOtp,
                       onChangePhone: _changePhone,
+                      onCompleted: _next,
                       resendIn: _resendIn,
                       focusNode: _otpFocus,
-                      testMode: _testMode,
-                      testCode: _testCode,
                     ),
                     _StepPin(pin: _pin, focusNode: _pinFocus),
                     _StepDone(
@@ -550,19 +555,17 @@ class _StepOtp extends StatelessWidget {
     required this.phone,
     required this.onResend,
     required this.onChangePhone,
+    required this.onCompleted,
     required this.resendIn,
-    required this.testMode,
-    this.testCode,
     this.focusNode,
   });
   final TextEditingController otp;
   final String phone;
   final VoidCallback onResend;
   final VoidCallback onChangePhone;
+  final VoidCallback onCompleted;
   final int resendIn;
   final FocusNode? focusNode;
-  final bool testMode;
-  final String? testCode;
 
   @override
   Widget build(BuildContext context) {
@@ -587,6 +590,7 @@ class _StepOtp extends StatelessWidget {
           autofocus: false,
           focusNode: focusNode,
           autofillHints: const [AutofillHints.oneTimeCode],
+          onCompleted: (_) => onCompleted(),
         ),
         const SizedBox(height: AppSizes.xl),
         Row(
@@ -625,40 +629,6 @@ class _StepOtp extends StatelessWidget {
         ),
         const SizedBox(height: AppSizes.lg),
         const _DemoHint('6-digit code · check your SMS'),
-        // Dev/internal-build-only — the Admin Panel's Test Mode is meant for
-        // QA, so this never renders in a release build regardless of what
-        // the backend reports, even if a production server is left in test
-        // mode by mistake.
-        if (testMode && !kReleaseMode) ...[
-          const SizedBox(height: AppSizes.md),
-          Container(
-            padding: const EdgeInsets.all(AppSizes.md),
-            decoration: BoxDecoration(
-              color: AppColors.warning.withValues(alpha: 0.12),
-              borderRadius: AppRadii.md,
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(
-                  Icons.science_outlined,
-                  size: 18,
-                  color: AppColors.warning,
-                ),
-                const SizedBox(width: AppSizes.sm),
-                Expanded(
-                  child: Text(
-                    'Test mode enabled. Use ${testCode ?? '123456'}.',
-                    style: AppText.caption.copyWith(
-                      color: AppColors.warning,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ],
     );
   }

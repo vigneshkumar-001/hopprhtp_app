@@ -276,11 +276,22 @@ class AuthController extends AsyncNotifier<AuthState> {
   }
 
   Future<void> logout() async {
-    try {
-      await _repo.logoutAll();
-    } on ApiException {
-      // Best-effort; we sign out locally regardless.
-    }
+    // Clear the local session first so the UI navigates to the login screen
+    // instantly; revoke tokens server-side best-effort in the background
+    // (we sign out locally regardless of whether this succeeds).
+    unawaited(_repo.logoutAll().catchError((_) {}));
+    await _tokens.clear();
+    resetUserScopedProviders(ref);
+    state = const AsyncData(AuthState.unauthenticated());
+  }
+
+  /// Self-service account deletion (Settings → Delete account). Unlike
+  /// [logout], the local session is only cleared AFTER the server confirms
+  /// deletion — a wrong PIN or an unresolved balance/transaction must leave
+  /// the caller still signed in so the screen can show the error and let
+  /// them correct it, not silently sign them out first.
+  Future<void> deleteAccount({required String pin}) async {
+    await _repo.deleteAccount(pin: pin);
     await _tokens.clear();
     resetUserScopedProviders(ref);
     state = const AsyncData(AuthState.unauthenticated());

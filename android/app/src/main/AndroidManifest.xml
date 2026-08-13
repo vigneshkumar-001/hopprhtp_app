@@ -15,7 +15,7 @@
         android:icon="@mipmap/ic_launcher">
         <!-- Google Maps SDK key for the Transit tracking tab.
              ⚠️ RESTRICT this key in Google Cloud Console: limit it to the
-             "Maps SDK for Android", this app's package (com.fenizotechnologies.hopptHtp)
+             "Maps SDK for Android", this app's package (com.fenizotechnologies.hopprHtp)
              and its SHA-1 fingerprint, and set usage quotas. -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"

@@ -232,6 +232,15 @@ class AuthRepository {
         (d) => ApiUser.fromJson(asMap(d)),
       );
 
+  /// Self-service account deletion (Settings → Delete account). Throws
+  /// [ApiException] with a friendly message if the PIN is wrong, or if the
+  /// account still has a wallet/escrow balance or an in-flight transaction
+  /// (server-enforced — see backend userService.deleteAccount).
+  Future<void> deleteAccount({required String pin}) => apiCall<void>(
+    () => _dio.post('/users/me/delete', data: {'pin': pin}),
+    (_) {},
+  );
+
   /// Add a payout account (Payout Accounts / Wallet settings only — never
   /// part of Create Transaction). Returns the full saved user.
   Future<ApiUser> addPayoutAccount({

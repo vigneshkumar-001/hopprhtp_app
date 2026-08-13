@@ -2,7 +2,7 @@ import 'package:flutter/services.dart';
 
 class PhoneHintService {
   static const MethodChannel _channel =
-      MethodChannel('com.fenizotechnologies.hopptHtp/phone_hint');
+      MethodChannel('com.fenizotechnologies.hopprHtp/phone_hint');
 
   static Future<String?> pickPhoneNumber() async {
     try {

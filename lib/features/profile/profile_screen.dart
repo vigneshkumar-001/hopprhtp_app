@@ -17,6 +17,7 @@ import '../../core/providers.dart';
 import '../auth/application/auth_controller.dart';
 import '../notifications/notifications_screen.dart';
 import '../wallet/wallet_screen.dart';
+import 'delete_account_screen.dart';
 import 'edit_profile_screen.dart';
 import 'merchant_profile_screen.dart';
 import 'help_support_screen.dart';
@@ -324,6 +325,23 @@ class ProfileScreen extends ConsumerWidget {
             label: 'Log out',
             variant: AppButtonVariant.outline,
             onPressed: () => _confirmLogout(context),
+          ),
+          const SizedBox(height: AppSizes.sm),
+          Center(
+            child: GestureDetector(
+              onTap: () =>
+                  AppNav.push(context, const DeleteAccountScreen()),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: AppSizes.sm,
+                  horizontal: AppSizes.md,
+                ),
+                child: Text(
+                  'Delete account',
+                  style: AppText.body.copyWith(color: AppColors.danger),
+                ),
+              ),
+            ),
           ),
           // Clearance for the floating bottom bar when shown as a tab.
           SizedBox(height: embedded ? 112 : AppSizes.lg),

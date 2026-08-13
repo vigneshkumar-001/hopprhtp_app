@@ -9,7 +9,7 @@ plugins {
 }
 
 android {
-    namespace = "com.fenizotechnologies.hopptHtp"
+    namespace = "com.fenizotechnologies.hopprHtp"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -25,9 +25,18 @@ android {
         jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
+    signingConfigs {
+        create("release") {
+            keyAlias = "hoppr_upload"
+            keyPassword = "hoppr123"
+            storeFile = file("../hoppr_upload.jks")
+            storePassword = "hoppr123"
+        }
+    }
+
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.fenizotechnologies.hopptHtp"
+        applicationId = "com.fenizotechnologies.hopprHtp"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -38,9 +47,7 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
