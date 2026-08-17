@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/providers.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
+import '../../core/theme/app_typography.dart';
 import '../../data/app_state.dart';
 import '../../widgets/common.dart';
 import '../home/home_shell.dart';
@@ -62,29 +64,46 @@ class AuthGate extends ConsumerWidget {
   }
 }
 
-class _SplashView extends StatelessWidget {
+class _SplashView extends ConsumerWidget {
   const _SplashView();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final version = ref.watch(appVersionProvider).valueOrNull;
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            BrandMark(pill: true),
-            SizedBox(height: AppSizes.xl),
-            SizedBox(
-              height: 22,
-              width: 22,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.4,
-                valueColor: AlwaysStoppedAnimation(AppColors.textTertiary),
+      body: Stack(
+        children: [
+          const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                BrandMark(pill: true),
+                SizedBox(height: AppSizes.xl),
+                SizedBox(
+                  height: 22,
+                  width: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.4,
+                    valueColor: AlwaysStoppedAnimation(AppColors.textTertiary),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (version != null)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: AppSizes.xl,
+              child: Center(
+                child: Text(
+                  version,
+                  style: AppText.caption.copyWith(color: AppColors.textTertiary),
+                ),
               ),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }

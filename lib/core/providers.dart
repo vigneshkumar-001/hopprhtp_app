@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logger/logger.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/models/models.dart';
 import '../data/repositories/auth_repository.dart';
@@ -30,6 +31,15 @@ export 'storage/token_store.dart' show TokenStore;
 
 /// Secure token store — one instance app-wide.
 final tokenStoreProvider = Provider<TokenStore>((ref) => TokenStore());
+
+/// Real installed version + build number — read from the platform (Android's
+/// versionName/versionCode, iOS's CFBundleShortVersionString/Version), never
+/// hand-copied from pubspec.yaml, so it can never drift out of sync with
+/// what actually shipped. Shown on the splash screen and in Profile.
+final appVersionProvider = FutureProvider<String>((ref) async {
+  final info = await PackageInfo.fromPlatform();
+  return 'v${info.version} (${info.buildNumber})';
+});
 
 /// Biometric (fingerprint / face) unlock service.
 final biometricServiceProvider = Provider<BiometricService>(

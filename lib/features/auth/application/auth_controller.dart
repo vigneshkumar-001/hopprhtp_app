@@ -132,41 +132,9 @@ class AuthController extends AsyncNotifier<AuthState> {
     state = AsyncData(AuthState.authenticated(session.user));
   }
 
-  /// Sign-up step 1 — does not change session state; returns the resend
-  /// cooldown the server enforced (plus the dev OTP, non-prod only).
-  Future<OtpRequestResult> requestOtp({
-    required String fullName,
-    required String phone,
-    String? email,
-  }) => _repo.requestOtp(fullName: fullName, phone: phone, email: email);
-
-  /// Re-send the registration OTP (server enforces the resend cooldown).
-  Future<OtpRequestResult> resendOtp({required String phone}) =>
-      _repo.resendOtp(phone: phone);
-
-  /// Verify the OTP on the Verify screen (throws [ApiException] on a wrong code).
-  Future<void> verifyOtp({required String phone, required String otp}) =>
-      _repo.verifyOtp(phone: phone, otp: otp);
-
-  /// Sign-up steps 2 + 3 — verifies OTP, sets PIN, and signs the user in.
-  /// Throws [ApiException] on failure (wrong OTP, rate-limited).
-  Future<void> confirmRegister({
-    required String phone,
-    required String otp,
-    required String pin,
-  }) async {
-    final session = await _repo.confirmRegister(
-      phone: phone,
-      otp: otp,
-      pin: pin,
-    );
-    await _tokens.save(
-      access: session.accessToken,
-      refresh: session.refreshToken,
-    );
-    resetUserScopedProviders(ref);
-    state = AsyncData(AuthState.authenticated(session.user));
-  }
+  /// Pre-flight check before starting Firebase phone verification on
+  /// sign-up — see [AuthRepository.isPhoneAvailable].
+  Future<bool> isPhoneAvailable(String phone) => _repo.isPhoneAvailable(phone);
 
   /// Firebase Phone Auth registration — creates the account and signs the
   /// user in. Throws [ApiException] on failure (duplicate phone/email,
@@ -208,15 +176,11 @@ class AuthController extends AsyncNotifier<AuthState> {
 
   /// Submit identity documents for review; updates the session user on success.
   Future<void> submitIdentity({
-    required String docType,
-    required String documentFrontUrl,
-    String? documentBackUrl,
+    required List<KycDocumentPayload> documents,
     required String selfieUrl,
   }) async {
     final user = await _repo.submitIdentity(
-      docType: docType,
-      documentFrontUrl: documentFrontUrl,
-      documentBackUrl: documentBackUrl,
+      documents: documents,
       selfieUrl: selfieUrl,
     );
     state = AsyncData(AuthState.authenticated(user));
@@ -314,6 +278,18 @@ class AuthController extends AsyncNotifier<AuthState> {
     state = AsyncData(await _loadSession());
   }
 
+  /// Re-locks an already-authenticated session the moment biometric unlock
+  /// is on — called from [HopprApp]'s app-lifecycle observer when the app is
+  /// backgrounded, so returning to it always demands a fresh biometric (or
+  /// PIN, via [unlock]'s sign-in fallback) check instead of resuming straight
+  /// to the dashboard. A no-op when biometric is off (the default: the
+  /// session just resumes normally) or when there's no live session to lock.
+  Future<void> relockIfBiometricEnabled() async {
+    if (state.valueOrNull?.isAuthenticated != true) return;
+    if (!await _biometrics.isEnabled()) return;
+    state = const AsyncData(AuthState.locked());
+  }
+
   /// Turn biometric unlock on — requires a successful biometric check first.
   Future<bool> enableBiometric() async {
     if (!await _biometrics.isAvailable()) return false;
@@ -338,16 +314,15 @@ class AuthController extends AsyncNotifier<AuthState> {
   /// Verify the account PIN (Change-PIN flow). Throws on a wrong PIN.
   Future<void> verifyAccountPin(String pin) => _repo.verifyPin(pin: pin);
 
-  /// Start the forgot-PIN flow by sending a reset OTP to the registered phone.
-  Future<String?> requestPinReset({required String phone}) =>
-      _repo.requestPinReset(phone: phone);
-
-  /// Confirm the forgot-PIN flow by verifying the OTP and setting the new PIN.
-  Future<void> confirmPinReset({
-    required String phone,
-    required String otp,
+  /// Confirm the forgot-PIN flow with a Firebase phone-verification ID token
+  /// plus the new PIN — see [AuthRepository.confirmPinResetWithFirebase].
+  Future<void> confirmPinResetWithFirebase({
+    required String firebaseIdToken,
     required String newPin,
-  }) => _repo.confirmPinReset(phone: phone, otp: otp, newPin: newPin);
+  }) => _repo.confirmPinResetWithFirebase(
+    firebaseIdToken: firebaseIdToken,
+    newPin: newPin,
+  );
 }
 
 final authControllerProvider = AsyncNotifierProvider<AuthController, AuthState>(

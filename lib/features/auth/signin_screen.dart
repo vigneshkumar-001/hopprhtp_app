@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/data/countries.dart';
+import '../../core/native/firebase_phone_auth_service.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/network/connectivity.dart';
 import '../../core/network/error_messages.dart';
@@ -15,6 +17,7 @@ import '../../widgets/app_button.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/common.dart';
+import '../../widgets/country_picker_sheet.dart';
 import '../../widgets/feedback/app_snackbar.dart';
 import '../../widgets/pin_field.dart';
 import 'application/auth_controller.dart';
@@ -32,6 +35,10 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
   final _pin = TextEditingController();
   bool _busy = false;
   bool _biometricSession = false; // a biometric-protected session is remembered
+  // Same default + picker as sign-up's phone step — sign-in is phone-only
+  // now (see [_buildIdentifier]/the identifier field's digitsOnly formatter
+  // below), so this always applies.
+  Country _phoneCountry = countryByIso2(kDefaultCountryIso2) ?? kCountries.first;
 
   @override
   void initState() {
@@ -65,6 +72,23 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
   bool get _canSubmit =>
       _identifier.text.trim().isNotEmpty && _pin.text.length == 6;
 
+  Future<void> _pickPhoneCountry() async {
+    final c = await showCountryPicker(context, selectedIso2: _phoneCountry.iso2);
+    if (c != null) setState(() => _phoneCountry = c);
+  }
+
+  /// The same 10 digits can be a real number in more than one supported
+  /// country (e.g. +91 7904005315 vs +234 7904005315), so a bare number
+  /// typed here is genuinely ambiguous without the country picker — this
+  /// prepends the selected dial code exactly like sign-up's phone step.
+  /// Left untouched for email (contains '@') or an already-"+"-prefixed
+  /// number (e.g. pasted from the Google number picker).
+  String _buildIdentifier() {
+    final digits = _identifier.text.trim();
+    if (digits.isEmpty) return digits;
+    return '${_phoneCountry.dialCode}$digits';
+  }
+
   /// Biometric unlock for a returning user who enabled it. (When there's no
   /// stored session — the usual case on this screen — guide them to set it up.)
   Future<void> _biometricSignIn() async {
@@ -81,7 +105,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
 
   Future<void> _enter() async {
     FocusScope.of(context).unfocus();
-    final identifier = _identifier.text.trim();
+    final identifier = _buildIdentifier();
     if (identifier.isEmpty || _pin.text.length != 6 || _busy) return;
 
     // Pre-flight offline check — fail fast with a clear, actionable message.
@@ -168,7 +192,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                 variant: AppButtonVariant.outline,
                 onPressed: _enter,
               ),
-            ] else ...[
+            ] else
               AppButton(
                 label: 'Sign in',
                 trailingIcon: Icons.arrow_forward_rounded,
@@ -176,14 +200,6 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                 loading: _busy,
                 onPressed: _enter,
               ),
-              const SizedBox(height: AppSizes.md),
-              AppButton(
-                label: 'Use biometrics',
-                icon: Icons.fingerprint_rounded,
-                variant: AppButtonVariant.outline,
-                onPressed: _biometricSignIn,
-              ),
-            ],
             const SizedBox(height: AppSizes.md),
             _CreateAccountPrompt(),
           ],
@@ -199,13 +215,29 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
             Text('Sign in to manage your protected transactions.',
                 style: AppText.body),
             const SizedBox(height: AppSizes.xxl),
-            AppTextField(
-              label: 'Phone number',
-              hint: 'Phone or email',
-              icon: Icons.phone_outlined,
-              controller: _identifier,
-              keyboardType: TextInputType.emailAddress,
-              textInputAction: TextInputAction.next,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                SizedBox(
+                  width: 96,
+                  child: _CountryPickerField(
+                    country: _phoneCountry,
+                    onTap: _pickPhoneCountry,
+                  ),
+                ),
+                const SizedBox(width: AppSizes.sm),
+                Expanded(
+                  child: AppTextField(
+                    label: 'Phone number',
+                    hint: 'Phone number',
+                    icon: Icons.phone_outlined,
+                    controller: _identifier,
+                    keyboardType: TextInputType.phone,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    textInputAction: TextInputAction.next,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: AppSizes.lg),
             Text('Transaction PIN', style: AppText.label),
@@ -231,34 +263,57 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
   }
 
   void _showForgotPin(BuildContext context) {
+    final identifier = _identifier.text.trim();
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: AppColors.surface,
       shape: RoundedRectangleBorder(borderRadius: AppRadii.xl),
-      builder: (_) => _ForgotPinSheet(),
+      // Carry over whatever the person already typed on the sign-in field —
+      // only if it looks like a phone (not an email), so they don't have to
+      // retype it. Still freely editable in the sheet if it's wrong.
+      builder: (_) => _ForgotPinSheet(
+        initialPhone: identifier.contains('@') ? null : identifier,
+        initialCountry: _phoneCountry,
+      ),
     );
   }
 }
 
 class _ForgotPinSheet extends ConsumerStatefulWidget {
+  const _ForgotPinSheet({this.initialPhone, this.initialCountry});
+
+  /// Whatever the person already typed in the sign-in identifier field —
+  /// prefilled here so they don't retype it, but still freely editable.
+  final String? initialPhone;
+  final Country? initialCountry;
+
   @override
   ConsumerState<_ForgotPinSheet> createState() => _ForgotPinSheetState();
 }
 
 class _ForgotPinSheetState extends ConsumerState<_ForgotPinSheet> {
-  final _phone = TextEditingController();
+  late final _phone = TextEditingController(text: widget.initialPhone ?? '');
   final _otp = TextEditingController();
   final _newPin = TextEditingController();
   final _confirmPin = TextEditingController();
-  bool _sent = false;
+  late final _phoneAuth = FirebasePhoneAuthService();
+  // Same default + picker as sign-up's phone step — a bare number is
+  // ambiguous between supported countries without it (see signin_screen's
+  // own phone field for the login-time version of this fix).
+  late Country _phoneCountry =
+      widget.initialCountry ?? countryByIso2(kDefaultCountryIso2) ?? kCountries.first;
+
+  int _stage = 0; // 0 phone · 1 OTP · 2 new PIN
   bool _busy = false;
+  Timer? _resendTimer;
+  int _resendIn = 0;
+  String? _firebaseIdToken;
 
   bool get _canSend => _phone.text.trim().isNotEmpty;
-  bool get _canConfirm =>
-      _phone.text.trim().isNotEmpty &&
-      _otp.text.trim().length == 6 &&
+  bool get _canConfirmCode => _otp.text.trim().length == 6;
+  bool get _canReset =>
       _newPin.text.length == 6 &&
       _confirmPin.text.length == 6 &&
       _newPin.text == _confirmPin.text;
@@ -277,6 +332,7 @@ class _ForgotPinSheetState extends ConsumerState<_ForgotPinSheet> {
 
   @override
   void dispose() {
+    _resendTimer?.cancel();
     _phone.dispose();
     _otp.dispose();
     _newPin.dispose();
@@ -284,38 +340,140 @@ class _ForgotPinSheetState extends ConsumerState<_ForgotPinSheet> {
     super.dispose();
   }
 
-  Future<void> _sendOtp() async {
+  Future<void> _pickPhoneCountry() async {
+    final c = await showCountryPicker(context, selectedIso2: _phoneCountry.iso2);
+    if (c != null) setState(() => _phoneCountry = c);
+  }
+
+  /// Same E.164-building rule as sign-up's phone step.
+  String _buildE164Phone() {
+    final raw = _phone.text.trim();
+    if (raw.startsWith('+')) return raw.replaceAll(RegExp(r'[\s()-]'), '');
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    return '${_phoneCountry.dialCode}$digits';
+  }
+
+  void _startResendCountdown(int seconds) {
+    _resendTimer?.cancel();
+    setState(() => _resendIn = seconds);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() => _resendIn -= 1);
+      if (_resendIn <= 0) t.cancel();
+    });
+  }
+
+  /// Step 1 — Firebase sends the SMS directly; no backend call needed here.
+  Future<void> _sendCode() async {
     FocusScope.of(context).unfocus();
     if (_busy || !_canSend) return;
-    if (!context.mounted) return;
-    final phone = _phone.text.trim();
+    if (!ref.isOnline) {
+      AppSnackbar.error(
+        context,
+        'No internet connection. Please check your network and try again.',
+      );
+      return;
+    }
     setState(() => _busy = true);
     try {
-      final devOtp =
-          await ref.read(authControllerProvider.notifier).requestPinReset(phone: phone);
-      if (!mounted) return;
-      setState(() => _sent = true);
-      AppSnackbar.success(
-        context,
-        devOtp == null
-            ? 'If the number exists, a PIN reset code has been sent.'
-            : 'Dev OTP: $devOtp',
+      await _phoneAuth.startVerification(
+        phoneNumber: _buildE164Phone(),
+        onCodeSent: (cooldown) {
+          if (!mounted) return;
+          setState(() {
+            _busy = false;
+            _stage = 1;
+          });
+          _startResendCountdown(cooldown);
+        },
+        onError: (e) {
+          if (!mounted) return;
+          setState(() => _busy = false);
+          AppSnackbar.error(context, e.message);
+        },
+        onAutoVerified: (idToken) {
+          if (!mounted) return;
+          setState(() {
+            _firebaseIdToken = idToken;
+            _stage = 2;
+          });
+        },
       );
-    } on ApiException catch (e) {
-      if (mounted) AppSnackbar.error(context, e.userMessage);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _busy = false);
+        AppSnackbar.error(context, 'Failed to send verification code.');
+      }
+    }
+  }
+
+  Future<void> _resendCode() async {
+    if (_busy || _resendIn > 0) return;
+    if (!ref.isOnline) {
+      AppSnackbar.error(
+        context,
+        'No internet connection. Please check your network and try again.',
+      );
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await _phoneAuth.startVerification(
+        phoneNumber: _buildE164Phone(),
+        isResend: true,
+        onCodeSent: (cooldown) {
+          if (!mounted) return;
+          setState(() => _busy = false);
+          _startResendCountdown(cooldown);
+          AppSnackbar.success(context, 'A new code has been sent.');
+        },
+        onError: (e) {
+          if (!mounted) return;
+          setState(() => _busy = false);
+          AppSnackbar.error(context, e.message);
+        },
+        onAutoVerified: (_) {},
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() => _busy = false);
+        AppSnackbar.error(context, 'Failed to resend code.');
+      }
+    }
+  }
+
+  /// Step 2 — confirm the Firebase code to get an ID token proving phone
+  /// ownership; that token (not the phone number itself) is what the
+  /// backend trusts to reset the PIN.
+  Future<void> _confirmCode() async {
+    FocusScope.of(context).unfocus();
+    if (_busy || !_canConfirmCode) return;
+    setState(() => _busy = true);
+    try {
+      final idToken = await _phoneAuth.confirmCode(_otp.text.trim());
+      if (!mounted) return;
+      setState(() {
+        _firebaseIdToken = idToken;
+        _stage = 2;
+      });
+    } on PhoneAuthException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _confirmReset() async {
+  /// Step 3 — set the new PIN using the already-verified Firebase token.
+  Future<void> _resetPin() async {
     FocusScope.of(context).unfocus();
-    if (_busy || !_canConfirm) return;
+    if (_busy || !_canReset || _firebaseIdToken == null) return;
     setState(() => _busy = true);
     try {
-      await ref.read(authControllerProvider.notifier).confirmPinReset(
-            phone: _phone.text.trim(),
-            otp: _otp.text.trim(),
+      await ref.read(authControllerProvider.notifier).confirmPinResetWithFirebase(
+            firebaseIdToken: _firebaseIdToken!,
             newPin: _newPin.text,
           );
       if (!mounted) return;
@@ -330,12 +488,18 @@ class _ForgotPinSheetState extends ConsumerState<_ForgotPinSheet> {
 
   @override
   Widget build(BuildContext context) {
+    // Belt-and-braces bottom padding: viewInsets.bottom clears the keyboard,
+    // viewPadding.bottom clears the gesture-nav bar even if the modal's own
+    // useSafeArea wrapping doesn't (some OEM nav-bar heights render inside a
+    // ClipRRect'd bottom sheet without it, clipping the button).
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         AppSizes.xl,
         AppSizes.xl,
         AppSizes.xl,
-        AppSizes.lg + MediaQuery.of(context).viewInsets.bottom,
+        AppSizes.lg +
+            MediaQuery.of(context).viewInsets.bottom +
+            MediaQuery.of(context).viewPadding.bottom,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -344,31 +508,62 @@ class _ForgotPinSheetState extends ConsumerState<_ForgotPinSheet> {
           Text('Reset your PIN', style: AppText.h2),
           const SizedBox(height: AppSizes.sm),
           Text(
-            _sent
-                ? 'Enter the code we sent to your registered phone number, then choose a new 6-digit PIN.'
-                : 'We will send a one-time code to your registered phone number to verify the reset.',
+            switch (_stage) {
+              1 => 'Enter the 6-digit code we sent to your phone.',
+              2 => 'Choose a new 6-digit PIN.',
+              _ => "Enter your registered phone number — we'll text you a "
+                  'verification code.',
+            },
             style: AppText.body,
           ),
           const SizedBox(height: AppSizes.xl),
-          AppTextField(
-            label: 'Phone number',
-            hint: 'Enter your registered phone number',
-            icon: Icons.phone_outlined,
-            controller: _phone,
-            keyboardType: TextInputType.phone,
-            autofillHints: const [AutofillHints.telephoneNumber],
-          ),
-          if (_sent) ...[
-            const SizedBox(height: AppSizes.lg),
+          if (_stage == 0)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                SizedBox(
+                  width: 96,
+                  child: _CountryPickerField(
+                    country: _phoneCountry,
+                    onTap: _pickPhoneCountry,
+                  ),
+                ),
+                const SizedBox(width: AppSizes.sm),
+                Expanded(
+                  child: AppTextField(
+                    label: 'Phone number',
+                    hint: 'Enter your registered phone number',
+                    icon: Icons.phone_outlined,
+                    controller: _phone,
+                    keyboardType: TextInputType.phone,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    autofillHints: const [AutofillHints.telephoneNumber],
+                  ),
+                ),
+              ],
+            ),
+          if (_stage == 1) ...[
             AppTextField(
               label: 'Verification code',
               hint: '6-digit code',
               icon: Icons.verified_outlined,
               controller: _otp,
               keyboardType: TextInputType.number,
-              textInputAction: TextInputAction.next,
+              textInputAction: TextInputAction.done,
             ),
-            const SizedBox(height: AppSizes.lg),
+            const SizedBox(height: AppSizes.sm),
+            GestureDetector(
+              onTap: _resendIn > 0 ? null : _resendCode,
+              child: Text(
+                _resendIn > 0 ? 'Resend code in ${_resendIn}s' : 'Resend code',
+                style: AppText.bodyStrong.copyWith(
+                  color: _resendIn > 0 ? AppColors.textTertiary : null,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+          if (_stage == 2) ...[
             Text('New PIN', style: AppText.label),
             const SizedBox(height: AppSizes.sm),
             AppTextField(
@@ -392,13 +587,68 @@ class _ForgotPinSheetState extends ConsumerState<_ForgotPinSheet> {
           ],
           const SizedBox(height: AppSizes.xl),
           AppButton(
-            label: _sent ? 'Reset PIN' : 'Send code',
+            label: switch (_stage) {
+              1 => 'Verify code',
+              2 => 'Reset PIN',
+              _ => 'Send code',
+            },
             loading: _busy,
-            enabled: _sent ? _canConfirm : _canSend,
-            onPressed: _sent ? _confirmReset : _sendOtp,
+            enabled: switch (_stage) {
+              1 => _canConfirmCode,
+              2 => _canReset,
+              _ => _canSend,
+            },
+            onPressed: switch (_stage) {
+              1 => _confirmCode,
+              2 => _resetPin,
+              _ => _sendCode,
+            },
           ),
         ],
       ),
+    );
+  }
+}
+
+class _CountryPickerField extends StatelessWidget {
+  const _CountryPickerField({required this.country, required this.onTap});
+  final Country country;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Code', style: AppText.label),
+        const SizedBox(height: AppSizes.sm),
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            height: AppSizes.fieldHeight,
+            padding: const EdgeInsets.symmetric(horizontal: AppSizes.sm),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: AppRadii.md,
+              border: Border.all(color: AppColors.border, width: 1.2),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(country.flag, style: const TextStyle(fontSize: 18)),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    country.dialCode,
+                    style: AppText.bodyStrong,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

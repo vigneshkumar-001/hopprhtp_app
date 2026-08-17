@@ -109,3 +109,37 @@ class AppNav {
     ).pushAndRemoveUntil<T>(route<T>(page), (r) => r.isFirst);
   }
 }
+
+/// Dismisses any showing [AppSnackbar] the instant the route changes.
+///
+/// `MaterialApp` shares one [ScaffoldMessenger] across every screen, so a
+/// SnackBar shown on screen A (e.g. sign-in's "Invalid credentials") stays
+/// visible — floating over whatever screen the user lands on next — until
+/// its own 3-6s timer runs out, including landing back on Onboarding after
+/// [AuthGate]'s session-end `popUntil`. Registered once as a
+/// `navigatorObservers` entry on the root `MaterialApp` so every push/pop/
+/// replace/remove across the app clears it, instead of every screen having
+/// to remember to clear it on its own success path.
+class ClearSnackBarsOnNavigate extends NavigatorObserver {
+  void _clear(Route<dynamic>? route) {
+    final context = route?.navigator?.context;
+    if (context == null) return;
+    ScaffoldMessenger.maybeOf(context)?.clearSnackBars();
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _clear(route);
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _clear(previousRoute);
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _clear(previousRoute);
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) =>
+      _clear(newRoute);
+}

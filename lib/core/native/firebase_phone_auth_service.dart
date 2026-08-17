@@ -129,9 +129,15 @@ class FirebasePhoneAuthService {
       PhoneAuthFailure.unknown,
       'Too many attempts. Please try again later.',
     ),
+    // The most common real cause of an otherwise-unlabelled Firebase failure
+    // is a mismatched country code + number (e.g. an Indian number sent with
+    // Nigeria's +234 still "looks" like a phone number to Firebase, so it
+    // never surfaces as invalid-phone-number — it just fails later, deep in
+    // the verification pipeline). Naming that guess beats a bare "try again".
     _ => const PhoneAuthException(
       PhoneAuthFailure.unknown,
-      'Unable to verify phone right now.',
+      "We couldn't verify that number. Double-check the country code "
+      'matches your number, then try again.',
     ),
   };
 }

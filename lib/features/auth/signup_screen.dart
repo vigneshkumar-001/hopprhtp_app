@@ -60,6 +60,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   // when its step becomes active — autofocus can't do this inside a PageView.
   final _otpFocus = FocusNode();
   final _pinFocus = FocusNode();
+  final _phoneFocus = FocusNode();
+  bool _phoneHintOffered = false;
 
   @override
   void initState() {
@@ -67,9 +69,27 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
     for (final c in [_name, _phone, _email, _otp, _pin]) {
       c.addListener(_refresh);
     }
+    // Offer the OS phone-number picker the moment the field is first
+    // focused, rather than requiring a separate tap on the "Google" chip —
+    // still fully ignorable: dismissing it (or just typing) leaves the field
+    // free to fill in manually.
+    _phoneFocus.addListener(() {
+      if (_phoneFocus.hasFocus) _maybeOfferPhoneHint();
+    });
   }
 
   void _refresh() => setState(() {});
+
+  Future<void> _maybeOfferPhoneHint() async {
+    if (_phoneHintOffered || _phone.text.trim().isNotEmpty) return;
+    _phoneHintOffered = true;
+    final picked = await PhoneHintService.pickPhoneNumber();
+    if (!mounted || picked == null || picked.trim().isEmpty) return;
+    setState(() {
+      _phone.text = picked.trim();
+      _phone.selection = TextSelection.collapsed(offset: _phone.text.length);
+    });
+  }
 
   @override
   void dispose() {
@@ -77,6 +97,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
     _pager.dispose();
     _otpFocus.dispose();
     _pinFocus.dispose();
+    _phoneFocus.dispose();
     for (final c in [_name, _phone, _email, _otp, _pin]) {
       c.dispose();
     }
@@ -185,6 +206,28 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
           return;
         }
         setState(() => _busy = true);
+        try {
+          // Reject an already-registered number immediately, before Firebase
+          // ever sends a real SMS for it — the backend's own conflict check
+          // at the final confirm step still guards this too, but only after
+          // the person has already gone through the whole OTP flow.
+          final available = await notifier.isPhoneAvailable(e164Phone);
+          if (!available) {
+            if (!mounted) return;
+            setState(() => _busy = false);
+            AppSnackbar.error(
+              context,
+              'An account with this phone number already exists. Try '
+              'signing in instead.',
+            );
+            return;
+          }
+        } on ApiException catch (_) {
+          // Fail open on a transient check failure — Firebase verification
+          // and the backend's confirm-time conflict check still guard
+          // against duplicates either way, so this never risks a double
+          // account; it just skips the early, friendlier rejection.
+        }
         try {
           await _phoneAuth.startVerification(
             phoneNumber: e164Phone,
@@ -377,6 +420,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                     _StepAccount(
                       name: _name,
                       phone: _phone,
+                      phoneFocus: _phoneFocus,
                       email: _email,
                       country: _phoneCountry,
                       onPickCountry: _pickPhoneCountry,
@@ -461,6 +505,7 @@ class _StepAccount extends StatelessWidget {
   const _StepAccount({
     required this.name,
     required this.phone,
+    required this.phoneFocus,
     required this.email,
     required this.country,
     required this.onPickCountry,
@@ -468,6 +513,7 @@ class _StepAccount extends StatelessWidget {
 
   final TextEditingController name;
   final TextEditingController phone;
+  final FocusNode phoneFocus;
   final TextEditingController email;
   final Country country;
   final VoidCallback onPickCountry;
@@ -488,7 +534,7 @@ class _StepAccount extends StatelessWidget {
           'Tell us who you are. This name appears on your protected transactions.',
           style: AppText.body,
         ),
-        const SizedBox(height: AppSizes.xxl),
+        const SizedBox(height: AppSizes.lg),
         AppTextField(
           label: 'Full name',
           hint: 'Amara Okafor',
@@ -497,7 +543,7 @@ class _StepAccount extends StatelessWidget {
           textInputAction: TextInputAction.next,
           autofocus: true,
         ),
-        const SizedBox(height: AppSizes.lg),
+        const SizedBox(height: AppSizes.md),
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
@@ -512,18 +558,15 @@ class _StepAccount extends StatelessWidget {
                 hint: '800 000 0000',
                 icon: Icons.phone_outlined,
                 controller: phone,
+                focusNode: phoneFocus,
                 keyboardType: TextInputType.phone,
                 textInputAction: TextInputAction.next,
                 autofillHints: const [AutofillHints.telephoneNumber],
-                // Field is freely editable (tap → keyboard). The Google
-                // number picker is an opt-in trailing action, so cancelling
-                // it never blocks manual entry.
-                trailing: _GooglePickButton(
-                  onPicked: (n) {
-                    phone.text = n;
-                    phone.selection = TextSelection.collapsed(offset: n.length);
-                  },
-                ),
+                // Field is freely editable (tap → keyboard) — focusing it
+                // offers the OS phone-number picker (see
+                // _maybeOfferPhoneHint) with no visible chip needed;
+                // dismissing that popup or just typing never blocks manual
+                // entry.
               ),
             ),
           ],
@@ -533,7 +576,7 @@ class _StepAccount extends StatelessWidget {
           'We\'ll text a verification code to this number.',
           style: AppText.caption.copyWith(color: AppColors.textTertiary),
         ),
-        const SizedBox(height: AppSizes.lg),
+        const SizedBox(height: AppSizes.md),
         AppTextField(
           label: 'Email (optional)',
           hint: 'you@email.com',
@@ -819,49 +862,6 @@ class _CountryPickerField extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Opt-in "pick a Google number" chip shown as the phone field's trailing
-/// action. Tapping it opens the OS phone-number picker; cancelling leaves the
-/// field untouched and freely editable (it never locks manual entry).
-class _GooglePickButton extends StatelessWidget {
-  const _GooglePickButton({required this.onPicked});
-  final ValueChanged<String> onPicked;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () async {
-        final picked = await PhoneHintService.pickPhoneNumber();
-        if (picked != null && picked.trim().isNotEmpty) {
-          onPicked(picked.trim());
-        }
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: AppColors.surfaceMuted,
-          borderRadius: AppRadii.pill,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.contacts_outlined,
-              size: 14,
-              color: AppColors.textSecondary,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              'Google',
-              style: AppText.caption.copyWith(fontWeight: FontWeight.w700),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

@@ -63,16 +63,6 @@ void main() {
     expect(tokens.refreshToken, isNull);
   });
 
-  test('resendOtp returns the code and cooldown from the repository', () async {
-    final c = makeContainer();
-    await c.read(authControllerProvider.future);
-    final result = await c
-        .read(authControllerProvider.notifier)
-        .resendOtp(phone: '+2348000000000');
-    expect(result.devOtp, '123456');
-    expect(result.cooldownSeconds, 30);
-  });
-
   test('biometric enabled + stored session → locked on launch', () async {
     await tokens.save(access: 'a', refresh: 'r');
     biometrics.enabled = true;

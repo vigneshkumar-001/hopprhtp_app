@@ -145,8 +145,16 @@ class _AppTextFieldState extends State<AppTextField> {
                   autofillHints: widget.autofillHints,
                   readOnly: widget.readOnly,
                   onTap: widget.onTap,
-                  minLines: widget.minLines,
-                  maxLines: widget.maxLines,
+                  // Flutter's TextField asserts `!obscureText || maxLines ==
+                  // 1` — forwarding widget.maxLines as-is means an obscured
+                  // field with no explicit maxLines crashes, since the
+                  // forwarded value is `null`, not `1` (an omitted
+                  // constructor argument defaults to 1, but explicitly
+                  // passing null does not). Force it here so every obscured
+                  // AppTextField is safe by construction, not by caller
+                  // discipline.
+                  minLines: widget.obscure ? null : widget.minLines,
+                  maxLines: widget.obscure ? 1 : widget.maxLines,
                   inputFormatters: widget.inputFormatters,
                   // Default to a "Next" action so the keyboard shows a next
                   // button that walks through the form's fields in order.
@@ -156,6 +164,7 @@ class _AppTextFieldState extends State<AppTextField> {
                   onSubmitted: widget.onSubmitted ?? _defaultSubmit,
                   cursorColor: AppColors.ink,
                   style: AppText.bodyStrong,
+                  textAlignVertical: TextAlignVertical.center,
                   decoration: InputDecoration(
                     isCollapsed: true,
                     border: InputBorder.none,

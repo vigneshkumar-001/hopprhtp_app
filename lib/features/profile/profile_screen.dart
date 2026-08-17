@@ -343,6 +343,16 @@ class ProfileScreen extends ConsumerWidget {
               ),
             ),
           ),
+          const SizedBox(height: AppSizes.lg),
+          Center(
+            child: Text(
+              ref.watch(appVersionProvider).maybeWhen(
+                    data: (v) => 'Hoppr HTP · $v',
+                    orElse: () => 'Hoppr HTP',
+                  ),
+              style: AppText.caption.copyWith(color: AppColors.textTertiary),
+            ),
+          ),
           // Clearance for the floating bottom bar when shown as a tab.
           SizedBox(height: embedded ? 112 : AppSizes.lg),
         ],

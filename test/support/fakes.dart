@@ -88,15 +88,19 @@ class FakeAuthRepository implements AuthRepository {
 
   @override
   Future<ApiUser> submitIdentity({
-    required String docType,
-    required String documentFrontUrl,
-    String? documentBackUrl,
+    required List<KycDocumentPayload> documents,
     required String selfieUrl,
   }) async => kTestUser;
 
   @override
   Future<ApiUser> verifyPhoneWithFirebase({required String idToken}) async =>
       kTestUser;
+
+  @override
+  Future<void> deleteAccount({required String pin}) async {}
+
+  @override
+  Future<bool> isPhoneAvailable(String phone) async => true;
 
   @override
   Future<ApiUser> addPayoutAccount({
@@ -121,14 +125,6 @@ class FakeAuthRepository implements AuthRepository {
   Future<ApiUser> setDefaultPayoutAccount(String accountId) async => kTestUser;
 
   @override
-  Future<AuthSession> confirmRegister({
-    required String phone,
-    required String otp,
-    required String pin,
-  }) async =>
-      const AuthSession(user: kTestUser, accessToken: 'a', refreshToken: 'r');
-
-  @override
   Future<AuthSession> confirmRegisterWithFirebase({
     required String fullName,
     required String phone,
@@ -137,20 +133,6 @@ class FakeAuthRepository implements AuthRepository {
     required String firebaseIdToken,
   }) async =>
       const AuthSession(user: kTestUser, accessToken: 'a', refreshToken: 'r');
-
-  @override
-  Future<OtpRequestResult> requestOtp({
-    required String fullName,
-    required String phone,
-    String? email,
-  }) async => (devOtp: '123456', cooldownSeconds: 30, testMode: false, testCode: null);
-
-  @override
-  Future<OtpRequestResult> resendOtp({required String phone}) async =>
-      (devOtp: '123456', cooldownSeconds: 30, testMode: false, testCode: null);
-
-  @override
-  Future<void> verifyOtp({required String phone, required String otp}) async {}
 
   @override
   Future<void> logoutAll() async {}
@@ -165,12 +147,8 @@ class FakeAuthRepository implements AuthRepository {
   Future<void> verifyPin({required String pin}) async {}
 
   @override
-  Future<String?> requestPinReset({required String phone}) async => '123456';
-
-  @override
-  Future<void> confirmPinReset({
-    required String phone,
-    required String otp,
+  Future<void> confirmPinResetWithFirebase({
+    required String firebaseIdToken,
     required String newPin,
   }) async {}
 }

@@ -157,13 +157,24 @@ class _HopprAppState extends ConsumerState<HopprApp>
     navigator.push(AppNav.route(const SupportTicketFormScreen()));
   }
 
-  /// Self-heal on resume: a socket that silently died while backgrounded
-  /// (dropped network, server restart, or a since-rotated access token — see
-  /// [SocketService.ensureConnected]) gets a fresh reconnect attempt with the
-  /// current token instead of staying dark until the user next logs out/in.
-  /// A no-op while unauthenticated or already connected.
+  /// Two independent lifecycle reactions:
+  ///  - On `paused` (app backgrounded): re-lock a biometric-protected session
+  ///    immediately, so by the time the user switches back — or glances at
+  ///    the OS app-switcher preview — the dashboard is already hidden behind
+  ///    a fresh biometric/PIN check instead of resuming straight to it. A
+  ///    no-op when biometric unlock is off (session just resumes normally,
+  ///    unchanged default behaviour) — see [AuthController.relockIfBiometricEnabled].
+  ///  - On `resumed`: self-heal a socket that silently died while
+  ///    backgrounded (dropped network, server restart, or a since-rotated
+  ///    access token — see [SocketService.ensureConnected]) instead of
+  ///    staying dark until the user next logs out/in. A no-op while
+  ///    unauthenticated or already connected.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      ref.read(authControllerProvider.notifier).relockIfBiometricEnabled();
+      return;
+    }
     if (state != AppLifecycleState.resumed) return;
     final authed =
         ref.read(authControllerProvider).valueOrNull?.isAuthenticated ?? false;
@@ -195,6 +206,7 @@ class _HopprAppState extends ConsumerState<HopprApp>
         listenable: _state,
         builder: (context, _) => MaterialApp(
           navigatorKey: _navigatorKey,
+          navigatorObservers: [ClearSnackBarsOnNavigate()],
           title: 'Hoppr',
           debugShowCheckedModeBanner: false,
           // Kept short: the circular ThemeReveal (below) is the headline
