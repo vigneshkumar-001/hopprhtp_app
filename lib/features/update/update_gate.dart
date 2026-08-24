@@ -14,10 +14,11 @@ import '../../widgets/common.dart';
 
 /// Compares the installed build number against the admin-configured
 /// [appUpdateInfoProvider] gate and shows a bottom sheet nudging (or, when
-/// the admin has switched Force Update on, requiring) an update. A non-forced
-/// nudge only shows when this build is genuinely behind `latestBuildNumber`;
-/// Force Update always shows, regardless of the build-number comparison — an
-/// admin can force-lock everyone on the exact build they're already running.
+/// the admin has switched Force Update on, requiring) an update. The sheet
+/// only ever shows when this build is genuinely behind `latestBuildNumber` —
+/// a user already on (or ahead of) the configured build never sees it, forced
+/// or not. Force Update only changes what happens once that gap is real: it
+/// makes the sheet non-dismissible instead of merely a nudge.
 /// Call [check] once, after first frame, from wherever the app already does
 /// its other one-shot startup work (see app.dart's postFrameCallback).
 class UpdateGate {
@@ -28,21 +29,16 @@ class UpdateGate {
   // stacking a second sheet on top of one already showing.
   static bool _isShowing = false;
 
-  /// The actual gating decision, pulled out as a pure function so the logic
-  /// bug this once had (Force Update being silently unreachable whenever
-  /// `installedBuild >= latestBuildNumber` — see update_gate_test.dart) can
-  /// never regress unnoticed. forceUpdate is an independent "block usage
-  /// right now" switch set by the admin — it must never depend on the
-  /// build-number comparison. An admin needs to be able to force-lock
-  /// everyone on the CURRENT build (installedBuild == latestBuildNumber, or
-  /// even installedBuild higher, e.g. to force a specific in-app action
-  /// before a fixed build exists yet), and that must work immediately, not
-  /// only once some future build number is published. A non-forced nudge,
-  /// on the other hand, only makes sense when a genuinely newer build is
-  /// actually available — so it stays gated on the comparison.
+  /// The actual gating decision, pulled out as a pure function so it can be
+  /// unit-tested without a widget tree (see update_gate_test.dart).
+  /// forceUpdate is never enough on its own to trigger the sheet — an admin
+  /// on the exact build already installed (or a build ahead of it) has
+  /// nothing for the user to update to, so the sheet must not show even with
+  /// Force Update switched on. It only decides whether the sheet, once a
+  /// genuine gap exists, can be dismissed.
   static bool shouldPrompt(AppUpdateInfo info, int installedBuild) {
     if (info.latestBuildNumber <= 0) return false;
-    return info.forceUpdate || installedBuild < info.latestBuildNumber;
+    return installedBuild < info.latestBuildNumber;
   }
 
   static Future<void> check(BuildContext context, WidgetRef ref) async {

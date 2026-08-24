@@ -16,19 +16,19 @@ void main() {
   );
 
   group('UpdateGate.shouldPrompt', () {
-    test('regression: forceUpdate must trigger even when the installed build already equals latestBuildNumber', () {
-      // The exact real-world report this guards against: admin sets
-      // forceUpdate: true on the build number that's already installed
-      // (e.g. to lock everyone out immediately, before a fixed build
-      // exists) — this must never be silently unreachable.
-      expect(UpdateGate.shouldPrompt(info(latestBuildNumber: 16, forceUpdate: true), 16), isTrue);
+    test('regression: forceUpdate must NOT trigger when the installed build already matches latestBuildNumber', () {
+      // The exact real-world requirement this guards against: an admin sets
+      // forceUpdate: true on the build number that's already installed —
+      // there is nothing to update to, so the sheet must stay hidden even
+      // with Force Update switched on.
+      expect(UpdateGate.shouldPrompt(info(latestBuildNumber: 16, forceUpdate: true), 16), isFalse);
     });
 
-    test('forceUpdate triggers even when the installed build is already newer than latestBuildNumber', () {
-      expect(UpdateGate.shouldPrompt(info(latestBuildNumber: 16, forceUpdate: true), 20), isTrue);
+    test('forceUpdate must NOT trigger when the installed build is already newer than latestBuildNumber', () {
+      expect(UpdateGate.shouldPrompt(info(latestBuildNumber: 16, forceUpdate: true), 20), isFalse);
     });
 
-    test('forceUpdate triggers for a genuinely older installed build too', () {
+    test('forceUpdate triggers for a genuinely older installed build', () {
       expect(UpdateGate.shouldPrompt(info(latestBuildNumber: 16, forceUpdate: true), 10), isTrue);
     });
 
