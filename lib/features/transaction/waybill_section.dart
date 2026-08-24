@@ -113,9 +113,54 @@ class _WaybillSectionState extends ConsumerState<WaybillSection> {
     }
   }
 
+  /// Shown once, right before the picker opens — the source document can
+  /// never be swapped out after this point (see waybill.service.ts:
+  /// `sourceDocumentUrl` is preserved once set, for audit/dispute integrity),
+  /// so the seller confirms they have the right file in hand before it's
+  /// permanently attached to this waybill.
+  Future<bool> _confirmDocumentUpload() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: AppRadii.xl),
+        title: Text('Upload this document?', style: AppText.h3),
+        content: Text(
+          'Once uploaded, this document becomes a permanent part of the '
+          'waybill and cannot be re-uploaded or replaced. Make sure it\'s '
+          'the correct Waybill or shipping document before continuing.',
+          style: AppText.body,
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(
+          AppSizes.md,
+          0,
+          AppSizes.md,
+          AppSizes.md,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              'Cancel',
+              style: AppText.bodyStrong.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Continue', style: AppText.bodyStrong),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   /// YES branch — seller has a real document: upload it, then the backend
   /// runs a real AI scan against it (see initExternalWaybill's sourceDocumentUrl).
   Future<void> _startExternalScanFlow() async {
+    final confirmed = await _confirmDocumentUpload();
+    if (!confirmed || !mounted) return;
     final picked = await showModalBottomSheet<XFile?>(
       context: context,
       backgroundColor: AppColors.surface,
