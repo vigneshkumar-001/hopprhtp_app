@@ -49,7 +49,8 @@ class AuthRepository {
   /// real, stored phone from the verified token itself — [phone] here is
   /// informational only, never trusted on its own.
   Future<AuthSession> confirmRegisterWithFirebase({
-    required String fullName,
+    required String firstName,
+    required String lastName,
     required String phone,
     String? email,
     required String pin,
@@ -59,7 +60,8 @@ class AuthRepository {
       () => _dio.post(
         '/auth/register/firebase',
         data: {
-          'fullName': fullName,
+          'firstName': firstName,
+          'lastName': lastName,
           'phone': phone,
           if (email != null && email.isNotEmpty) 'email': email,
           'pin': pin,

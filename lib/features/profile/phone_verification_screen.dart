@@ -43,6 +43,11 @@ class _PhoneVerificationScreenState
   bool _isSending = false;
   bool _isVerifying = false;
   String? _error;
+  // Set the moment auto-verify (or a manual submit) starts handing a token
+  // to the backend — lets a manual submit that loses the race against
+  // Android's silent SMS-Retriever auto-verify stay quiet instead of
+  // showing a confusing error for a verification that already succeeded.
+  bool _tokenSubmitted = false;
   Timer? _cooldownTimer;
   int _resendCooldown = 0;
 
@@ -126,6 +131,10 @@ class _PhoneVerificationScreenState
       await _submitToken(idToken);
     } on PhoneAuthException catch (e) {
       if (!mounted) return;
+      // Android's silent SMS-Retriever auto-verify can win the race and
+      // consume the verification session a moment before this manual
+      // submit lands — that's a success already in flight, not a failure.
+      if (_tokenSubmitted) return;
       setState(() {
         _isVerifying = false;
         _error = e.message;
@@ -134,7 +143,8 @@ class _PhoneVerificationScreenState
   }
 
   Future<void> _submitToken(String idToken) async {
-    if (!mounted) return;
+    if (!mounted || _tokenSubmitted) return;
+    _tokenSubmitted = true;
     setState(() {
       _isVerifying = true;
       _error = null;

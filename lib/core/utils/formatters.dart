@@ -98,6 +98,36 @@ class Dates {
   }
 }
 
+/// Buyer-facing share text (WhatsApp / SMS / email) for a payment link.
+class ShareText {
+  ShareText._();
+
+  /// Mirrors the backend's `transaction_created` seller email in tone (see
+  /// backend/src/modules/admin/emailTemplate.defaults.ts) but is the
+  /// buyer-facing message a seller shares to request payment — personalized
+  /// with the buyer's name when known, falling back to a plain "Hello,"
+  /// rather than guessing or omitting the greeting entirely.
+  static String paymentRequest({
+    required String sellerName,
+    required String productName,
+    required num amount,
+    required String code,
+    required String link,
+    String? buyerName,
+  }) {
+    final greeting = (buyerName != null && buyerName.trim().isNotEmpty)
+        ? 'Hello ${buyerName.trim()},'
+        : 'Hello,';
+    return 'Hoppr Secure Payment\n\n'
+        '$greeting $sellerName has created a secure payment request for '
+        'your $productName through Hoppr Trust Protocol (HTP).\n\n'
+        'Amount: ${Money.format(amount)}\n'
+        'Transaction ID: $code\n'
+        'Pay securely: $link\n\n'
+        'Your payment is protected in escrow until delivery is verified.';
+  }
+}
+
 /// Input formatter that groups the integer part with thousands separators
 /// while the user types an amount.
 class ThousandsFormatter extends TextInputFormatter {

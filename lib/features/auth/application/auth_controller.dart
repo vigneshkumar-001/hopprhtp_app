@@ -140,14 +140,16 @@ class AuthController extends AsyncNotifier<AuthState> {
   /// user in. Throws [ApiException] on failure (duplicate phone/email,
   /// invalid token).
   Future<void> confirmRegisterWithFirebase({
-    required String fullName,
+    required String firstName,
+    required String lastName,
     required String phone,
     String? email,
     required String pin,
     required String firebaseIdToken,
   }) async {
     final session = await _repo.confirmRegisterWithFirebase(
-      fullName: fullName,
+      firstName: firstName,
+      lastName: lastName,
       phone: phone,
       email: email,
       pin: pin,

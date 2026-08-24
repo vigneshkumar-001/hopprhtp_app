@@ -35,6 +35,7 @@ import 'enter_pickup_code_screen.dart';
 import 'cooling_period_screen.dart';
 import 'package_tracking_screen.dart';
 import 'settlement_ledger_screen.dart';
+import 'waybill_section.dart';
 import '../dispute/dispute_center_screen.dart';
 import '../dispute/dispute_status_screen.dart';
 import '../profile/merchant_profile_screen.dart';
@@ -945,6 +946,13 @@ class _TransactionDetailScreenState
                         const SizedBox(height: AppSizes.md),
                         _ProductCard(tx: tx, category: _category),
                         const SizedBox(height: AppSizes.md),
+                        WaybillSection(
+                          transactionId: tx.id,
+                          dispatcherMode:
+                              detailAsync.valueOrNull?.dispatcherMode ?? 'seller_self_delivery',
+                          isSeller: isSellerView,
+                        ),
+                        const SizedBox(height: AppSizes.md),
                         // Prominent dispute banner (either party) when one is active.
                         _buildDisputeSlot(context),
                         _BuyerInfoCard(
@@ -1002,6 +1010,9 @@ class _TransactionDetailScreenState
                           _PaymentLinkCard(
                             code: tx.code,
                             amount: tx.amount,
+                            sellerName: tx.merchantName,
+                            productName: tx.productName,
+                            buyerName: tx.buyerName,
                             expiresAt:
                                 detailAsync.valueOrNull?.paymentLinkExpiresAt,
                             isRenewing: _renewingPaymentLink,
@@ -2750,12 +2761,18 @@ class _PaymentLinkCard extends StatelessWidget {
   const _PaymentLinkCard({
     required this.code,
     required this.amount,
+    required this.sellerName,
+    required this.productName,
+    this.buyerName,
     this.expiresAt,
     this.isRenewing = false,
     this.onRenew,
   });
   final String code;
   final double amount;
+  final String sellerName;
+  final String productName;
+  final String? buyerName;
 
   /// Real, admin-configured expiry from the backend (Settings → Payment
   /// Link Expiry Days) — never fabricated client-side. Null when the
@@ -2769,10 +2786,14 @@ class _PaymentLinkCard extends StatelessWidget {
 
   String get _link => '${AppConfig.webBaseUrl}/pay/$code';
   String get _linkDisplay => _link.replaceFirst(RegExp(r'^https?://'), '');
-  String get _shareMessage =>
-      'Pay securely for your order via Hoppr escrow.\n'
-      'Amount: ${Money.format(amount)}\n'
-      'Pay here: $_link';
+  String get _shareMessage => ShareText.paymentRequest(
+    sellerName: sellerName,
+    productName: productName,
+    amount: amount,
+    code: code,
+    link: _link,
+    buyerName: buyerName,
+  );
 
   void _copyLink(BuildContext context) {
     Clipboard.setData(ClipboardData(text: _link));

@@ -32,7 +32,7 @@ class EditProfileScreen extends ConsumerStatefulWidget {
 
 class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   String _accountType = 'individual';
-  late final TextEditingController _first, _middle, _last, _phone;
+  late final TextEditingController _first, _last, _phone, _email;
   late final TextEditingController _day, _year;
   late final TextEditingController _line1, _line2, _city, _state, _zip;
   int? _month;
@@ -55,13 +55,11 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         .toList();
     final firstFromFull = parts.isNotEmpty ? parts.first : '';
     final lastFromFull = parts.length > 1 ? parts.last : '';
-    final middleFromFull =
-        parts.length > 2 ? parts.sublist(1, parts.length - 1).join(' ') : '';
 
     _first = TextEditingController(text: u?.firstName ?? firstFromFull);
-    _middle = TextEditingController(text: u?.middleName ?? middleFromFull);
     _last = TextEditingController(text: u?.lastName ?? lastFromFull);
     _phone = TextEditingController(text: u?.phone ?? '');
+    _email = TextEditingController(text: u?.email ?? '');
     _day = TextEditingController(text: u?.dob?.day.toString() ?? '');
     _year = TextEditingController(text: u?.dob?.year.toString() ?? '');
     _month = u?.dob?.month;
@@ -80,7 +78,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   }
 
   List<TextEditingController> get _controllers =>
-      [_first, _middle, _last, _phone, _day, _year, _line1, _line2, _city, _state, _zip];
+      [_first, _last, _phone, _email, _day, _year, _line1, _line2, _city, _state, _zip];
 
   void _refresh() => setState(() {});
 
@@ -92,9 +90,11 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     super.dispose();
   }
 
+  static final _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
   bool get _canSave =>
-      _first.text.trim().isNotEmpty &&
-      _last.text.trim().isNotEmpty &&
+      _first.text.trim().length >= 2 &&
+      _last.text.trim().length >= 2 &&
       _month != null &&
       _day.text.trim().isNotEmpty &&
       _year.text.trim().isNotEmpty &&
@@ -107,6 +107,12 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   Future<void> _save() async {
     FocusScope.of(context).unfocus();
     if (_busy || !_canSave) return;
+
+    if (_email.text.trim().isNotEmpty &&
+        !_emailPattern.hasMatch(_email.text.trim())) {
+      AppSnackbar.error(context, 'Please enter a valid email address.');
+      return;
+    }
 
     final day = int.tryParse(_day.text.trim()) ?? 0;
     final year = int.tryParse(_year.text.trim()) ?? 0;
@@ -125,10 +131,10 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
       final body = <String, dynamic>{
         'accountType': _accountType,
         'firstName': _first.text.trim(),
-        if (_middle.text.trim().isNotEmpty) 'middleName': _middle.text.trim(),
         'lastName': _last.text.trim(),
         'phone': _phone.text.trim(),
         'phoneCountry': _phoneCountry,
+        if (_email.text.trim().isNotEmpty) 'email': _email.text.trim(),
         'dob': {'day': day, 'month': _month, 'year': year},
         'address': {
           'line1': _line1.text.trim(),
@@ -172,18 +178,34 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: _labeled('First name',
-                    AppTextField(controller: _first), required: true),
+                child: _labeled(
+                  'First name',
+                  AppTextField(
+                    controller: _first,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r"[a-zA-Z '-]")),
+                      LengthLimitingTextInputFormatter(50),
+                    ],
+                  ),
+                  required: true,
+                ),
               ),
               const SizedBox(width: AppSizes.md),
               Expanded(
-                child: _labeled('Last name',
-                    AppTextField(controller: _last), required: true),
+                child: _labeled(
+                  'Last name',
+                  AppTextField(
+                    controller: _last,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r"[a-zA-Z '-]")),
+                      LengthLimitingTextInputFormatter(50),
+                    ],
+                  ),
+                  required: true,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: AppSizes.lg),
-          _labeled('Middle name', AppTextField(controller: _middle)),
           const SizedBox(height: AppSizes.lg),
 
           // Date of birth
@@ -260,6 +282,17 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               ],
             ),
             required: true,
+          ),
+          const SizedBox(height: AppSizes.lg),
+
+          // Email (optional)
+          _labeled(
+            'Email',
+            AppTextField(
+              controller: _email,
+              hint: 'you@email.com',
+              keyboardType: TextInputType.emailAddress,
+            ),
           ),
           const SizedBox(height: AppSizes.lg),
 

@@ -126,7 +126,8 @@ class FakeAuthRepository implements AuthRepository {
 
   @override
   Future<AuthSession> confirmRegisterWithFirebase({
-    required String fullName,
+    required String firstName,
+    required String lastName,
     required String phone,
     String? email,
     required String pin,

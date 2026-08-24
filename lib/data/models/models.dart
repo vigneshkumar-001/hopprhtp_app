@@ -233,18 +233,33 @@ extension PlatformFeePayerX on PlatformFeePayer {
 
 /// Who physically handles pickup + delivery — chosen once per transaction
 /// (mirrors the backend's `dispatcherMode`). `requestDispatcher` is the only
-/// case that asks for a dispatcher name/phone.
-enum DeliveryMethod { sellerSelf, requestDispatcher }
+/// case that asks for a dispatcher name/phone, and the only one Hoppr charges
+/// a delivery fee for. `externalLogistics` ("External Delivery" — an outside
+/// courier like GIG/DHL/UPS, OR an independent third-party dispatch rider who
+/// issues no formal document at all) is the only one that can involve an AI
+/// document scan — and only when the seller actually has a document to scan;
+/// see WaybillSection's "Do you have a Waybill?" prompt. The others are built
+/// entirely from transaction data, so they never cost a scan.
+enum DeliveryMethod { sellerSelf, requestDispatcher, externalLogistics }
 
 extension DeliveryMethodX on DeliveryMethod {
   String get label => switch (this) {
-    DeliveryMethod.sellerSelf => 'I will deliver myself',
-    DeliveryMethod.requestDispatcher => 'Request Hoppr Dispatcher',
+    DeliveryMethod.sellerSelf => 'Deliver Myself',
+    DeliveryMethod.requestDispatcher => 'Hoppr Dispatcher',
+    DeliveryMethod.externalLogistics => 'External Delivery',
+  };
+
+  /// One-line explanation shown under the label on the picker.
+  String get blurb => switch (this) {
+    DeliveryMethod.sellerSelf => 'You deliver the item yourself. No delivery fee.',
+    DeliveryMethod.requestDispatcher => 'Hoppr collects and delivers. Delivery fee applies.',
+    DeliveryMethod.externalLogistics => 'A courier (GIG, DHL...) or an independent rider delivers.',
   };
 
   String get wireValue => switch (this) {
     DeliveryMethod.sellerSelf => 'seller_self_delivery',
     DeliveryMethod.requestDispatcher => 'request_hoppr_dispatcher',
+    DeliveryMethod.externalLogistics => 'external_logistics',
   };
 }
 

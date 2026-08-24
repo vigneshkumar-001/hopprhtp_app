@@ -10,11 +10,10 @@ class AppConfig {
 
   static const String _override = String.fromEnvironment('API_BASE_URL');
 
-  /// Hosted backend (Heroku). Reachable from a real device, emulator and web
+  /// Hosted backend (AWS). Reachable from a real device, emulator and web
   /// alike. Override per-build with `--dart-define=API_BASE_URL=...` (e.g. a
   /// local dev tunnel) without touching this file.
-  static const String _default =
-      'https://hoppr-htp-ccf74f30631f.herokuapp.com/api/v1';
+  static const String _default = 'https://api.myhoppr.com/api/v1';
 
   static String get apiBaseUrl => _override.isNotEmpty ? _override : _default;
 

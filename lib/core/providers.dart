@@ -172,6 +172,17 @@ final googleApiKeyProvider = FutureProvider<String?>((ref) async {
   return cached;
 });
 
+/// Admin-configured "latest build" gate — powers the "Update available"
+/// bottom sheet (see UpdateGate). Failures resolve to null so a config fetch
+/// hiccup never blocks the app from opening — the sheet just doesn't show.
+final appUpdateInfoProvider = FutureProvider<AppUpdateInfo?>((ref) async {
+  try {
+    return await ref.read(publicConfigRepositoryProvider).appUpdateInfo();
+  } catch (_) {
+    return null;
+  }
+});
+
 final feeSettingsRepositoryProvider = Provider<FeeSettingsRepository>(
   (ref) => FeeSettingsRepository(ref.watch(dioProvider)),
 );

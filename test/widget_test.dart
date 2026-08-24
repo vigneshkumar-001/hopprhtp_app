@@ -40,7 +40,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Create your account'), findsOneWidget);
-    expect(find.text('Full name'), findsOneWidget);
+    expect(find.text('First name'), findsOneWidget);
+    expect(find.text('Last name'), findsOneWidget);
   });
 
   testWidgets('restored session → routes past onboarding to the dashboard',

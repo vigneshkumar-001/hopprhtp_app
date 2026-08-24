@@ -65,10 +65,14 @@ class _PaymentLinkReadyScreenState extends State<PaymentLinkReadyScreen> {
   /// The link without its scheme — cleaner to read on the card.
   String get _linkDisplay => _link.replaceFirst(RegExp(r'^https?://'), '');
 
-  String get _shareMessage =>
-      'Pay securely for your order via Hoppr escrow.\n'
-      'Amount: ${Money.format(widget.draft.grandTotal)}\n'
-      'Pay here: $_link';
+  String get _shareMessage => ShareText.paymentRequest(
+    sellerName: widget.draft.sellerName,
+    productName: widget.draft.productName,
+    amount: widget.draft.grandTotal,
+    code: _code,
+    link: _link,
+    buyerName: widget.tx?.buyerName,
+  );
 
   void _copyLink() => _copy(_link, isCode: false, label: 'Payment link copied');
   void _copyCode() =>

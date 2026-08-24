@@ -13,6 +13,7 @@ import 'data/app_state.dart';
 import 'data/models/models.dart';
 import 'features/auth/application/auth_controller.dart';
 import 'features/auth/auth_gate.dart';
+import 'features/update/update_gate.dart';
 import 'features/profile/support_ticket_form_screen.dart';
 import 'features/transaction/application/transactions_provider.dart';
 import 'features/transaction/package_tracking_screen.dart';
@@ -64,6 +65,10 @@ class _HopprAppState extends ConsumerState<HopprApp>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(googleApiKeyProvider.future);
       ref.read(feeSettingsProvider.future);
+      final navigatorContext = _navigatorKey.currentContext;
+      if (navigatorContext != null) {
+        UpdateGate.check(navigatorContext, ref);
+      }
     });
     _txEventsSub = ref.read(socketServiceProvider).events.listen((event) {
       AppLogger.debug(
@@ -179,6 +184,15 @@ class _HopprAppState extends ConsumerState<HopprApp>
     final authed =
         ref.read(authControllerProvider).valueOrNull?.isAuthenticated ?? false;
     if (authed) ref.read(socketServiceProvider).ensureConnected();
+    // Also re-check the update gate on every foreground, not just cold
+    // start — an admin can flip Force Update while the app is already
+    // running in someone's pocket, and the sheet should catch them the next
+    // time they switch back to it, not only on their next full app launch.
+    ref.invalidate(appUpdateInfoProvider);
+    final navigatorContext = _navigatorKey.currentContext;
+    if (navigatorContext != null) {
+      UpdateGate.check(navigatorContext, ref);
+    }
   }
 
   @override

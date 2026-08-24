@@ -8,6 +8,7 @@ import '../dto/scan_dto.dart';
 import '../dto/tracking_dto.dart';
 import '../dto/transaction_dto.dart';
 import '../dto/transaction_ledger_dto.dart';
+import '../dto/waybill_dto.dart';
 
 /// Wraps the `/transactions` endpoints. Lifecycle actions return the updated
 /// [ApiTransaction] so callers can refresh local state from the server's truth.
@@ -219,6 +220,60 @@ class TransactionRepository {
       (d) => ScanResult.fromJson(asMap(d)),
     );
   }
+
+  // ─── Waybill ────────────────────────────────────────────────────────────
+  // FLOW 1 (hoppr_logistics): initHopprWaybill auto-populates from the
+  // transaction — no AI/OCR call. FLOW 2 (External Delivery) has two
+  // sub-modes, both through initExternalWaybill: WITH a document, the
+  // vendor uploads their external waybill photo first (reuse the generic
+  // upload repository, same as product/dispatch photos) and its URL is
+  // passed here for the backend to scan; WITHOUT one (e.g. an independent
+  // rider who issues nothing formal), sourceDocumentUrl is simply omitted —
+  // no scan is ever attempted. Both funnel into the same
+  // updateWaybill/confirmWaybill.
+
+  Future<WaybillDto?> getWaybill(String transactionId, int consignmentIndex) => apiCall(
+        () => _dio.get('/transactions/$transactionId/consignments/$consignmentIndex/waybill'),
+        (d) => d == null ? null : WaybillDto.fromJson(asMap(d)),
+      );
+
+  Future<WaybillDto> initHopprWaybill(String transactionId, int consignmentIndex) => apiCall(
+        () => _dio.post(
+          '/transactions/$transactionId/consignments/$consignmentIndex/waybill/init-hoppr',
+        ),
+        (d) => WaybillDto.fromJson(asMap(d)),
+      );
+
+  Future<WaybillDto> initExternalWaybill(
+    String transactionId,
+    int consignmentIndex, {
+    String? sourceDocumentUrl,
+  }) => apiCall(
+        () => _dio.post(
+          '/transactions/$transactionId/consignments/$consignmentIndex/waybill/init-external',
+          data: {'sourceDocumentUrl': ?sourceDocumentUrl},
+        ),
+        (d) => WaybillDto.fromJson(asMap(d)),
+      );
+
+  Future<WaybillDto> updateWaybill(
+    String transactionId,
+    int consignmentIndex,
+    Map<String, dynamic> fields,
+  ) => apiCall(
+        () => _dio.patch(
+          '/transactions/$transactionId/consignments/$consignmentIndex/waybill',
+          data: fields,
+        ),
+        (d) => WaybillDto.fromJson(asMap(d)),
+      );
+
+  Future<WaybillDto> confirmWaybill(String transactionId, int consignmentIndex) => apiCall(
+        () => _dio.post(
+          '/transactions/$transactionId/consignments/$consignmentIndex/waybill/confirm',
+        ),
+        (d) => WaybillDto.fromJson(asMap(d)),
+      );
 
   /// Real tracking snapshot (buyer destination, seller's last reported
   /// position, and a route only when both exist) — no client-side fallback.

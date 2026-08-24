@@ -467,24 +467,25 @@ class _CreateTransactionScreenState
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Delivery method', style: AppText.h3),
-                const SizedBox(height: AppSizes.md),
-                SegmentedControl(
-                  segments: const ['Deliver myself', 'Hoppr Dispatcher'],
-                  selected: _deliveryMethod?.index ?? -1,
-                  onChanged: (i) => setState(
-                    () => _deliveryMethod = DeliveryMethod.values[i],
-                  ),
+                const SizedBox(height: AppSizes.xs),
+                Text(
+                  'Choose who will handle delivery for this order.',
+                  style: AppText.caption,
                 ),
-                const SizedBox(height: AppSizes.sm),
-                Text(switch (_deliveryMethod) {
-                  null =>
-                    'Choose who will handle pickup and delivery for this order.',
-                  DeliveryMethod.sellerSelf =>
-                    "You'll handle pickup and delivery yourself — no dispatcher needed.",
-                  DeliveryMethod.requestDispatcher =>
-                    'Enter your dispatcher below. They\'ll be notified once '
-                        'payment is secured.',
-                }, style: AppText.caption),
+                const SizedBox(height: AppSizes.md),
+                // Vertical options rather than a segmented control: each one
+                // changes what the seller is charged and what they'll be asked
+                // for later (a dispatcher, or an external courier's waybill),
+                // so each needs room for its own one-line explanation.
+                for (final method in DeliveryMethod.values) ...[
+                  _DeliveryMethodTile(
+                    method: method,
+                    selected: _deliveryMethod == method,
+                    onTap: () => setState(() => _deliveryMethod = method),
+                  ),
+                  if (method != DeliveryMethod.values.last)
+                    const SizedBox(height: AppSizes.sm),
+                ],
               ],
             ),
           ),
@@ -1052,6 +1053,62 @@ class _ConsignmentEditor extends ConsumerWidget {
           // once, after the Delivery Method selector. No payout/bank details
           // are ever collected here — see Payout Accounts / Wallet.
         ],
+      ),
+    );
+  }
+}
+
+/// One selectable delivery-method option. Kept as a tile rather than a
+/// segment so each option can carry the one line that actually matters to
+/// the seller — whether it costs a delivery fee, and whether they'll be asked
+/// for a courier's waybill afterwards.
+class _DeliveryMethodTile extends StatelessWidget {
+  const _DeliveryMethodTile({
+    required this.method,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final DeliveryMethod method;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppAccent.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: AppRadii.md,
+      child: Container(
+        padding: const EdgeInsets.all(AppSizes.md),
+        decoration: BoxDecoration(
+          color: selected ? accent.accentSoft : AppColors.surface,
+          borderRadius: AppRadii.md,
+          border: Border.all(
+            color: selected ? accent.accent : AppColors.border,
+            width: selected ? 1.6 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              selected ? Icons.radio_button_checked : Icons.radio_button_off,
+              size: 20,
+              color: selected ? accent.accent : AppColors.textTertiary,
+            ),
+            const SizedBox(width: AppSizes.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(method.label, style: AppText.bodyStrong),
+                  const SizedBox(height: 2),
+                  Text(method.blurb, style: AppText.caption),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

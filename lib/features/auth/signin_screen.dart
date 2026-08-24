@@ -435,7 +435,14 @@ class _ForgotPinSheetState extends ConsumerState<_ForgotPinSheet> {
           setState(() => _busy = false);
           AppSnackbar.error(context, e.message);
         },
-        onAutoVerified: (_) {},
+        onAutoVerified: (idToken) {
+          if (!mounted) return;
+          setState(() {
+            _busy = false;
+            _firebaseIdToken = idToken;
+            _stage = 2;
+          });
+        },
       );
     } catch (_) {
       if (mounted) {
@@ -460,7 +467,16 @@ class _ForgotPinSheetState extends ConsumerState<_ForgotPinSheet> {
         _stage = 2;
       });
     } on PhoneAuthException catch (e) {
-      if (mounted) AppSnackbar.error(context, e.message);
+      if (!mounted) return;
+      // Android's silent SMS-Retriever auto-verify can win the race and
+      // consume the verification session a moment before the user's manual
+      // tap lands — that's a success, not a failure. Only surface the error
+      // if auto-verify hasn't already gotten us a usable token.
+      if (_firebaseIdToken != null) {
+        setState(() => _stage = 2);
+      } else {
+        AppSnackbar.error(context, e.message);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

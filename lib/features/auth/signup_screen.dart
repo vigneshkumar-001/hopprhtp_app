@@ -48,7 +48,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   String? _firebaseIdToken;
 
   // Step 1
-  final _name = TextEditingController();
+  final _firstName = TextEditingController();
+  final _lastName = TextEditingController();
   final _phone = TextEditingController();
   final _email = TextEditingController();
   Country _phoneCountry = countryByIso2(kDefaultCountryIso2) ?? kCountries.first;
@@ -66,7 +67,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   @override
   void initState() {
     super.initState();
-    for (final c in [_name, _phone, _email, _otp, _pin]) {
+    for (final c in [_firstName, _lastName, _phone, _email, _otp, _pin]) {
       c.addListener(_refresh);
     }
     // Offer the OS phone-number picker the moment the field is first
@@ -98,14 +99,19 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
     _otpFocus.dispose();
     _pinFocus.dispose();
     _phoneFocus.dispose();
-    for (final c in [_name, _phone, _email, _otp, _pin]) {
+    for (final c in [_firstName, _lastName, _phone, _email, _otp, _pin]) {
       c.dispose();
     }
     super.dispose();
   }
 
   bool get _canContinue => switch (_step) {
-    0 => _name.text.trim().length >= 2 && _phone.text.trim().length >= 7,
+    0 =>
+      _firstName.text.trim().length >= 2 &&
+          _firstName.text.trim().length <= 50 &&
+          _lastName.text.trim().length >= 2 &&
+          _lastName.text.trim().length <= 50 &&
+          _phone.text.trim().length >= 7,
     1 => _otp.text.length == 6,
     2 => _pin.text.length == 6,
     _ => true,
@@ -234,7 +240,22 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
             onCodeSent: (cooldown) {
               if (!mounted) return;
               setState(() => _busy = false);
-              _advance();
+              // Firebase can silently re-send a fresh SMS on its own (e.g.
+              // falling back from Play Integrity to reCAPTCHA) — codeSent
+              // fires again with a NEW verificationId even though the user
+              // never tapped resend. If we're already past the phone-entry
+              // step, re-advancing would yank them straight to the PIN step
+              // with no code entered yet. Only advance the first time; a
+              // later re-fire just restarts the cooldown and tells the user
+              // a newer code is now the one that'll work.
+              if (_step == 0) {
+                _advance();
+              } else {
+                AppSnackbar.info(
+                  context,
+                  'A new code was just sent — use the latest SMS.',
+                );
+              }
               _startResendCountdown(cooldown);
             },
             onError: (e) {
@@ -242,8 +263,22 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
               setState(() => _busy = false);
               AppSnackbar.error(context, e.message);
             },
-            onAutoVerified: (_) {
-              // Auto-verify rarely happens; user will enter code manually.
+            onAutoVerified: (idToken) {
+              // Firebase's own SMS Retriever can silently verify the code
+              // the instant the SMS arrives — natively, independent of the
+              // visible OTP box. That auto-verification CONSUMES the
+              // verification session (it signs in + back out to mint the
+              // token). Discarding this token used to be a real bug: the
+              // same SMS also lands in the OTP field via Android's own
+              // autofill, so the user's manual confirm would fire moments
+              // later against an already-consumed session and fail with
+              // "session-expired" ("Verification timed out") — even though
+              // a perfectly valid token had already been minted right here.
+              // Using it and jumping straight to the PIN step is both the
+              // fix and a nicer flow — no retyping needed.
+              if (!mounted) return;
+              setState(() => _firebaseIdToken = idToken);
+              _goToStep(2);
             },
           );
         } catch (e) {
@@ -270,7 +305,15 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
           setState(() => _firebaseIdToken = idToken);
           _advance();
         } on PhoneAuthException catch (e) {
-          if (mounted) AppSnackbar.error(context, e.message);
+          if (!mounted) return;
+          // Android's silent SMS-Retriever auto-verify can win the race and
+          // consume the verification session a moment before this manual
+          // submit lands — that's a success already in hand, not a failure.
+          if (_firebaseIdToken != null) {
+            _advance();
+          } else {
+            AppSnackbar.error(context, e.message);
+          }
         } finally {
           if (mounted) setState(() => _busy = false);
         }
@@ -293,7 +336,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
         try {
           final email = _email.text.trim();
           await notifier.confirmRegisterWithFirebase(
-            fullName: _name.text.trim(),
+            firstName: _firstName.text.trim(),
+            lastName: _lastName.text.trim(),
             phone: _buildE164Phone(),
             email: email.isEmpty ? null : email,
             pin: _pin.text,
@@ -340,7 +384,17 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
           setState(() => _busy = false);
           AppSnackbar.error(context, e.message);
         },
-        onAutoVerified: (_) {},
+        // Same fix as the initial send above — use the auto-verified token
+        // instead of discarding it (see that comment for why discarding it
+        // actually broke the manual-entry path too).
+        onAutoVerified: (idToken) {
+          if (!mounted) return;
+          setState(() {
+            _busy = false;
+            _firebaseIdToken = idToken;
+          });
+          _goToStep(2);
+        },
       );
     } catch (e) {
       if (mounted) {
@@ -418,7 +472,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                   physics: const NeverScrollableScrollPhysics(),
                   children: [
                     _StepAccount(
-                      name: _name,
+                      firstName: _firstName,
+                      lastName: _lastName,
                       phone: _phone,
                       phoneFocus: _phoneFocus,
                       email: _email,
@@ -436,7 +491,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                     ),
                     _StepPin(pin: _pin, focusNode: _pinFocus),
                     _StepDone(
-                      name: _name.text,
+                      name: '${_firstName.text.trim()} ${_lastName.text.trim()}'.trim(),
                       contact: _email.text.trim().isNotEmpty
                           ? _email.text.trim()
                           : _phone.text.trim(),
@@ -503,7 +558,8 @@ class _SignInPrompt extends StatelessWidget {
 // ---------------------------------------------------------------------------
 class _StepAccount extends StatelessWidget {
   const _StepAccount({
-    required this.name,
+    required this.firstName,
+    required this.lastName,
     required this.phone,
     required this.phoneFocus,
     required this.email,
@@ -511,7 +567,8 @@ class _StepAccount extends StatelessWidget {
     required this.onPickCountry,
   });
 
-  final TextEditingController name;
+  final TextEditingController firstName;
+  final TextEditingController lastName;
   final TextEditingController phone;
   final FocusNode phoneFocus;
   final TextEditingController email;
@@ -536,12 +593,28 @@ class _StepAccount extends StatelessWidget {
         ),
         const SizedBox(height: AppSizes.lg),
         AppTextField(
-          label: 'Full name',
-          hint: 'Amara Okafor',
+          label: 'First name',
+          hint: 'Amara',
           icon: Icons.person_outline_rounded,
-          controller: name,
+          controller: firstName,
           textInputAction: TextInputAction.next,
           autofocus: true,
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r"[a-zA-Z '-]")),
+            LengthLimitingTextInputFormatter(50),
+          ],
+        ),
+        const SizedBox(height: AppSizes.md),
+        AppTextField(
+          label: 'Last name',
+          hint: 'Okafor',
+          icon: Icons.person_outline_rounded,
+          controller: lastName,
+          textInputAction: TextInputAction.next,
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r"[a-zA-Z '-]")),
+            LengthLimitingTextInputFormatter(50),
+          ],
         ),
         const SizedBox(height: AppSizes.md),
         Row(
