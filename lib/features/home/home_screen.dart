@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/network/error_messages.dart';
 import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
@@ -127,18 +126,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final user = ref.watch(authControllerProvider).valueOrNull?.user;
     final txs = ref.watch(transactionsProvider);
-    // A fetch failure is reported via the shared snackbar, never an inline
-    // page block — fires once per new error, not on every rebuild.
-    ref.listen(transactionsProvider, (previous, next) {
-      final err = next.error;
-      if (err != null) {
-        AppSnackbar.error(
-          context,
-          friendlyError(err),
-          onRetry: () => ref.invalidate(transactionsProvider),
-        );
-      }
-    });
+    // Error feedback for a failed fetch is handled by _onRefresh (the only
+    // user-initiated trigger on this screen) — not a blanket ref.listen here,
+    // which used to also fire on every SILENT background invalidation of
+    // this same shared provider (e.g. Transaction Detail's socket/poll
+    // fallback), stacking repeat "can't reach server" toasts unrelated to
+    // anything the user did on this screen.
 
     // Real numbers only — computed from the same live transaction list
     // rendered below, so the cards never disagree with it. A transient

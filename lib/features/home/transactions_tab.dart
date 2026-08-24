@@ -46,25 +46,29 @@ class TransactionsTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final txs = ref.watch(transactionsProvider);
-    // A fetch failure goes to the shared snackbar, never an inline page
-    // block — fires once per new error, not on every rebuild.
-    ref.listen(transactionsProvider, (previous, next) {
-      final err = next.error;
+
+    // Error feedback only for a pull the user actually did — not a blanket
+    // listener on the shared provider, which used to also fire from every
+    // silent background invalidation elsewhere in the app (a Transaction
+    // Detail screen's socket/poll fallback invalidates this same provider
+    // repeatedly), stacking repeat "can't reach server" toasts with no
+    // relation to anything this tab did. Same reasoning as
+    // TransactionDetailScreen's socket listener going silent.
+    Future<void> onRefresh() async {
+      await ref.read(transactionsProvider.notifier).refresh();
+      if (!context.mounted) return;
+      final err = ref.read(transactionsProvider).error;
       if (err != null) {
-        AppSnackbar.error(
-          context,
-          friendlyError(err),
-          onRetry: () => ref.invalidate(transactionsProvider),
-        );
+        AppSnackbar.error(context, friendlyError(err), onRetry: onRefresh);
       }
-    });
+    }
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         bottom: false,
         child: RefreshIndicator(
-          onRefresh: () => ref.read(transactionsProvider.notifier).refresh(),
+          onRefresh: onRefresh,
           color: AppColors.ink,
           child: ListView(
             physics: const BouncingScrollPhysics(
