@@ -8,6 +8,7 @@ import '../../core/native/phone_hint_service.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/network/connectivity.dart';
 import '../../core/network/error_messages.dart';
+import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
@@ -52,7 +53,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   final _lastName = TextEditingController();
   final _phone = TextEditingController();
   final _email = TextEditingController();
-  Country _phoneCountry = countryByIso2(kDefaultCountryIso2) ?? kCountries.first;
+  Country _phoneCountry =
+      countryByIso2(kDefaultCountryIso2) ?? kCountries.first;
 
   // Step 2 (OTP, 6 digits) & Step 3 (PIN, 6 digits)
   final _otp = TextEditingController();
@@ -171,7 +173,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   }
 
   Future<void> _pickPhoneCountry() async {
-    final c = await showCountryPicker(context, selectedIso2: _phoneCountry.iso2);
+    final c = await showCountryPicker(
+      context,
+      selectedIso2: _phoneCountry.iso2,
+    );
     if (c != null) setState(() => _phoneCountry = c);
   }
 
@@ -329,7 +334,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
           return;
         }
         if (_firebaseIdToken == null) {
-          AppSnackbar.error(context, 'Phone verification failed. Please try again.');
+          AppSnackbar.error(
+            context,
+            'Phone verification failed. Please try again.',
+          );
           return;
         }
         setState(() => _busy = true);
@@ -491,7 +499,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                     ),
                     _StepPin(pin: _pin, focusNode: _pinFocus),
                     _StepDone(
-                      name: '${_firstName.text.trim()} ${_lastName.text.trim()}'.trim(),
+                      name: '${_firstName.text.trim()} ${_lastName.text.trim()}'
+                          .trim(),
                       contact: _email.text.trim().isNotEmpty
                           ? _email.text.trim()
                           : _phone.text.trim(),
@@ -520,6 +529,15 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                       const SizedBox(height: AppSizes.md),
                       _SignInPrompt(),
                     ],
+                    const SizedBox(height: AppSizes.xs),
+                    Center(
+                      child: Text(
+                        ref.watch(appVersionProvider).valueOrNull ?? '',
+                        style: AppText.caption.copyWith(
+                          color: AppColors.textTertiary,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -622,7 +640,10 @@ class _StepAccount extends StatelessWidget {
           children: [
             SizedBox(
               width: 96,
-              child: _CountryPickerField(country: country, onTap: onPickCountry),
+              child: _CountryPickerField(
+                country: country,
+                onTap: onPickCountry,
+              ),
             ),
             const SizedBox(width: AppSizes.sm),
             Expanded(

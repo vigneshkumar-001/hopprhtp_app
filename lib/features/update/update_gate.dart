@@ -10,6 +10,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
 import '../../widgets/app_button.dart';
+import '../../widgets/common.dart';
 
 /// Compares the installed build number against the admin-configured
 /// [appUpdateInfoProvider] gate and shows a bottom sheet nudging (or, when
@@ -109,15 +110,7 @@ class _UpdateSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: AppColors.textPrimary.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(Icons.system_update_rounded, size: 26),
-          ),
+          const BrandMark(pill: true),
           const SizedBox(height: AppSizes.lg),
           Text('Update available', style: AppText.h2),
           const SizedBox(height: AppSizes.sm),

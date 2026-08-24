@@ -202,6 +202,13 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
               ),
             const SizedBox(height: AppSizes.md),
             _CreateAccountPrompt(),
+            const SizedBox(height: AppSizes.sm),
+            Center(
+              child: Text(
+                ref.watch(appVersionProvider).valueOrNull ?? '',
+                style: AppText.caption.copyWith(color: AppColors.textTertiary),
+              ),
+            ),
           ],
         ),
         body: Column(
