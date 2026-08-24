@@ -41,7 +41,8 @@ class WaybillSection extends ConsumerStatefulWidget {
   });
 
   final String transactionId;
-  final String dispatcherMode; // 'seller_self_delivery' | 'request_hoppr_dispatcher'
+  final String
+  dispatcherMode; // 'seller_self_delivery' | 'request_hoppr_dispatcher'
   final bool isSeller;
   final int consignmentIndex;
 
@@ -123,8 +124,12 @@ class _WaybillSectionState extends ConsumerState<WaybillSection> {
     );
     if (picked == null || !mounted) return;
     try {
-      final url = await ref.read(uploadRepositoryProvider).uploadImage(picked.path);
-      final wb = await ref.read(transactionRepositoryProvider).initExternalWaybill(
+      final url = await ref
+          .read(uploadRepositoryProvider)
+          .uploadImage(picked.path);
+      final wb = await ref
+          .read(transactionRepositoryProvider)
+          .initExternalWaybill(
             widget.transactionId,
             widget.consignmentIndex,
             sourceDocumentUrl: url,
@@ -207,7 +212,10 @@ class _WaybillSectionState extends ConsumerState<WaybillSection> {
               variant: AppButtonVariant.outline,
               onPressed: wb.pdfUrl == null
                   ? null
-                  : () => launchUrl(Uri.parse(wb.pdfUrl!), mode: LaunchMode.externalApplication),
+                  : () => launchUrl(
+                      Uri.parse(wb.pdfUrl!),
+                      mode: LaunchMode.externalApplication,
+                    ),
             ),
           ],
         ),
@@ -243,12 +251,21 @@ class _WaybillSectionState extends ConsumerState<WaybillSection> {
             ),
             const SizedBox(height: AppSizes.md),
             AppButton(
-              label: _isHopprLogistics ? 'Generate Waybill' : 'Start External Delivery Waybill',
-              icon: _isHopprLogistics ? Icons.auto_awesome_rounded : Icons.local_shipping_outlined,
-              onPressed: _isHopprLogistics ? _startHopprFlow : _startExternalFlow,
+              label: _isHopprLogistics
+                  ? 'Generate Waybill'
+                  : 'Start External Delivery Waybill',
+              icon: _isHopprLogistics
+                  ? Icons.auto_awesome_rounded
+                  : Icons.local_shipping_outlined,
+              onPressed: _isHopprLogistics
+                  ? _startHopprFlow
+                  : _startExternalFlow,
             ),
           ] else if (!wb.isConfirmed) ...[
-            Text('Review and confirm the details to generate the final waybill.', style: AppText.body),
+            Text(
+              'Review and confirm the details to generate the final waybill.',
+              style: AppText.body,
+            ),
             const SizedBox(height: AppSizes.md),
             AppButton(label: 'Continue review', onPressed: _openReviewSheet),
           ] else ...[
@@ -260,7 +277,10 @@ class _WaybillSectionState extends ConsumerState<WaybillSection> {
               variant: AppButtonVariant.outline,
               onPressed: wb.pdfUrl == null
                   ? null
-                  : () => launchUrl(Uri.parse(wb.pdfUrl!), mode: LaunchMode.externalApplication),
+                  : () => launchUrl(
+                      Uri.parse(wb.pdfUrl!),
+                      mode: LaunchMode.externalApplication,
+                    ),
             ),
           ],
         ],
@@ -279,12 +299,16 @@ class _StatusPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: AppSizes.sm, vertical: 2),
       decoration: BoxDecoration(
-        color: (confirmed ? Colors.green : Colors.orange).withValues(alpha: 0.12),
+        color: (confirmed ? Colors.green : Colors.orange).withValues(
+          alpha: 0.12,
+        ),
         borderRadius: AppRadii.pill,
       ),
       child: Text(
         confirmed ? 'Confirmed' : 'Draft',
-        style: AppText.caption.copyWith(color: confirmed ? Colors.green[800] : Colors.orange[800]),
+        style: AppText.caption.copyWith(
+          color: confirmed ? Colors.green[800] : Colors.orange[800],
+        ),
       ),
     );
   }
@@ -304,7 +328,10 @@ class _HasDocumentSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Do you already have a Waybill or shipping document', style: AppText.h3),
+            Text(
+              'Do you already have a Waybill or shipping document',
+              style: AppText.h3,
+            ),
             Text('from the delivery provider?', style: AppText.h3),
             const SizedBox(height: AppSizes.xs),
             Text(
@@ -348,7 +375,9 @@ class _ImageSourceSheet extends StatelessWidget {
               title: const Text('Take photo'),
               onTap: () async {
                 final f = await ImagePicker().pickImage(
-                  source: ImageSource.camera, imageQuality: 85, maxWidth: 1800,
+                  source: ImageSource.camera,
+                  imageQuality: 85,
+                  maxWidth: 1800,
                 );
                 if (context.mounted) Navigator.of(context).pop(f);
               },
@@ -358,7 +387,9 @@ class _ImageSourceSheet extends StatelessWidget {
               title: const Text('Upload from gallery'),
               onTap: () async {
                 final f = await ImagePicker().pickImage(
-                  source: ImageSource.gallery, imageQuality: 85, maxWidth: 1800,
+                  source: ImageSource.gallery,
+                  imageQuality: 85,
+                  maxWidth: 1800,
                 );
                 if (context.mounted) Navigator.of(context).pop(f);
               },
@@ -389,14 +420,19 @@ class _WaybillReviewSheet extends ConsumerStatefulWidget {
   final void Function(WaybillDto) onConfirmed;
 
   @override
-  ConsumerState<_WaybillReviewSheet> createState() => _WaybillReviewSheetState();
+  ConsumerState<_WaybillReviewSheet> createState() =>
+      _WaybillReviewSheetState();
 }
 
 class _WaybillReviewSheetState extends ConsumerState<_WaybillReviewSheet> {
   late final TextEditingController _shipperName, _shipperPhone, _shipperAddress;
-  late final TextEditingController _consigneeName, _consigneePhone, _consigneeAddress;
+  late final TextEditingController _consigneeName,
+      _consigneePhone,
+      _consigneeAddress;
   late final TextEditingController _itemDescription, _quantity, _packageType;
-  late final TextEditingController _pickupLocation, _deliveryLocation, _specialInstructions;
+  late final TextEditingController _pickupLocation,
+      _deliveryLocation,
+      _specialInstructions;
   bool _busy = false;
 
   /// Mirrors the backend's own required-field list (waybill.service.ts
@@ -404,12 +440,17 @@ class _WaybillReviewSheetState extends ConsumerState<_WaybillReviewSheet> {
   /// every one of these is filled, so a seller never taps it just to be
   /// bounced back by a server error for a field they could see was empty.
   List<TextEditingController> get _mandatoryControllers => [
-    _shipperName, _shipperPhone,
-    _consigneeName, _consigneePhone, _consigneeAddress,
-    _itemDescription, _deliveryLocation,
+    _shipperName,
+    _shipperPhone,
+    _consigneeName,
+    _consigneePhone,
+    _consigneeAddress,
+    _itemDescription,
+    _deliveryLocation,
   ];
 
-  bool get _canConfirm => _mandatoryControllers.every((c) => c.text.trim().isNotEmpty);
+  bool get _canConfirm =>
+      _mandatoryControllers.every((c) => c.text.trim().isNotEmpty);
 
   @override
   void initState() {
@@ -426,7 +467,9 @@ class _WaybillReviewSheetState extends ConsumerState<_WaybillReviewSheet> {
     _packageType = TextEditingController(text: w.packageType ?? '');
     _pickupLocation = TextEditingController(text: w.pickupLocation ?? '');
     _deliveryLocation = TextEditingController(text: w.deliveryLocation ?? '');
-    _specialInstructions = TextEditingController(text: w.specialInstructions ?? '');
+    _specialInstructions = TextEditingController(
+      text: w.specialInstructions ?? '',
+    );
     for (final c in _mandatoryControllers) {
       c.addListener(_onMandatoryFieldChanged);
     }
@@ -439,12 +482,21 @@ class _WaybillReviewSheetState extends ConsumerState<_WaybillReviewSheet> {
   @override
   void dispose() {
     for (final c in [
-      _shipperName, _shipperPhone, _shipperAddress,
-      _consigneeName, _consigneePhone, _consigneeAddress,
-      _itemDescription, _quantity, _packageType,
-      _pickupLocation, _deliveryLocation, _specialInstructions,
+      _shipperName,
+      _shipperPhone,
+      _shipperAddress,
+      _consigneeName,
+      _consigneePhone,
+      _consigneeAddress,
+      _itemDescription,
+      _quantity,
+      _packageType,
+      _pickupLocation,
+      _deliveryLocation,
+      _specialInstructions,
     ]) {
-      if (_mandatoryControllers.contains(c)) c.removeListener(_onMandatoryFieldChanged);
+      if (_mandatoryControllers.contains(c))
+        c.removeListener(_onMandatoryFieldChanged);
       c.dispose();
     }
     super.dispose();
@@ -468,11 +520,17 @@ class _WaybillReviewSheetState extends ConsumerState<_WaybillReviewSheet> {
         'deliveryLocation': _deliveryLocation.text.trim(),
         'specialInstructions': _specialInstructions.text.trim(),
       });
-      final confirmed = await repo.confirmWaybill(widget.transactionId, widget.consignmentIndex);
+      final confirmed = await repo.confirmWaybill(
+        widget.transactionId,
+        widget.consignmentIndex,
+      );
       if (!mounted) return;
       widget.onConfirmed(confirmed);
       Navigator.of(context).pop();
-      AppSnackbar.success(context, 'Waybill ${confirmed.waybillNumber ?? ''} generated.');
+      AppSnackbar.success(
+        context,
+        'Waybill ${confirmed.waybillNumber ?? ''} generated.',
+      );
     } on ApiException catch (e) {
       if (mounted) AppSnackbar.error(context, friendlyError(e));
     } finally {
@@ -483,15 +541,21 @@ class _WaybillReviewSheetState extends ConsumerState<_WaybillReviewSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: DraggableScrollableSheet(
         initialChildSize: 0.9,
         maxChildSize: 0.95,
         expand: false,
         builder: (context, scrollController) => ListView(
           controller: scrollController,
-          padding: const EdgeInsets.fromLTRB(
-              AppSizes.lg, AppSizes.lg, AppSizes.lg, AppSizes.xxl),
+          padding: EdgeInsets.fromLTRB(
+            AppSizes.lg,
+            AppSizes.lg,
+            AppSizes.lg,
+            AppSizes.xxl + MediaQuery.of(context).padding.bottom,
+          ),
           children: [
             Text('Review Waybill', style: AppText.h2),
             const SizedBox(height: AppSizes.xs),
@@ -508,17 +572,25 @@ class _WaybillReviewSheetState extends ConsumerState<_WaybillReviewSheet> {
                 decoration: BoxDecoration(
                   color: AppColors.warning.withValues(alpha: 0.1),
                   borderRadius: AppRadii.md,
-                  border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
+                  border: Border.all(
+                    color: AppColors.warning.withValues(alpha: 0.3),
+                  ),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.info_outline_rounded, size: 16, color: AppColors.warning),
+                    Icon(
+                      Icons.info_outline_rounded,
+                      size: 16,
+                      color: AppColors.warning,
+                    ),
                     const SizedBox(width: AppSizes.sm),
                     Expanded(
                       child: Text(
                         widget.waybill.scanWarnings.join(' '),
-                        style: AppText.caption.copyWith(color: AppColors.warning),
+                        style: AppText.caption.copyWith(
+                          color: AppColors.warning,
+                        ),
                       ),
                     ),
                   ],
@@ -528,29 +600,62 @@ class _WaybillReviewSheetState extends ConsumerState<_WaybillReviewSheet> {
             const SizedBox(height: AppSizes.lg),
             Text('Shipper (From)', style: AppText.title),
             const SizedBox(height: AppSizes.sm),
-            AppTextField(label: 'Name', required: true, controller: _shipperName),
+            AppTextField(
+              label: 'Name',
+              required: true,
+              controller: _shipperName,
+            ),
             const SizedBox(height: AppSizes.sm),
-            AppTextField(label: 'Phone', required: true, controller: _shipperPhone, keyboardType: TextInputType.phone),
+            AppTextField(
+              label: 'Phone',
+              required: true,
+              controller: _shipperPhone,
+              keyboardType: TextInputType.phone,
+            ),
             const SizedBox(height: AppSizes.sm),
             AppTextField(label: 'Address', controller: _shipperAddress),
             const SizedBox(height: AppSizes.lg),
             Text('Consignee (To)', style: AppText.title),
             const SizedBox(height: AppSizes.sm),
-            AppTextField(label: 'Name', required: true, controller: _consigneeName),
+            AppTextField(
+              label: 'Name',
+              required: true,
+              controller: _consigneeName,
+            ),
             const SizedBox(height: AppSizes.sm),
-            AppTextField(label: 'Phone', required: true, controller: _consigneePhone, keyboardType: TextInputType.phone),
+            AppTextField(
+              label: 'Phone',
+              required: true,
+              controller: _consigneePhone,
+              keyboardType: TextInputType.phone,
+            ),
             const SizedBox(height: AppSizes.sm),
-            AppTextField(label: 'Address', required: true, controller: _consigneeAddress),
+            AppTextField(
+              label: 'Address',
+              required: true,
+              controller: _consigneeAddress,
+            ),
             const SizedBox(height: AppSizes.lg),
             Text('Shipment', style: AppText.title),
             const SizedBox(height: AppSizes.sm),
-            AppTextField(label: 'Item description', required: true, controller: _itemDescription),
+            AppTextField(
+              label: 'Item description',
+              required: true,
+              controller: _itemDescription,
+            ),
             const SizedBox(height: AppSizes.sm),
             Row(
               children: [
-                Expanded(child: AppTextField(label: 'Quantity', controller: _quantity)),
+                Expanded(
+                  child: AppTextField(label: 'Quantity', controller: _quantity),
+                ),
                 const SizedBox(width: AppSizes.sm),
-                Expanded(child: AppTextField(label: 'Package type', controller: _packageType)),
+                Expanded(
+                  child: AppTextField(
+                    label: 'Package type',
+                    controller: _packageType,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: AppSizes.lg),
@@ -558,7 +663,11 @@ class _WaybillReviewSheetState extends ConsumerState<_WaybillReviewSheet> {
             const SizedBox(height: AppSizes.sm),
             AppTextField(label: 'Pickup location', controller: _pickupLocation),
             const SizedBox(height: AppSizes.sm),
-            AppTextField(label: 'Delivery location', required: true, controller: _deliveryLocation),
+            AppTextField(
+              label: 'Delivery location',
+              required: true,
+              controller: _deliveryLocation,
+            ),
             const SizedBox(height: AppSizes.sm),
             AppTextField(
               label: 'Special instructions (optional)',
