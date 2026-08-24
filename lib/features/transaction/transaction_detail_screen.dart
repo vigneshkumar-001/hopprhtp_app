@@ -116,6 +116,12 @@ class _TransactionDetailScreenState
     // transaction's id: the same event stream also carries every OTHER
     // transaction the user is a party to (for the app-wide Home/History
     // refresh in app.dart), which this screen has no reason to react to.
+    // Silent, same as pull-to-refresh and app-resume — the user is already
+    // looking at this screen, so the status pill/cards/action buttons
+    // updating live IS the signal. A snackbar on every event here (this was
+    // the only one of the three refresh paths that had one) was reported as
+    // the UI feeling disturbed by its own auto-refresh — real-time sync
+    // should be felt, not announced.
     _socketSub = _socket.events.where((e) => e.transactionId == tx.id).listen((
       event,
     ) {
@@ -124,7 +130,6 @@ class _TransactionDetailScreenState
         'type=${event.type} status=${event.status}',
       );
       _invalidateTx();
-      if (mounted) AppSnackbar.info(context, 'Transaction updated.');
     });
     _pollTimer = Timer.periodic(_pollInterval, (_) {
       if (!_socket.isConnected) {
@@ -949,7 +954,8 @@ class _TransactionDetailScreenState
                         WaybillSection(
                           transactionId: tx.id,
                           dispatcherMode:
-                              detailAsync.valueOrNull?.dispatcherMode ?? 'seller_self_delivery',
+                              detailAsync.valueOrNull?.dispatcherMode ??
+                              'seller_self_delivery',
                           isSeller: isSellerView,
                         ),
                         const SizedBox(height: AppSizes.md),
@@ -1547,7 +1553,10 @@ class _SellerCard extends StatelessWidget {
               children: [
                 Hero(
                   tag: 'txn-avatar-${tx.id}',
-                  child: InitialsAvatar(initials: tx.merchantInitials, size: 46),
+                  child: InitialsAvatar(
+                    initials: tx.merchantInitials,
+                    size: 46,
+                  ),
                 ),
                 const SizedBox(width: AppSizes.md),
                 Expanded(
