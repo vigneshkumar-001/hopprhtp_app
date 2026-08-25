@@ -28,13 +28,21 @@ class LiveSelfieCameraScreen extends StatefulWidget {
 /// How well the current frame's single detected face matches what a usable
 /// KYC selfie needs. Ordered roughly worst → best only for readability —
 /// nothing here relies on ordinal comparison.
-enum FaceFit { none, multiple, tooFar, tooClose, offCenter, good }
+enum FaceFit { none, multiple, tooFar, tooClose, offCenter, eyesClosed, good }
+
+/// Below this, an eye counts as closed. ML Kit's eye-open probability runs
+/// 0 (definitely closed) to 1 (definitely open); this sits low enough that
+/// a genuine blink caught mid-frame or a natural squint doesn't false-
+/// positive as "closed" — the goal is catching an actually-closed-eyes
+/// selfie, not demanding a wide-eyed stare.
+const _eyeClosedThreshold = 0.4;
 
 /// A face only counts as "good" when it's alone in frame, roughly centred,
-/// and large enough to actually be a usable identity match — never just "a
-/// face was detected somewhere". Tolerances are deliberately generous (this
-/// is a live camera held by hand, not a scanner) — the goal is rejecting
-/// genuinely unusable frames, not demanding pixel-perfect framing.
+/// large enough to actually be a usable identity match, and has both eyes
+/// open — never just "a face was detected somewhere". Tolerances are
+/// deliberately generous (this is a live camera held by hand, not a
+/// scanner) — the goal is rejecting genuinely unusable frames, not
+/// demanding pixel-perfect framing.
 ///
 /// A free function (not a widget method) specifically so this geometry —
 /// the actual accept/reject decision behind "can this be submitted" — is
@@ -44,6 +52,8 @@ FaceFit classifyFaceFit({
   required Rect? boundingBox,
   required int imageWidth,
   required int imageHeight,
+  double? leftEyeOpenProbability,
+  double? rightEyeOpenProbability,
 }) {
   if (faceCount == 0) return FaceFit.none;
   if (faceCount > 1) return FaceFit.multiple;
@@ -60,6 +70,20 @@ FaceFit classifyFaceFit({
 
   if (faceAreaRatio < 0.06) return FaceFit.tooFar;
   if (faceAreaRatio > 0.45) return FaceFit.tooClose;
+
+  // Checked last, only once framing is otherwise good — no point flagging
+  // closed eyes on a face that's still too far/off-center anyway. Null
+  // probabilities (classification unavailable for this frame) are treated
+  // as "can't tell, don't block" rather than assumed closed.
+  final left = leftEyeOpenProbability;
+  final right = rightEyeOpenProbability;
+  if (left != null &&
+      right != null &&
+      left < _eyeClosedThreshold &&
+      right < _eyeClosedThreshold) {
+    return FaceFit.eyesClosed;
+  }
+
   return FaceFit.good;
 }
 
@@ -131,6 +155,10 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
       options: FaceDetectorOptions(
         performanceMode: FaceDetectorMode.fast,
         enableTracking: false,
+        // Needed for Face.leftEyeOpenProbability/rightEyeOpenProbability —
+        // off by default, and without it those always come back null (see
+        // classifyFaceFit's eyesClosed check).
+        enableClassification: true,
       ),
     );
     _init();
@@ -200,6 +228,12 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
         boundingBox: faces.isEmpty ? null : faces.first.boundingBox,
         imageWidth: image.width,
         imageHeight: image.height,
+        leftEyeOpenProbability: faces.isEmpty
+            ? null
+            : faces.first.leftEyeOpenProbability,
+        rightEyeOpenProbability: faces.isEmpty
+            ? null
+            : faces.first.rightEyeOpenProbability,
       );
       if (mounted && fit != _fit) {
         final wasGood = _fit == FaceFit.good;
@@ -299,6 +333,7 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
       FaceFit.tooFar => 'Move a little closer',
       FaceFit.tooClose => 'Move back a little',
       FaceFit.offCenter => 'Center your face in the frame',
+      FaceFit.eyesClosed => 'Open your eyes',
       FaceFit.good => 'Perfect — hold still, capturing automatically',
     };
   }

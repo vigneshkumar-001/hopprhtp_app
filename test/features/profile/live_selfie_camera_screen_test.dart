@@ -105,5 +105,77 @@ void main() {
         expect(fit, FaceFit.offCenter);
       },
     );
+
+    test('both eyes reading as closed on an otherwise good frame is eyesClosed', () {
+      final fit = classifyFaceFit(
+        faceCount: 1,
+        boundingBox: centeredBox(widthFraction: 0.3),
+        imageWidth: imageWidth,
+        imageHeight: imageHeight,
+        leftEyeOpenProbability: 0.05,
+        rightEyeOpenProbability: 0.1,
+      );
+      expect(fit, FaceFit.eyesClosed);
+    });
+
+    test('only one eye reading as closed is not enough — still good', () {
+      final fit = classifyFaceFit(
+        faceCount: 1,
+        boundingBox: centeredBox(widthFraction: 0.3),
+        imageWidth: imageWidth,
+        imageHeight: imageHeight,
+        leftEyeOpenProbability: 0.05,
+        rightEyeOpenProbability: 0.9,
+      );
+      expect(
+        fit,
+        FaceFit.good,
+        reason: 'a single low reading is more likely a blink/angle than both '
+            'eyes genuinely shut',
+      );
+    });
+
+    test('a natural squint (not fully closed) still counts as good', () {
+      final fit = classifyFaceFit(
+        faceCount: 1,
+        boundingBox: centeredBox(widthFraction: 0.3),
+        imageWidth: imageWidth,
+        imageHeight: imageHeight,
+        leftEyeOpenProbability: 0.6,
+        rightEyeOpenProbability: 0.55,
+      );
+      expect(fit, FaceFit.good);
+    });
+
+    test(
+      'missing eye-open data (classification unavailable this frame) never blocks capture',
+      () {
+        final fit = classifyFaceFit(
+          faceCount: 1,
+          boundingBox: centeredBox(widthFraction: 0.3),
+          imageWidth: imageWidth,
+          imageHeight: imageHeight,
+          leftEyeOpenProbability: null,
+          rightEyeOpenProbability: null,
+        );
+        expect(fit, FaceFit.good);
+      },
+    );
+
+    test(
+      'framing problems are still checked before eyes — a too-far face with '
+      'closed eyes reports tooFar, not eyesClosed',
+      () {
+        final fit = classifyFaceFit(
+          faceCount: 1,
+          boundingBox: centeredBox(widthFraction: 0.08),
+          imageWidth: imageWidth,
+          imageHeight: imageHeight,
+          leftEyeOpenProbability: 0.02,
+          rightEyeOpenProbability: 0.02,
+        );
+        expect(fit, FaceFit.tooFar);
+      },
+    );
   });
 }
