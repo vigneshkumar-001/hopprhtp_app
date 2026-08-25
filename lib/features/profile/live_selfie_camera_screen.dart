@@ -338,6 +338,21 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
     };
   }
 
+  /// The short, uppercase HUD readout shown above [_statusMessage] — a
+  /// machine-vision-style status tag ("SCANNING", "FACE LOCKED"...) rather
+  /// than a second sentence, to read as an active AI scan rather than a
+  /// second, redundant instruction.
+  String get _hudLabel {
+    if (_capturing) return 'CAPTURING';
+    return switch (_fit) {
+      FaceFit.none => 'SEARCHING',
+      FaceFit.multiple => 'MULTIPLE FACES',
+      FaceFit.tooFar || FaceFit.tooClose || FaceFit.offCenter => 'ADJUSTING',
+      FaceFit.eyesClosed => 'ANALYZING',
+      FaceFit.good => 'FACE LOCKED',
+    };
+  }
+
   Color get _guideColor => switch (_fit) {
     FaceFit.good => AppColors.success,
     FaceFit.none => Colors.white70,
@@ -405,13 +420,19 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
         // exactly where the face needs to go — a plain full-bleed preview
         // gives no sense of "where do I put my face".
         Positioned.fill(child: _OvalMask(oval: oval)),
-        // Decorative facial-topology mesh — reads as a biometric face scan,
-        // brightening the closer the live frame gets to "good". Both the
-        // brightness and the guide color crossfade smoothly on a fit change
-        // (AnimatedOpacity + TweenAnimationBuilder) instead of snapping —
-        // the painter's own `opacity` stays fixed at 1 so its baked-in
-        // dot/line contrast ratio (see _FaceMeshPainter) is preserved; the
-        // wrapping AnimatedOpacity supplies the actual fit-dependent level.
+        // A faint targeting-grid behind the mesh — the "machine vision" HUD
+        // cue that reads as an AI scan rather than just a camera guide.
+        // Shares the mesh's own animated opacity/color exactly (drawn in
+        // the same TweenAnimationBuilder) so the two always move together.
+        //
+        // Decorative facial-topology mesh on top — reads as a biometric face
+        // scan, brightening the closer the live frame gets to "good". Both
+        // the brightness and the guide color crossfade smoothly on a fit
+        // change (AnimatedOpacity + TweenAnimationBuilder) instead of
+        // snapping — the painters' own `opacity` stays fixed at 1 so the
+        // baked-in relative contrast of each (see _ScanGridPainter /
+        // _FaceMeshPainter) is preserved; the wrapping AnimatedOpacity
+        // supplies the actual fit-dependent level.
         Positioned.fill(
           child: IgnorePointer(
             child: AnimatedOpacity(
@@ -425,12 +446,23 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
               child: TweenAnimationBuilder<Color?>(
                 tween: ColorTween(end: _guideColor),
                 duration: const Duration(milliseconds: 320),
-                builder: (context, color, _) => CustomPaint(
-                  painter: _FaceMeshPainter(
-                    oval: oval,
-                    color: color ?? _guideColor,
-                    opacity: 1,
-                  ),
+                builder: (context, color, _) => Stack(
+                  children: [
+                    CustomPaint(
+                      painter: _ScanGridPainter(
+                        oval: oval,
+                        color: color ?? _guideColor,
+                        opacity: 1,
+                      ),
+                    ),
+                    CustomPaint(
+                      painter: _FaceMeshPainter(
+                        oval: oval,
+                        color: color ?? _guideColor,
+                        opacity: 1,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -582,23 +614,71 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
             child: Padding(
               key: ValueKey(_statusMessage),
               padding: const EdgeInsets.symmetric(horizontal: AppSizes.xl),
-              child: Row(
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    isGood
-                        ? Icons.check_circle_rounded
-                        : Icons.face_retouching_natural_rounded,
-                    size: 16,
-                    color: _guideColor,
+                  // Machine-vision HUD tag — a pulsing dot + short uppercase
+                  // status word, the way a scanning/analysis overlay reads
+                  // out its state, above the plain-language instruction.
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AnimatedBuilder(
+                        animation: _pulseController,
+                        builder: (context, _) {
+                          final pulse = Curves.easeInOut.transform(
+                            _pulseController.value,
+                          );
+                          return Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _guideColor,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: _guideColor.withValues(
+                                    alpha: 0.5 + pulse * 0.5,
+                                  ),
+                                  blurRadius: 3 + pulse * 4,
+                                  spreadRadius: 0.5,
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _hudLabel,
+                        style: AppText.caption.copyWith(
+                          color: _guideColor,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 2.2,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: AppSizes.xs),
-                  Flexible(
-                    child: Text(
-                      _statusMessage,
-                      textAlign: TextAlign.center,
-                      style: AppText.bodyStrong.copyWith(color: Colors.white),
-                    ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isGood
+                            ? Icons.check_circle_rounded
+                            : Icons.face_retouching_natural_rounded,
+                        size: 16,
+                        color: _guideColor,
+                      ),
+                      const SizedBox(width: AppSizes.xs),
+                      Flexible(
+                        child: Text(
+                          _statusMessage,
+                          textAlign: TextAlign.center,
+                          style: AppText.bodyStrong.copyWith(color: Colors.white),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -661,6 +741,53 @@ class _OvalMaskPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _OvalMaskPainter oldDelegate) =>
       oldDelegate.oval != oval;
+}
+
+/// A faint targeting-grid clipped to the oval guide, drawn behind the face
+/// mesh — the "machine-vision HUD" cue (evenly spaced graticule lines, like
+/// a scanner's reference grid) that reads as an active AI scan rather than
+/// just a camera framing guide.
+class _ScanGridPainter extends CustomPainter {
+  _ScanGridPainter({
+    required this.oval,
+    required this.color,
+    required this.opacity,
+  });
+
+  final Rect oval;
+  final Color color;
+  final double opacity;
+
+  static const _columns = 7;
+  static const _rows = 9;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (opacity <= 0) return;
+    canvas.save();
+    canvas.clipPath(
+      Path()..addRRect(RRect.fromRectAndRadius(oval, Radius.circular(oval.width))),
+    );
+    final paint = Paint()
+      ..color = color.withValues(alpha: (opacity * 0.22).clamp(0.0, 1.0))
+      ..strokeWidth = 0.6
+      ..style = PaintingStyle.stroke;
+    for (var i = 1; i < _columns; i++) {
+      final x = oval.left + oval.width * i / _columns;
+      canvas.drawLine(Offset(x, oval.top), Offset(x, oval.bottom), paint);
+    }
+    for (var j = 1; j < _rows; j++) {
+      final y = oval.top + oval.height * j / _rows;
+      canvas.drawLine(Offset(oval.left, y), Offset(oval.right, y), paint);
+    }
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScanGridPainter oldDelegate) =>
+      oldDelegate.oval != oval ||
+      oldDelegate.color != color ||
+      oldDelegate.opacity != opacity;
 }
 
 /// Decorative facial-topology mesh (dots + connecting guide lines) drawn
