@@ -233,6 +233,19 @@ class _HopprAppState extends ConsumerState<HopprApp>
         // Unlocked from the pushed overlay — pop it to reveal the exact
         // screen underneath, untouched, rather than navigating anywhere.
         navigator.pop();
+      } else if (wasLocked && !isNowLocked && !isNow && navigator != null) {
+        // The locked session turned out to be dead — biometrics succeeded
+        // locally but the stored token was rejected server-side (session
+        // expired / revoked), or "Sign in with PIN instead" was tapped
+        // (forceLogout). AuthGate's own listener deliberately skips its
+        // session-ended cleanup for any transition through `locked` (see
+        // its comment) and leaves this to us — so do that cleanup here:
+        // clear the whole stack, not just pop the LockScreen, so the person
+        // lands on sign-in fresh instead of the stale authenticated screen
+        // that was underneath it.
+        navigator.popUntil((r) => r.isFirst);
+        final navigatorContext = _navigatorKey.currentContext;
+        if (navigatorContext != null) AppScope.read(navigatorContext).signOut();
       }
     });
 

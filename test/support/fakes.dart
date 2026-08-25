@@ -51,9 +51,12 @@ class FakeTokenStore implements TokenStore {
   }
 }
 
-/// Configurable fake of the auth API. Set [failLogin] to simulate bad creds.
+/// Configurable fake of the auth API. Set [failLogin] to simulate bad creds,
+/// or [failMe] to simulate a stored session the backend no longer accepts
+/// (e.g. a token revoked/expired while the app was backgrounded).
 class FakeAuthRepository implements AuthRepository {
   bool failLogin = false;
+  bool failMe = false;
 
   @override
   Future<AuthSession> login({
@@ -75,7 +78,16 @@ class FakeAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<ApiUser> me() async => kTestUser;
+  Future<ApiUser> me() async {
+    if (failMe) {
+      throw ApiException(
+        code: 'UNAUTHORIZED',
+        message: 'Authentication required',
+        statusCode: 401,
+      );
+    }
+    return kTestUser;
+  }
 
   @override
   Future<ApiUser> updateProfile(Map<String, dynamic> body) async => kTestUser;
