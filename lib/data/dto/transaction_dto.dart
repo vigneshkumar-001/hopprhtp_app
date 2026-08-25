@@ -69,7 +69,7 @@ enum ApiTxStatus {
     ApiTxStatus.draft => 'Draft',
     ApiTxStatus.awaitingAgreement => 'Awaiting agreement',
     ApiTxStatus.awaitingPayment => 'Awaiting payment',
-    ApiTxStatus.paymentReceived => 'Payment received',
+    ApiTxStatus.paymentReceived => 'Payment secured',
     ApiTxStatus.awaitingDispatch => 'Awaiting dispatch',
     ApiTxStatus.readyForPickup => 'Ready for pickup',
     ApiTxStatus.dispatcherGoingToPickup =>
