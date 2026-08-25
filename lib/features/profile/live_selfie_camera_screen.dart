@@ -106,6 +106,22 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
     }
   });
 
+  /// Plays forward once, the moment the camera preview actually has a frame
+  /// ready — the whole scan UI eases in (fade + gentle scale-up) rather than
+  /// just appearing the instant the camera initializes.
+  late final AnimationController _entranceController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 550),
+  );
+  late final Animation<double> _entranceFade = CurvedAnimation(
+    parent: _entranceController,
+    curve: Curves.easeOut,
+  );
+  late final Animation<double> _entranceScale = Tween(
+    begin: 0.94,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _entranceController, curve: Curves.easeOutCubic));
+
   @override
   void initState() {
     super.initState();
@@ -140,6 +156,7 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
         return;
       }
       setState(() => _controller = controller);
+      _entranceController.forward(from: 0);
       await controller.startImageStream(_onFrame);
     } catch (_) {
       if (mounted) setState(() => _initError = true);
@@ -166,6 +183,7 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
     _pulseController.dispose();
     _scanController.dispose();
     _holdController.dispose();
+    _entranceController.dispose();
     super.dispose();
   }
 
@@ -319,9 +337,15 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
                 child: CircularProgressIndicator(color: Colors.white),
               )
             : LayoutBuilder(
-                builder: (context, constraints) => _buildCameraUi(
-                  context,
-                  Size(constraints.maxWidth, constraints.maxHeight),
+                builder: (context, constraints) => FadeTransition(
+                  opacity: _entranceFade,
+                  child: ScaleTransition(
+                    scale: _entranceScale,
+                    child: _buildCameraUi(
+                      context,
+                      Size(constraints.maxWidth, constraints.maxHeight),
+                    ),
+                  ),
                 ),
               ),
       ),
@@ -346,18 +370,32 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
         // gives no sense of "where do I put my face".
         Positioned.fill(child: _OvalMask(oval: oval)),
         // Decorative facial-topology mesh — reads as a biometric face scan,
-        // brightening the closer the live frame gets to "good".
+        // brightening the closer the live frame gets to "good". Both the
+        // brightness and the guide color crossfade smoothly on a fit change
+        // (AnimatedOpacity + TweenAnimationBuilder) instead of snapping —
+        // the painter's own `opacity` stays fixed at 1 so its baked-in
+        // dot/line contrast ratio (see _FaceMeshPainter) is preserved; the
+        // wrapping AnimatedOpacity supplies the actual fit-dependent level.
         Positioned.fill(
           child: IgnorePointer(
-            child: CustomPaint(
-              painter: _FaceMeshPainter(
-                oval: oval,
-                color: _guideColor,
-                opacity: switch (_fit) {
-                  FaceFit.none => 0.28,
-                  FaceFit.good => 0.85,
-                  _ => 0.5,
-                },
+            child: AnimatedOpacity(
+              opacity: switch (_fit) {
+                FaceFit.none => 0.28,
+                FaceFit.good => 0.85,
+                _ => 0.5,
+              },
+              duration: const Duration(milliseconds: 320),
+              curve: Curves.easeOut,
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: _guideColor),
+                duration: const Duration(milliseconds: 320),
+                builder: (context, color, _) => CustomPaint(
+                  painter: _FaceMeshPainter(
+                    oval: oval,
+                    color: color ?? _guideColor,
+                    opacity: 1,
+                  ),
+                ),
               ),
             ),
           ),
@@ -370,13 +408,17 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
             child: AnimatedOpacity(
               opacity: isGood ? 0 : 1,
               duration: const Duration(milliseconds: 250),
-              child: AnimatedBuilder(
-                animation: _scanController,
-                builder: (context, _) => CustomPaint(
-                  painter: _ScanSweepPainter(
-                    oval: oval,
-                    color: _guideColor,
-                    progress: _scanController.value,
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: _guideColor),
+                duration: const Duration(milliseconds: 320),
+                builder: (context, color, _) => AnimatedBuilder(
+                  animation: _scanController,
+                  builder: (context, _) => CustomPaint(
+                    painter: _ScanSweepPainter(
+                      oval: oval,
+                      color: color ?? _guideColor,
+                      progress: _scanController.value,
+                    ),
                   ),
                 ),
               ),
@@ -447,20 +489,29 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
         // biometric-scan UI reads as, drawn just outside the guide.
         Positioned.fill(
           child: IgnorePointer(
-            child: AnimatedBuilder(
-              animation: _pulseController,
-              builder: (context, _) {
-                final pulse = isGood
-                    ? Curves.easeInOut.transform(_pulseController.value)
-                    : 0.0;
-                return CustomPaint(
-                  painter: _CornerBracketsPainter(
-                    oval: oval.inflate(6 + pulse * 3),
-                    color: _guideColor,
-                    opacity: _fit == FaceFit.none ? 0.55 : 1,
-                  ),
-                );
-              },
+            child: AnimatedOpacity(
+              opacity: _fit == FaceFit.none ? 0.55 : 1,
+              duration: const Duration(milliseconds: 320),
+              curve: Curves.easeOut,
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: _guideColor),
+                duration: const Duration(milliseconds: 320),
+                builder: (context, color, _) => AnimatedBuilder(
+                  animation: _pulseController,
+                  builder: (context, _) {
+                    final pulse = isGood
+                        ? Curves.easeInOut.transform(_pulseController.value)
+                        : 0.0;
+                    return CustomPaint(
+                      painter: _CornerBracketsPainter(
+                        oval: oval.inflate(6 + pulse * 3),
+                        color: color ?? _guideColor,
+                        opacity: 1,
+                      ),
+                    );
+                  },
+                ),
+              ),
             ),
           ),
         ),
