@@ -166,16 +166,48 @@ class _StartVerificationViewState extends State<_StartVerificationView> {
 
   /// Resumes at whichever step actually still needs the user's input —
   /// never re-asks for something already captured and confirmed present on
-  /// disk (see KycDraftStorage.load's existence check).
-  void _resume(KycDraft draft) {
+  /// disk (see KycDraftStorage.load's existence check). Awaited + refreshed
+  /// on return so a mid-flow back-button press (draft now partially
+  /// different from what was loaded at [_load] time) shows up immediately
+  /// instead of only after leaving and reopening this screen entirely.
+  Future<void> _resume(KycDraft draft) async {
     if (draft.selfie != null) {
-      AppNav.push(context, ReviewSubmitScreen(draft: draft));
+      await AppNav.push(context, ReviewSubmitScreen(draft: draft));
     } else if (draft.documentsReady) {
-      AppNav.push(context, TakeSelfieScreen(draft: draft));
+      await AppNav.push(context, TakeSelfieScreen(draft: draft));
     } else {
-      AppNav.push(context, CaptureDocumentsScreen(draft: draft));
+      await AppNav.push(context, CaptureDocumentsScreen(draft: draft));
     }
+    if (mounted) setState(() {});
   }
+
+  /// The main CTA's label names the actual next pending step instead of a
+  /// generic "Continue" — so it's obvious at a glance what's left, not just
+  /// that *something* is left.
+  String _ctaLabel(KycDraft draft) {
+    if (draft.selfie != null) return 'Review & submit';
+    if (draft.documentsReady) return 'Complete face verification';
+    return 'Continue verification';
+  }
+
+  /// Jump straight into one specific document's capture step — used by the
+  /// checklist below so tapping "Driver's licence" (whether it's still
+  /// pending or already submitted and being changed) goes directly there,
+  /// not back through document 1 first.
+  Future<void> _openDoc(KycDraft draft, int docStep) async {
+    await AppNav.push(
+      context,
+      CaptureDocumentsScreen(draft: draft, initialDocStep: docStep),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openSelfie(KycDraft draft) async {
+    await AppNav.push(context, TakeSelfieScreen(draft: draft));
+    if (mounted) setState(() {});
+  }
+
+  bool _docStarted(KycDocSlot slot) => slot.front != null || slot.back != null;
 
   Future<void> _discardAndStartOver() async {
     await KycDraftStorage.clear();
@@ -193,7 +225,7 @@ class _StartVerificationViewState extends State<_StartVerificationView> {
           ? null
           : AppButton(
               label: draft != null
-                  ? 'Continue verification'
+                  ? _ctaLabel(draft)
                   : 'Start verification',
               trailingIcon: Icons.arrow_forward_rounded,
               onPressed: () => draft != null
@@ -208,46 +240,49 @@ class _StartVerificationViewState extends State<_StartVerificationView> {
         children: [
           const SizedBox(height: AppSizes.sm),
           if (draft != null) ...[
-            AppCard(
-              padding: const EdgeInsets.all(AppSizes.lg),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.history_rounded, color: AppColors.textSecondary),
-                  const SizedBox(width: AppSizes.md),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Pick up where you left off',
-                          style: AppText.bodyStrong,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          draft.selfie != null
-                              ? 'Your documents and selfie are saved — review and submit.'
-                              : draft.documentsReady
-                              ? 'Your documents are saved — just the selfie left.'
-                              : 'Some of your documents are already saved.',
-                          style: AppText.caption,
-                        ),
-                        const SizedBox(height: AppSizes.sm),
-                        GestureDetector(
-                          onTap: _discardAndStartOver,
-                          child: Text(
-                            'Discard and start over',
-                            style: AppText.caption.copyWith(
-                              color: AppColors.textTertiary,
-                              decoration: TextDecoration.underline,
-                            ),
-                          ),
-                        ),
-                      ],
+            Row(
+              children: [
+                Expanded(
+                  child: Text('Your progress', style: AppText.bodyStrong),
+                ),
+                GestureDetector(
+                  onTap: _discardAndStartOver,
+                  child: Text(
+                    'Start over',
+                    style: AppText.caption.copyWith(
+                      color: AppColors.textTertiary,
+                      decoration: TextDecoration.underline,
                     ),
                   ),
-                ],
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSizes.sm),
+            for (int i = 0; i < draft.docs.length; i++) ...[
+              _KycProgressRow(
+                title: draft.docs[i].docLabel,
+                thumbnail: draft.docs[i].front,
+                progress: !_docStarted(draft.docs[i])
+                    ? _KycStepProgress.notStarted
+                    : draft.docs[i].ready
+                    ? _KycStepProgress.done
+                    : _KycStepProgress.partial,
+                onTap: () => _openDoc(draft, i),
               ),
+              const SizedBox(height: AppSizes.sm),
+            ],
+            _KycProgressRow(
+              title: 'Selfie',
+              thumbnail: draft.selfie,
+              progress: draft.selfie != null
+                  ? _KycStepProgress.done
+                  : _KycStepProgress.notStarted,
+              // Can't be started ahead of the documents — ReviewSubmitScreen
+              // needs both documents fully captured before it can submit.
+              disabledHint: draft.documentsReady
+                  ? null
+                  : 'Finish your documents first',
+              onTap: draft.documentsReady ? () => _openSelfie(draft) : null,
             ),
             const SizedBox(height: AppSizes.xl),
           ],
@@ -302,6 +337,130 @@ class _StartVerificationViewState extends State<_StartVerificationView> {
             subtitle: 'To match your face to the ID',
           ),
         ],
+      ),
+    );
+  }
+}
+
+enum _KycStepProgress { notStarted, partial, done }
+
+/// One line of the resume checklist — names exactly what was (or wasn't)
+/// captured for this item, with a thumbnail once there's something to show,
+/// and is itself the way to jump straight into re-doing it: tapping a
+/// finished item lets you change it, tapping a pending one starts it,
+/// without ever going through an all-or-nothing "start over".
+class _KycProgressRow extends StatelessWidget {
+  const _KycProgressRow({
+    required this.title,
+    required this.thumbnail,
+    required this.progress,
+    required this.onTap,
+    this.disabledHint,
+  });
+
+  final String title;
+  final XFile? thumbnail;
+  final _KycStepProgress progress;
+
+  /// Null when this step can't be started yet (e.g. selfie before both
+  /// documents are done) — the row shows [disabledHint] instead of a status,
+  /// and isn't tappable.
+  final VoidCallback? onTap;
+  final String? disabledHint;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    final (label, color, icon) = switch (progress) {
+      _KycStepProgress.done => (
+        'Submitted',
+        AppColors.success,
+        Icons.check_circle_rounded,
+      ),
+      _KycStepProgress.partial => (
+        'In progress',
+        AppColors.warning,
+        Icons.hourglass_top_rounded,
+      ),
+      _KycStepProgress.notStarted => (
+        disabledHint ?? 'Pending',
+        AppColors.textTertiary,
+        Icons.radio_button_unchecked_rounded,
+      ),
+    };
+
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Opacity(
+        opacity: enabled ? 1 : 0.55,
+        child: AppCard(
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: AppRadii.sm,
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  color: AppColors.surfaceMuted,
+                  child: thumbnail != null
+                      ? _PickedImage(file: thumbnail!)
+                      : Icon(
+                          Icons.image_outlined,
+                          size: 20,
+                          color: AppColors.textTertiary,
+                        ),
+                ),
+              ),
+              const SizedBox(width: AppSizes.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: AppText.bodyStrong),
+                    const SizedBox(height: 2),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(icon, size: 13, color: color),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            label,
+                            style: AppText.caption.copyWith(
+                              color: color,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (enabled) ...[
+                Text(
+                  progress == _KycStepProgress.done ? 'Change' : 'Add',
+                  style: AppText.caption.copyWith(
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: AppColors.textTertiary,
+                ),
+              ] else
+                Icon(
+                  Icons.lock_outline_rounded,
+                  size: 16,
+                  color: AppColors.textTertiary,
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -954,8 +1113,18 @@ class _RequirementCard extends StatelessWidget {
 /// sub-flow — mirrors [ChangePinScreen]'s custom-header shell since, like
 /// that screen, back needs to step within the flow rather than just pop.
 class CaptureDocumentsScreen extends StatefulWidget {
-  const CaptureDocumentsScreen({super.key, required this.draft});
+  const CaptureDocumentsScreen({
+    super.key,
+    required this.draft,
+    this.initialDocStep = 0,
+  });
   final KycDraft draft;
+
+  /// Opens straight at this document (0 or 1) instead of always starting
+  /// from the first — lets the resume checklist route a tap on "Driver's
+  /// licence" directly to that document's capture step, not back through
+  /// whichever one happens to be first.
+  final int initialDocStep;
 
   @override
   State<CaptureDocumentsScreen> createState() => _CaptureDocumentsScreenState();
@@ -963,7 +1132,7 @@ class CaptureDocumentsScreen extends StatefulWidget {
 
 class _CaptureDocumentsScreenState extends State<CaptureDocumentsScreen> {
   final _picker = ImagePicker();
-  int _docStep = 0; // 0 or 1 — which of the 2 chosen documents
+  late int _docStep = widget.initialDocStep; // 0 or 1 — which of the 2 chosen documents
 
   KycDraft get _d => widget.draft;
   KycDocSlot get _current => _d.docs[_docStep];
@@ -982,7 +1151,7 @@ class _CaptureDocumentsScreenState extends State<CaptureDocumentsScreen> {
   }
 
   void _back() {
-    if (_docStep == 0) {
+    if (_docStep == widget.initialDocStep) {
       Navigator.of(context).maybePop();
     } else {
       setState(() => _docStep -= 1);
@@ -993,6 +1162,19 @@ class _CaptureDocumentsScreenState extends State<CaptureDocumentsScreen> {
     if (!_canContinue) return;
     if (_docStep == 0) {
       setState(() => _docStep = 1);
+      return;
+    }
+    if (!_d.documentsReady) {
+      // Reached document 2 directly (opened via the resume checklist) while
+      // document 1 is still incomplete — nothing to sequence forward into;
+      // hand back to the checklist, which makes it obvious what's still
+      // pending rather than pushing into a selfie step too early.
+      Navigator.of(context).maybePop();
+    } else if (_d.selfie != null) {
+      // Editing an already fully-submitted draft (opened via "Change" on the
+      // checklist) — return there instead of redundantly re-visiting a
+      // selfie step that's already done.
+      Navigator.of(context).maybePop();
     } else {
       AppNav.push(context, TakeSelfieScreen(draft: _d));
     }
@@ -1387,6 +1569,15 @@ class _ReviewSubmitScreenState extends ConsumerState<ReviewSubmitScreen> {
 
   Future<void> _submit() async {
     final d = widget.draft;
+    // Reaching this screen should already guarantee both documents and the
+    // selfie are captured (see IdentityVerificationScreen's checklist, which
+    // won't let the selfie step start until documentsReady) — this is just
+    // a safety net so a future entry point can't hit the null-assertions
+    // below with an incomplete draft.
+    if (!d.documentsReady || d.selfie == null) {
+      AppSnackbar.error(context, 'Please finish all documents and the selfie first.');
+      return;
+    }
     setState(() => _busy = true);
     try {
       final upload = ref.read(uploadRepositoryProvider);
