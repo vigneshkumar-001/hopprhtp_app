@@ -62,7 +62,7 @@ FaceFit classifyFaceFit({
 }
 
 class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   CameraController? _controller;
   CameraDescription? _frontCamera;
   late final FaceDetector _faceDetector;
@@ -71,6 +71,15 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
   bool _isDetecting = false;
   bool _capturing = false;
   FaceFit _fit = FaceFit.none;
+
+  /// A slow, continuous breathe — always running, but only ever drawn (see
+  /// _buildCameraUi) while [_fit] is good. Left running rather than
+  /// started/stopped on every fit change so there's no start-up frame lag
+  /// right when the guide first turns green.
+  late final AnimationController _pulseController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1500),
+  )..repeat(reverse: true);
 
   @override
   void initState() {
@@ -129,6 +138,7 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
     WidgetsBinding.instance.removeObserver(this);
     _controller?.dispose();
     _faceDetector.close();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -240,9 +250,21 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
 
   Color get _guideColor => switch (_fit) {
     FaceFit.good => AppColors.success,
-    FaceFit.none => Colors.white54,
+    FaceFit.none => Colors.white70,
     _ => AppColors.warning,
   };
+
+  /// The single source of truth for where the oval sits — sized relative to
+  /// the actual screen (not fixed pixels) so it comfortably frames a whole
+  /// face (forehead to chin, ear to ear) on any device, and shared between
+  /// the darkened mask and the drawn ring so the two can never drift out of
+  /// sync with each other.
+  Rect _ovalRect(Size screen) {
+    final width = (screen.width * 0.82).clamp(260.0, 380.0);
+    final height = width * 1.38;
+    final center = Offset(screen.width / 2, screen.height * 0.4);
+    return Rect.fromCenter(center: center, width: width, height: height);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -260,12 +282,20 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
             ? const Center(
                 child: CircularProgressIndicator(color: Colors.white),
               )
-            : _buildCameraUi(context),
+            : LayoutBuilder(
+                builder: (context, constraints) => _buildCameraUi(
+                  context,
+                  Size(constraints.maxWidth, constraints.maxHeight),
+                ),
+              ),
       ),
     );
   }
 
-  Widget _buildCameraUi(BuildContext context) {
+  Widget _buildCameraUi(BuildContext context, Size screen) {
+    final oval = _ovalRect(screen);
+    final isGood = _fit == FaceFit.good;
+
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -278,7 +308,42 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
         // Darkens everything outside the oval guide so attention lands on
         // exactly where the face needs to go — a plain full-bleed preview
         // gives no sense of "where do I put my face".
-        const Positioned.fill(child: _OvalMask()),
+        Positioned.fill(child: _OvalMask(oval: oval)),
+        // The animated ring itself, plus a soft glow that only ever
+        // breathes while the fit is genuinely good — the pulse conveys
+        // "ready" the same way a modern Face-ID-style scanner does, instead
+        // of a flat static border that just snaps between colors.
+        AnimatedBuilder(
+          animation: _pulseController,
+          builder: (context, _) {
+            final pulse = isGood
+                ? Curves.easeInOut.transform(_pulseController.value)
+                : 0.0;
+            return Positioned.fromRect(
+              rect: oval.inflate(pulse * 6),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 320),
+                curve: Curves.easeOutCubic,
+                decoration: BoxDecoration(
+                  shape: BoxShape.rectangle,
+                  borderRadius: BorderRadius.circular(oval.width),
+                  border: Border.all(color: _guideColor, width: isGood ? 4 : 3),
+                  boxShadow: isGood
+                      ? [
+                          BoxShadow(
+                            color: AppColors.success.withValues(
+                              alpha: 0.25 + pulse * 0.25,
+                            ),
+                            blurRadius: 20 + pulse * 16,
+                            spreadRadius: 1 + pulse * 3,
+                          ),
+                        ]
+                      : const [],
+                ),
+              ),
+            );
+          },
+        ),
         Positioned(
           top: AppSizes.md,
           left: AppSizes.md,
@@ -287,30 +352,49 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
             onTap: () => Navigator.of(context).maybePop(),
           ),
         ),
-        Align(
-          alignment: const Alignment(0, -0.08),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            width: 260,
-            height: 340,
-            decoration: BoxDecoration(
-              shape: BoxShape.rectangle,
-              borderRadius: BorderRadius.circular(160),
-              border: Border.all(color: _guideColor, width: 3),
-            ),
-          ),
-        ),
         Positioned(
           left: 0,
           right: 0,
-          bottom: 140,
+          // Anchored to the bottom (like the capture button below it) rather
+          // than hung off the oval's own bottom edge — the oval's height
+          // varies with screen size, and a bottom anchor guarantees this
+          // never creeps down into the capture button on a short screen.
+          bottom: 132,
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 200),
-            child: Text(
-              _statusMessage,
+            duration: const Duration(milliseconds: 220),
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween(
+                  begin: const Offset(0, 0.12),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
+            ),
+            child: Padding(
               key: ValueKey(_statusMessage),
-              textAlign: TextAlign.center,
-              style: AppText.bodyStrong.copyWith(color: Colors.white),
+              padding: const EdgeInsets.symmetric(horizontal: AppSizes.xl),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isGood
+                        ? Icons.check_circle_rounded
+                        : Icons.face_retouching_natural_rounded,
+                    size: 16,
+                    color: _guideColor,
+                  ),
+                  const SizedBox(width: AppSizes.xs),
+                  Flexible(
+                    child: Text(
+                      _statusMessage,
+                      textAlign: TextAlign.center,
+                      style: AppText.bodyStrong.copyWith(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -320,7 +404,7 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
           bottom: AppSizes.xl,
           child: Center(
             child: _CaptureButton(
-              enabled: _fit == FaceFit.good && !_capturing,
+              enabled: isGood && !_capturing,
               busy: _capturing,
               onTap: _capture,
             ),
@@ -341,36 +425,35 @@ const _androidDeviceOrientationDegrees = {
 };
 
 class _OvalMask extends StatelessWidget {
-  const _OvalMask();
+  const _OvalMask({required this.oval});
+  final Rect oval;
 
   @override
   Widget build(BuildContext context) {
-    return IgnorePointer(child: CustomPaint(painter: _OvalMaskPainter()));
+    return IgnorePointer(child: CustomPaint(painter: _OvalMaskPainter(oval)));
   }
 }
 
 class _OvalMaskPainter extends CustomPainter {
+  _OvalMaskPainter(this.oval);
+  final Rect oval;
+
   @override
   void paint(Canvas canvas, Size size) {
     final overlay = Path()
       ..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-    final center = Offset(size.width / 2, size.height * 0.42);
     final hole = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(center: center, width: 260, height: 340),
-          const Radius.circular(160),
-        ),
-      );
+      ..addRRect(RRect.fromRectAndRadius(oval, Radius.circular(oval.width)));
     final masked = Path.combine(PathOperation.difference, overlay, hole);
     canvas.drawPath(
       masked,
-      Paint()..color = Colors.black.withValues(alpha: 0.55),
+      Paint()..color = Colors.black.withValues(alpha: 0.6),
     );
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _OvalMaskPainter oldDelegate) =>
+      oldDelegate.oval != oval;
 }
 
 class _CaptureButton extends StatelessWidget {
@@ -389,17 +472,30 @@ class _CaptureButton extends StatelessWidget {
     return GestureDetector(
       onTap: enabled ? onTap : null,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        width: 72,
-        height: 72,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+        width: 76,
+        height: 76,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: enabled ? Colors.white : Colors.white24,
-          border: Border.all(color: Colors.white, width: 4),
+          border: Border.all(
+            color: enabled ? AppColors.success : Colors.white,
+            width: 4,
+          ),
+          boxShadow: enabled
+              ? [
+                  BoxShadow(
+                    color: AppColors.success.withValues(alpha: 0.45),
+                    blurRadius: 18,
+                    spreadRadius: 1,
+                  ),
+                ]
+              : const [],
         ),
         child: busy
             ? const Padding(
-                padding: EdgeInsets.all(20),
+                padding: EdgeInsets.all(21),
                 child: CircularProgressIndicator(strokeWidth: 2.5),
               )
             : null,
