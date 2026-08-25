@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:math' show cos, pi, sin;
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback, DeviceOrientation;
@@ -81,6 +82,30 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
     duration: const Duration(milliseconds: 1500),
   )..repeat(reverse: true);
 
+  /// Drives the scanning light-band that sweeps the guide while a face
+  /// hasn't locked in yet — always running (cheap, purely decorative), only
+  /// ever faded in while [_fit] isn't good (see _buildCameraUi).
+  late final AnimationController _scanController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2200),
+  )..repeat();
+
+  /// Plays forward once, from 0, the moment [_fit] becomes good — the filled
+  /// arc drawn from its value is both the "hold still" feedback and the
+  /// auto-capture countdown. Reset (not just stopped) the moment the face
+  /// stops fitting well, so a hand wobble part-way through never leaves a
+  /// stale partial ring behind on the next good frame.
+  late final AnimationController _holdController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..addStatusListener((status) {
+    if (status == AnimationStatus.completed &&
+        _fit == FaceFit.good &&
+        !_capturing) {
+      _capture();
+    }
+  });
+
   @override
   void initState() {
     super.initState();
@@ -139,6 +164,8 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
     _controller?.dispose();
     _faceDetector.close();
     _pulseController.dispose();
+    _scanController.dispose();
+    _holdController.dispose();
     super.dispose();
   }
 
@@ -163,6 +190,12 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
         // buzz continuously while the user adjusts).
         if (fit == FaceFit.good && !wasGood) {
           HapticFeedback.selectionClick();
+          _holdController.forward(from: 0);
+        } else if (wasGood && fit != FaceFit.good) {
+          // Face moved out of frame mid-hold — cancel the countdown rather
+          // than let it finish and auto-capture a frame that's no longer good.
+          _holdController.stop();
+          _holdController.value = 0;
         }
       }
     } catch (_) {
@@ -239,14 +272,17 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
     }
   }
 
-  String get _statusMessage => switch (_fit) {
-    FaceFit.none => 'Position your face in the oval',
-    FaceFit.multiple => 'Only one person should be in frame',
-    FaceFit.tooFar => 'Move a little closer',
-    FaceFit.tooClose => 'Move back a little',
-    FaceFit.offCenter => 'Center your face in the oval',
-    FaceFit.good => 'Perfect — hold still and capture',
-  };
+  String get _statusMessage {
+    if (_capturing) return 'Capturing…';
+    return switch (_fit) {
+      FaceFit.none => 'Position your face in the frame',
+      FaceFit.multiple => 'Only one person should be in frame',
+      FaceFit.tooFar => 'Move a little closer',
+      FaceFit.tooClose => 'Move back a little',
+      FaceFit.offCenter => 'Center your face in the frame',
+      FaceFit.good => 'Perfect — hold still, capturing automatically',
+    };
+  }
 
   Color get _guideColor => switch (_fit) {
     FaceFit.good => AppColors.success,
@@ -309,6 +345,44 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
         // exactly where the face needs to go — a plain full-bleed preview
         // gives no sense of "where do I put my face".
         Positioned.fill(child: _OvalMask(oval: oval)),
+        // Decorative facial-topology mesh — reads as a biometric face scan,
+        // brightening the closer the live frame gets to "good".
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              painter: _FaceMeshPainter(
+                oval: oval,
+                color: _guideColor,
+                opacity: switch (_fit) {
+                  FaceFit.none => 0.28,
+                  FaceFit.good => 0.85,
+                  _ => 0.5,
+                },
+              ),
+            ),
+          ),
+        ),
+        // A light band that sweeps the guide while still searching for a
+        // good frame — signals "actively scanning" — and fades out the
+        // moment a good frame locks in, handing off to the hold ring below.
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: isGood ? 0 : 1,
+              duration: const Duration(milliseconds: 250),
+              child: AnimatedBuilder(
+                animation: _scanController,
+                builder: (context, _) => CustomPaint(
+                  painter: _ScanSweepPainter(
+                    oval: oval,
+                    color: _guideColor,
+                    progress: _scanController.value,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
         // The animated ring itself, plus a soft glow that only ever
         // breathes while the fit is genuinely good — the pulse conveys
         // "ready" the same way a modern Face-ID-style scanner does, instead
@@ -343,6 +417,43 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
               ),
             );
           },
+        ),
+        // Fills in around the ring the moment a good frame locks in — both
+        // the "hold still" feedback and the auto-capture countdown, so the
+        // user can see exactly how long they need to stay still.
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedBuilder(
+              animation: _holdController,
+              builder: (context, _) => CustomPaint(
+                painter: _HoldRingPainter(
+                  oval: oval,
+                  progress: _holdController.value,
+                ),
+              ),
+            ),
+          ),
+        ),
+        // Corner scan brackets — the "locked onto a target" cue a
+        // biometric-scan UI reads as, drawn just outside the guide.
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedBuilder(
+              animation: _pulseController,
+              builder: (context, _) {
+                final pulse = isGood
+                    ? Curves.easeInOut.transform(_pulseController.value)
+                    : 0.0;
+                return CustomPaint(
+                  painter: _CornerBracketsPainter(
+                    oval: oval.inflate(6 + pulse * 3),
+                    color: _guideColor,
+                    opacity: _fit == FaceFit.none ? 0.55 : 1,
+                  ),
+                );
+              },
+            ),
+          ),
         ),
         Positioned(
           top: AppSizes.md,
@@ -454,6 +565,236 @@ class _OvalMaskPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _OvalMaskPainter oldDelegate) =>
       oldDelegate.oval != oval;
+}
+
+/// Decorative facial-topology mesh (dots + connecting guide lines) drawn
+/// inside the oval guide — evokes a biometric face scan the way KYC/Face-ID
+/// style apps do. Purely cosmetic: the points are fixed proportions of
+/// [oval], not the live detector's actual landmarks — the fast-mode
+/// detector used here only returns a bounding box, and adding contour
+/// tracking would cost real per-frame latency for a cosmetic effect only.
+class _FaceMeshPainter extends CustomPainter {
+  _FaceMeshPainter({
+    required this.oval,
+    required this.color,
+    required this.opacity,
+  });
+
+  final Rect oval;
+  final Color color;
+  final double opacity;
+
+  Offset _at(double fx, double fy) =>
+      Offset(oval.left + fx * oval.width, oval.top + fy * oval.height);
+
+  List<Offset> _arc(
+    double cx,
+    double cy,
+    double rx,
+    double ry,
+    int count, {
+    double startDeg = 0,
+    double endDeg = 360,
+  }) {
+    final start = startDeg * pi / 180;
+    final end = endDeg * pi / 180;
+    return List.generate(count, (i) {
+      final t = count == 1 ? 0.0 : i / (count - 1);
+      final angle = start + (end - start) * t;
+      return _at(cx + rx * cos(angle), cy + ry * sin(angle));
+    });
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (opacity <= 0) return;
+    final dotPaint = Paint()
+      ..color = color.withValues(alpha: (opacity * 0.9).clamp(0.0, 1.0))
+      ..style = PaintingStyle.fill;
+    final linePaint = Paint()
+      ..color = color.withValues(alpha: (opacity * 0.45).clamp(0.0, 1.0))
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.8;
+
+    void polyline(List<Offset> points, {bool closed = false}) {
+      if (points.length < 2) return;
+      final path = Path()..moveTo(points.first.dx, points.first.dy);
+      for (final p in points.skip(1)) {
+        path.lineTo(p.dx, p.dy);
+      }
+      if (closed) path.close();
+      canvas.drawPath(path, linePaint);
+      for (final p in points) {
+        canvas.drawCircle(p, 1.6, dotPaint);
+      }
+    }
+
+    // Jawline hugs the oval's own boundary so it can never visually drift
+    // from the ring drawn around it.
+    polyline(_arc(0.5, 0.5, 0.5, 0.5, 13, startDeg: 200, endDeg: 340));
+
+    // Vertical midline: forehead to chin.
+    polyline([_at(0.5, 0.08), _at(0.5, 0.22), _at(0.5, 0.36)]);
+    polyline([_at(0.5, 0.67), _at(0.5, 0.86), _at(0.5, 0.93)]);
+
+    // Eyebrows.
+    polyline([_at(0.26, 0.37), _at(0.32, 0.34), _at(0.38, 0.34), _at(0.43, 0.36)]);
+    polyline([_at(0.74, 0.37), _at(0.68, 0.34), _at(0.62, 0.34), _at(0.57, 0.36)]);
+
+    // Eyes — a closed loop plus a pupil dot.
+    final leftEye = _arc(0.335, 0.45, 0.075, 0.032, 8);
+    final rightEye = _arc(0.665, 0.45, 0.075, 0.032, 8);
+    polyline(leftEye, closed: true);
+    polyline(rightEye, closed: true);
+    canvas.drawCircle(_at(0.335, 0.45), 1.8, dotPaint);
+    canvas.drawCircle(_at(0.665, 0.45), 1.8, dotPaint);
+
+    // Nose bridge to tip and wings.
+    polyline([
+      _at(0.5, 0.50),
+      _at(0.5, 0.58),
+      _at(0.46, 0.65),
+      _at(0.5, 0.67),
+      _at(0.54, 0.65),
+    ]);
+
+    // Cheeks.
+    polyline([_at(0.20, 0.55), _at(0.19, 0.66), _at(0.21, 0.75)]);
+    polyline([_at(0.80, 0.55), _at(0.81, 0.66), _at(0.79, 0.75)]);
+
+    // Mouth outline.
+    polyline(_arc(0.5, 0.80, 0.135, 0.04, 10), closed: true);
+
+    // Triangulation connectors radiating from the nose tip — the
+    // converging-lines look the reference face-scan UI has.
+    final noseTip = _at(0.5, 0.67);
+    for (final target in [
+      _at(0.335, 0.45),
+      _at(0.665, 0.45),
+      _at(0.37, 0.80),
+      _at(0.63, 0.80),
+      _at(0.20, 0.66),
+      _at(0.80, 0.66),
+    ]) {
+      canvas.drawLine(noseTip, target, linePaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _FaceMeshPainter oldDelegate) =>
+      oldDelegate.oval != oval ||
+      oldDelegate.color != color ||
+      oldDelegate.opacity != opacity;
+}
+
+/// A soft light band that sweeps top-to-bottom inside the oval guide,
+/// clipped to its shape — reads as "actively scanning" while no good frame
+/// has locked in yet (see the [AnimatedOpacity] wrapping this in
+/// _buildCameraUi, which fades it out the instant [FaceFit.good] hits).
+class _ScanSweepPainter extends CustomPainter {
+  _ScanSweepPainter({
+    required this.oval,
+    required this.color,
+    required this.progress,
+  });
+
+  final Rect oval;
+  final Color color;
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.clipPath(
+      Path()..addRRect(RRect.fromRectAndRadius(oval, Radius.circular(oval.width))),
+    );
+    final bandHeight = oval.height * 0.16;
+    final y = oval.top + progress * (oval.height + bandHeight) - bandHeight;
+    final band = Rect.fromLTWH(oval.left, y, oval.width, bandHeight);
+    final paint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          color.withValues(alpha: 0),
+          color.withValues(alpha: 0.5),
+          color.withValues(alpha: 0),
+        ],
+      ).createShader(band);
+    canvas.drawRect(band, paint);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScanSweepPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.oval != oval ||
+      oldDelegate.color != color;
+}
+
+/// The bright arc that fills in around the oval guide as the "hold still"
+/// countdown plays — full circle == the auto-capture is about to fire.
+class _HoldRingPainter extends CustomPainter {
+  _HoldRingPainter({required this.oval, required this.progress});
+
+  final Rect oval;
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress <= 0) return;
+    final paint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 5
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(oval, -pi / 2, 2 * pi * progress, false, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _HoldRingPainter oldDelegate) =>
+      oldDelegate.progress != progress || oldDelegate.oval != oval;
+}
+
+/// Four L-shaped corner brackets around the guide's bounding box — the
+/// "locked onto a target" cue a scanner-style UI reads as, independent of
+/// the rounded guide curve itself.
+class _CornerBracketsPainter extends CustomPainter {
+  _CornerBracketsPainter({
+    required this.oval,
+    required this.color,
+    required this.opacity,
+  });
+
+  final Rect oval;
+  final Color color;
+  final double opacity;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color.withValues(alpha: opacity.clamp(0.0, 1.0))
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    final arm = oval.width * 0.14;
+
+    void bracket(Offset corner, Offset dx, Offset dy) {
+      canvas.drawLine(corner, corner + dx, paint);
+      canvas.drawLine(corner, corner + dy, paint);
+    }
+
+    bracket(oval.topLeft, Offset(arm, 0), Offset(0, arm));
+    bracket(oval.topRight, Offset(-arm, 0), Offset(0, arm));
+    bracket(oval.bottomLeft, Offset(arm, 0), Offset(0, -arm));
+    bracket(oval.bottomRight, Offset(-arm, 0), Offset(0, -arm));
+  }
+
+  @override
+  bool shouldRepaint(covariant _CornerBracketsPainter oldDelegate) =>
+      oldDelegate.oval != oval ||
+      oldDelegate.color != color ||
+      oldDelegate.opacity != opacity;
 }
 
 class _CaptureButton extends StatelessWidget {
