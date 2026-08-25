@@ -88,7 +88,9 @@ class _SupportTicketFormScreenState
   }
 
   Future<void> _pickWithdrawal() async {
-    final withdrawals = ref.read(walletWithdrawalsProvider).valueOrNull ?? const <WithdrawalRequest>[];
+    final withdrawals =
+        ref.read(walletWithdrawalsProvider).valueOrNull ??
+        const <WithdrawalRequest>[];
     final picked = await showBlurredSheet<WithdrawalRequest?>(
       context,
       builder: (ctx) => _PickerSheet<WithdrawalRequest>(
@@ -102,7 +104,8 @@ class _SupportTicketFormScreenState
     if (picked != null) {
       setState(() {
         _selectedWithdrawalId = picked.id;
-        _selectedWithdrawalLabel = '${Money.format(picked.amountNaira)} · ${picked.statusLabel}';
+        _selectedWithdrawalLabel =
+            '${Money.format(picked.amountNaira)} · ${picked.statusLabel}';
       });
     }
   }
@@ -119,7 +122,9 @@ class _SupportTicketFormScreenState
       _uploadingAttachment = true;
     });
     try {
-      final url = await ref.read(uploadRepositoryProvider).uploadImage(picked.path);
+      final url = await ref
+          .read(uploadRepositoryProvider)
+          .uploadImage(picked.path);
       if (!mounted) return;
       setState(() => _attachmentUrl = url);
     } catch (_) {
@@ -128,7 +133,10 @@ class _SupportTicketFormScreenState
         _attachmentFile = null;
         _attachmentUrl = null;
       });
-      AppSnackbar.error(context, 'Could not upload the screenshot. Please try again.');
+      AppSnackbar.error(
+        context,
+        'Could not upload the screenshot. Please try again.',
+      );
     } finally {
       if (mounted) setState(() => _uploadingAttachment = false);
     }
@@ -189,7 +197,8 @@ class _SupportTicketFormScreenState
           _FormSectionHeader(
             icon: Icons.edit_note_rounded,
             title: 'Ticket details',
-            subtitle: 'Tell us what’s going on — we’ll reply here and by email.',
+            subtitle:
+                'Tell us what’s going on — we’ll reply here and by email.',
           ),
           const SizedBox(height: AppSizes.lg),
           AppCard(
@@ -198,7 +207,10 @@ class _SupportTicketFormScreenState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _FieldLabel(icon: Icons.dashboard_customize_rounded, label: 'Category'),
+                _FieldLabel(
+                  icon: Icons.dashboard_customize_rounded,
+                  label: 'Category',
+                ),
                 const SizedBox(height: AppSizes.sm),
                 AppDropdown<String>(
                   value: _category,
@@ -221,7 +233,10 @@ class _SupportTicketFormScreenState
 
                 _FieldLabel(icon: Icons.forum_rounded, label: 'Message'),
                 const SizedBox(height: AppSizes.sm),
-                _MultilineField(controller: _message, hint: 'Tell us what’s going on…'),
+                _MultilineField(
+                  controller: _message,
+                  hint: 'Tell us what’s going on…',
+                ),
               ],
             ),
           ),
@@ -239,7 +254,10 @@ class _SupportTicketFormScreenState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _FieldLabel(icon: Icons.account_balance_wallet_rounded, label: 'Related withdrawal'),
+                _FieldLabel(
+                  icon: Icons.account_balance_wallet_rounded,
+                  label: 'Related withdrawal',
+                ),
                 const SizedBox(height: AppSizes.sm),
                 _OptionalLinkTile(
                   value: _selectedWithdrawalLabel,
@@ -254,7 +272,10 @@ class _SupportTicketFormScreenState
                 ),
                 const SizedBox(height: AppSizes.lg),
 
-                _FieldLabel(icon: Icons.add_photo_alternate_rounded, label: 'Screenshot'),
+                _FieldLabel(
+                  icon: Icons.add_photo_alternate_rounded,
+                  label: 'Screenshot',
+                ),
                 const SizedBox(height: AppSizes.sm),
                 _AttachmentTile(
                   file: _attachmentFile,
@@ -282,7 +303,10 @@ class _SupportTicketFormScreenState
           ),
           const SizedBox(height: AppSizes.xxl),
 
-          _FormSectionHeader(icon: Icons.history_rounded, title: 'My support requests'),
+          _FormSectionHeader(
+            icon: Icons.history_rounded,
+            title: 'My support requests',
+          ),
           const SizedBox(height: AppSizes.lg),
           _MySupportRequests(refreshToken: _ticketsRefreshToken),
           const SizedBox(height: AppSizes.xl),
@@ -297,7 +321,11 @@ class _SupportTicketFormScreenState
 /// from Help & Support's own `_SectionHeader` (private to that file) but
 /// visually matching it.
 class _FormSectionHeader extends StatelessWidget {
-  const _FormSectionHeader({required this.icon, required this.title, this.subtitle});
+  const _FormSectionHeader({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+  });
   final IconData icon;
   final String title;
   final String? subtitle;
@@ -312,7 +340,10 @@ class _FormSectionHeader extends StatelessWidget {
           width: 34,
           height: 34,
           alignment: Alignment.center,
-          decoration: BoxDecoration(color: accent.accent, borderRadius: AppRadii.sm),
+          decoration: BoxDecoration(
+            color: accent.accent,
+            borderRadius: AppRadii.sm,
+          ),
           child: Icon(icon, size: 17, color: accent.onAccent),
         ),
         const SizedBox(width: AppSizes.md),
@@ -349,7 +380,10 @@ class _FieldLabel extends StatelessWidget {
           width: 28,
           height: 28,
           alignment: Alignment.center,
-          decoration: BoxDecoration(color: accent.accentSoft, borderRadius: AppRadii.sm),
+          decoration: BoxDecoration(
+            color: accent.accentSoft,
+            borderRadius: AppRadii.sm,
+          ),
           child: Icon(icon, size: 14, color: accent.onAccentSoft),
         ),
         const SizedBox(width: AppSizes.sm),
@@ -384,7 +418,10 @@ class _OptionalLinkTile extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSizes.md, vertical: AppSizes.md),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSizes.md,
+            vertical: AppSizes.md,
+          ),
           child: Row(
             children: [
               Expanded(
@@ -403,11 +440,19 @@ class _OptionalLinkTile extends StatelessWidget {
                   behavior: HitTestBehavior.opaque,
                   child: const Padding(
                     padding: EdgeInsets.all(4),
-                    child: Icon(Icons.close_rounded, size: 16, color: AppColors.textTertiary),
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: 16,
+                      color: AppColors.textTertiary,
+                    ),
                   ),
                 )
               else
-                const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textTertiary),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: AppColors.textTertiary,
+                ),
             ],
           ),
         ),
@@ -440,7 +485,10 @@ class _AttachmentTile extends StatelessWidget {
       child: InkWell(
         onTap: uploading ? null : onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSizes.md, vertical: AppSizes.md),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSizes.md,
+            vertical: AppSizes.md,
+          ),
           child: Row(
             children: [
               Expanded(
@@ -458,18 +506,30 @@ class _AttachmentTile extends StatelessWidget {
                 ),
               ),
               if (uploading)
-                const SizedBox(width: 16, height: 16, child: AppCircularLoader(size: 16, strokeWidth: 2))
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: AppCircularLoader(size: 16, strokeWidth: 2),
+                )
               else if (onClear != null)
                 GestureDetector(
                   onTap: onClear,
                   behavior: HitTestBehavior.opaque,
                   child: const Padding(
                     padding: EdgeInsets.all(4),
-                    child: Icon(Icons.close_rounded, size: 16, color: AppColors.textTertiary),
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: 16,
+                      color: AppColors.textTertiary,
+                    ),
                   ),
                 )
               else
-                const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textTertiary),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: AppColors.textTertiary,
+                ),
             ],
           ),
         ),
@@ -561,7 +621,12 @@ class _PickerSheet<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSizes.xl, AppSizes.md, AppSizes.xl, AppSizes.lg),
+      padding: const EdgeInsets.fromLTRB(
+        AppSizes.xl,
+        AppSizes.md,
+        AppSizes.xl,
+        AppSizes.lg,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -575,7 +640,9 @@ class _PickerSheet<T> extends StatelessWidget {
             )
           else
             ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.5),
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.5,
+              ),
               child: ListView.separated(
                 shrinkWrap: true,
                 itemCount: items.length > 15 ? 15 : items.length,
@@ -624,7 +691,14 @@ class _MySupportRequestsState extends ConsumerState<_MySupportRequests> {
 
   Future<void> _refresh() async {
     final next = ref.read(supportRepositoryProvider).listTickets();
-    setState(() => _future = next);
+    // Block body, not `setState(() => _future = next)` — an assignment
+    // expression evaluates to its right-hand value, so an arrow-bodied
+    // closure here would "return" the Future itself (even though it's not
+    // `async`), which is exactly what triggered Flutter's own "setState()
+    // callback returned a Future" runtime check.
+    setState(() {
+      _future = next;
+    });
     await next;
   }
 
@@ -643,14 +717,21 @@ class _MySupportRequestsState extends ConsumerState<_MySupportRequests> {
         if (tickets.isEmpty) {
           return Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: AppSizes.xxl, horizontal: AppSizes.lg),
+            padding: const EdgeInsets.symmetric(
+              vertical: AppSizes.xxl,
+              horizontal: AppSizes.lg,
+            ),
             decoration: BoxDecoration(
               color: AppColors.surfaceMuted,
               borderRadius: AppRadii.card,
             ),
             child: Column(
               children: [
-                Icon(Icons.inbox_outlined, size: 28, color: AppColors.textTertiary),
+                Icon(
+                  Icons.inbox_outlined,
+                  size: 28,
+                  color: AppColors.textTertiary,
+                ),
                 const SizedBox(height: AppSizes.sm),
                 Text(
                   'Your submitted requests will show up here.',
@@ -666,7 +747,10 @@ class _MySupportRequestsState extends ConsumerState<_MySupportRequests> {
           color: AppColors.ink,
           child: AppCard(
             shadow: true,
-            padding: const EdgeInsets.symmetric(horizontal: AppSizes.lg, vertical: AppSizes.xs),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSizes.lg,
+              vertical: AppSizes.xs,
+            ),
             child: Column(
               children: [
                 for (int i = 0; i < tickets.length; i++) ...[
@@ -708,7 +792,10 @@ class _SupportTicketRow extends StatelessWidget {
             width: 3,
             margin: const EdgeInsets.only(top: 2, right: AppSizes.md),
             height: ticket.adminResponse != null ? 62 : 34,
-            decoration: BoxDecoration(color: fg, borderRadius: BorderRadius.circular(2)),
+            decoration: BoxDecoration(
+              color: fg,
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
           Expanded(
             child: Column(
@@ -717,8 +804,15 @@ class _SupportTicketRow extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(child: Text(ticket.subject, style: AppText.bodyStrong)),
-                    StatusPill(label: ticket.statusLabel, background: bg, foreground: fg, dense: true),
+                    Expanded(
+                      child: Text(ticket.subject, style: AppText.bodyStrong),
+                    ),
+                    StatusPill(
+                      label: ticket.statusLabel,
+                      background: bg,
+                      foreground: fg,
+                      dense: true,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 3),
@@ -731,8 +825,16 @@ class _SupportTicketRow extends StatelessWidget {
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(AppSizes.sm),
-                    decoration: BoxDecoration(color: AppColors.surfaceMuted, borderRadius: AppRadii.sm),
-                    child: Text(ticket.adminResponse!, style: AppText.caption.copyWith(color: AppColors.textPrimary)),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceMuted,
+                      borderRadius: AppRadii.sm,
+                    ),
+                    child: Text(
+                      ticket.adminResponse!,
+                      style: AppText.caption.copyWith(
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
                   ),
                 ],
               ],
