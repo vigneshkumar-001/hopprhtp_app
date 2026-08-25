@@ -20,6 +20,7 @@ import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
 import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/app_snackbar.dart';
+import 'kyc_draft_storage.dart';
 import 'live_selfie_camera_screen.dart';
 
 /// One government ID document within a KYC submission — which ID type, plus
@@ -130,25 +131,126 @@ class _IdentityVerificationScreenState
 }
 
 /// The original "start verification" intro (mockup 7) — shown only when
-/// `identityStatus` is `unverified` (or unknown).
-class _StartVerificationView extends StatelessWidget {
+/// `identityStatus` is `unverified` (or unknown). Checks for a locally-saved
+/// in-progress draft (see [KycDraftStorage]) so a seller who backgrounded
+/// mid-flow — or whose OS killed the app process entirely while they were
+/// away, which can happen at any time once backgrounded, not just rarely —
+/// picks up exactly where they left off instead of re-photographing
+/// documents they already captured.
+class _StartVerificationView extends StatefulWidget {
   const _StartVerificationView();
+
+  @override
+  State<_StartVerificationView> createState() => _StartVerificationViewState();
+}
+
+class _StartVerificationViewState extends State<_StartVerificationView> {
+  bool _loading = true;
+  KycDraft? _savedDraft;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final draft = await KycDraftStorage.load();
+    if (mounted) {
+      setState(() {
+        _savedDraft = draft;
+        _loading = false;
+      });
+    }
+  }
+
+  /// Resumes at whichever step actually still needs the user's input —
+  /// never re-asks for something already captured and confirmed present on
+  /// disk (see KycDraftStorage.load's existence check).
+  void _resume(KycDraft draft) {
+    if (draft.selfie != null) {
+      AppNav.push(context, ReviewSubmitScreen(draft: draft));
+    } else if (draft.documentsReady) {
+      AppNav.push(context, TakeSelfieScreen(draft: draft));
+    } else {
+      AppNav.push(context, CaptureDocumentsScreen(draft: draft));
+    }
+  }
+
+  Future<void> _discardAndStartOver() async {
+    await KycDraftStorage.clear();
+    if (!mounted) return;
+    setState(() => _savedDraft = null);
+  }
 
   @override
   Widget build(BuildContext context) {
     final accent = AppAccent.of(context);
+    final draft = _savedDraft;
     return AppScaffold(
       title: 'Identity verification',
-      bottomAction: AppButton(
-        label: 'Start verification',
-        trailingIcon: Icons.arrow_forward_rounded,
-        onPressed: () =>
-            AppNav.push(context, ChooseDocumentScreen(draft: KycDraft())),
-      ),
+      bottomAction: _loading
+          ? null
+          : AppButton(
+              label: draft != null
+                  ? 'Continue verification'
+                  : 'Start verification',
+              trailingIcon: Icons.arrow_forward_rounded,
+              onPressed: () => draft != null
+                  ? _resume(draft)
+                  : AppNav.push(
+                      context,
+                      ChooseDocumentScreen(draft: KycDraft()),
+                    ),
+            ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: AppSizes.sm),
+          if (draft != null) ...[
+            AppCard(
+              padding: const EdgeInsets.all(AppSizes.lg),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.history_rounded, color: AppColors.textSecondary),
+                  const SizedBox(width: AppSizes.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Pick up where you left off',
+                          style: AppText.bodyStrong,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          draft.selfie != null
+                              ? 'Your documents and selfie are saved — review and submit.'
+                              : draft.documentsReady
+                              ? 'Your documents are saved — just the selfie left.'
+                              : 'Some of your documents are already saved.',
+                          style: AppText.caption,
+                        ),
+                        const SizedBox(height: AppSizes.sm),
+                        GestureDetector(
+                          onTap: _discardAndStartOver,
+                          child: Text(
+                            'Discard and start over',
+                            style: AppText.caption.copyWith(
+                              color: AppColors.textTertiary,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSizes.xl),
+          ],
           AppCard(
             color: accent.isLime
                 ? const Color(0xFFE2DDF8)
@@ -506,6 +608,7 @@ class _ChooseDocumentScreenState extends State<ChooseDocumentScreen> {
     _d.docs
       ..clear()
       ..addAll(_d.selectedDocIndexes.map(KycDocSlot.new));
+    KycDraftStorage.save(_d);
     AppNav.push(context, CaptureDocumentsScreen(draft: _d));
   }
 
@@ -874,6 +977,7 @@ class _CaptureDocumentsScreenState extends State<CaptureDocumentsScreen> {
     );
     if (f != null && mounted) {
       setState(() => front ? _current.front = f : _current.back = f);
+      KycDraftStorage.save(_d);
     }
   }
 
@@ -1064,7 +1168,10 @@ class _TakeSelfieScreenState extends State<TakeSelfieScreen> {
   /// being seen.
   Future<void> _pickSelfie() async {
     final f = await AppNav.push<XFile>(context, const LiveSelfieCameraScreen());
-    if (f != null && mounted) setState(() => widget.draft.selfie = f);
+    if (f != null && mounted) {
+      setState(() => widget.draft.selfie = f);
+      KycDraftStorage.save(widget.draft);
+    }
   }
 
   void _continue() =>
@@ -1301,6 +1408,7 @@ class _ReviewSubmitScreenState extends ConsumerState<ReviewSubmitScreen> {
       await ref
           .read(authControllerProvider.notifier)
           .submitIdentity(documents: documents, selfieUrl: selfieUrl);
+      await KycDraftStorage.clear();
       if (!mounted) return;
       AppNav.push(
         context,
