@@ -8,6 +8,7 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
+import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/app_snackbar.dart';
 
 /// Live, in-app selfie capture for KYC — replaces the old flow (the device's
@@ -334,7 +335,7 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
               )
             : _controller == null || !_controller!.value.isInitialized
             ? const Center(
-                child: CircularProgressIndicator(color: Colors.white),
+                child: AppCircularLoader(color: Colors.white, size: 36),
               )
             : LayoutBuilder(
                 builder: (context, constraints) => FadeTransition(
@@ -803,12 +804,27 @@ class _HoldRingPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (progress <= 0) return;
+    // Matches the green ring's own border width (4, its `isGood` width —
+    // this only ever draws while isGood is true). A Container's Border.all
+    // paints INSET from its box's edge, but Canvas.drawArc strokes CENTERED
+    // on the path — stroking the bare `oval` here left the outer edge of
+    // this ring sitting strokeWidth/2 further out than the green ring's own
+    // outer edge, reading as two slightly mismatched concentric rings
+    // instead of one. Deflating by half the stroke width lines the two
+    // outer edges up.
+    const strokeWidth = 4.0;
     final paint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 5
+      ..strokeWidth = strokeWidth
       ..strokeCap = StrokeCap.round;
-    canvas.drawArc(oval, -pi / 2, 2 * pi * progress, false, paint);
+    canvas.drawArc(
+      oval.deflate(strokeWidth / 2),
+      -pi / 2,
+      2 * pi * progress,
+      false,
+      paint,
+    );
   }
 
   @override
@@ -897,7 +913,7 @@ class _CaptureButton extends StatelessWidget {
         child: busy
             ? const Padding(
                 padding: EdgeInsets.all(21),
-                child: CircularProgressIndicator(strokeWidth: 2.5),
+                child: AppCircularLoader(size: 34, strokeWidth: 2.5),
               )
             : null,
       ),

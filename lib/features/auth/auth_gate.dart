@@ -6,6 +6,7 @@ import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
 import '../../data/app_state.dart';
 import '../../widgets/common.dart';
+import '../../widgets/feedback/app_loaders.dart';
 import '../home/home_shell.dart';
 import '../onboarding/onboarding_screen.dart';
 import 'account_blocked_screen.dart';
@@ -87,13 +88,10 @@ class _SplashView extends ConsumerWidget {
               children: [
                 BrandMark(pill: true),
                 SizedBox(height: AppSizes.xl),
-                SizedBox(
-                  height: 22,
-                  width: 22,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.4,
-                    valueColor: AlwaysStoppedAnimation(AppColors.textTertiary),
-                  ),
+                AppCircularLoader(
+                  size: 22,
+                  strokeWidth: 2.4,
+                  color: AppColors.textTertiary,
                 ),
               ],
             ),
