@@ -41,15 +41,29 @@ class BiometricService {
   }
 
   /// Prompts the OS biometric sheet. Returns true only on a successful scan.
+  ///
+  /// `stickyAuth: true` (below) tells the plugin to resume the prompt itself
+  /// if the app is paused mid-scan — normally the right call so a stray
+  /// notification-shade pull doesn't cancel the attempt — but it has a known
+  /// failure mode on some Android versions/OEMs where the underlying native
+  /// call then never completes at all after certain interruptions (no
+  /// result, no error). Without a bound, that leaves this `await` — and
+  /// whatever screen is waiting on it (see [LockScreen]) — stuck forever
+  /// with nothing to show for it in the logs. The timeout treats a hang the
+  /// same as a failed/cancelled attempt so the caller always gets an answer
+  /// and the person always has a way forward (retry, or "Sign in with PIN
+  /// instead").
   Future<bool> authenticate(String reason) async {
     try {
-      return await _auth.authenticate(
-        localizedReason: reason,
-        options: const AuthenticationOptions(
-          stickyAuth: true,
-          biometricOnly: true,
-        ),
-      );
+      return await _auth
+          .authenticate(
+            localizedReason: reason,
+            options: const AuthenticationOptions(
+              stickyAuth: true,
+              biometricOnly: true,
+            ),
+          )
+          .timeout(const Duration(seconds: 25), onTimeout: () => false);
     } catch (_) {
       return false;
     }

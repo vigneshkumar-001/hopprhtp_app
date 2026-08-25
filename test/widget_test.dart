@@ -3,6 +3,7 @@
 
 import 'package:escrow/app.dart';
 import 'package:escrow/core/network/connectivity.dart';
+import 'package:escrow/core/network/socket_service.dart';
 import 'package:escrow/core/providers.dart';
 import 'package:escrow/data/app_state.dart';
 import 'package:escrow/features/auth/application/auth_controller.dart';
@@ -23,6 +24,9 @@ Widget _app({FakeTokenStore? tokens, FakeAuthRepository? repo}) {
       connectivityProvider.overrideWith((ref) => Stream.value(true)),
       // The home bell reads this; keep tests off the network.
       unreadNotificationsProvider.overrideWith((ref) => Future.value(0)),
+      // Avoid a real socket_io_client connection (real Timers) — HopprApp
+      // connects/disconnects on every auth transition.
+      socketServiceProvider.overrideWithValue(FakeSocketService()),
     ],
     child: const HopprApp(),
   );
@@ -70,6 +74,7 @@ void main() {
         biometricServiceProvider.overrideWithValue(biometrics),
         connectivityProvider.overrideWith((ref) => Stream.value(true)),
         unreadNotificationsProvider.overrideWith((ref) => Future.value(0)),
+        socketServiceProvider.overrideWithValue(FakeSocketService()),
       ],
     );
     addTearDown(container.dispose);
@@ -95,6 +100,56 @@ void main() {
     // whole stack and land back on sign-in/onboarding.
     expect(find.text('Locked'), findsNothing);
     expect(find.text('Get started'), findsOneWidget);
+  });
+
+  testWidgets(
+      'successful relock/unlock returns to the exact same screen, not the stack root',
+      (WidgetTester tester) async {
+    final tokens = FakeTokenStore(access: 'a', refresh: 'r');
+    final repo = FakeAuthRepository();
+    final biometrics = FakeBiometricService();
+
+    final container = ProviderContainer(
+      overrides: [
+        tokenStoreProvider.overrideWithValue(tokens),
+        authRepositoryProvider.overrideWithValue(repo),
+        biometricServiceProvider.overrideWithValue(biometrics),
+        connectivityProvider.overrideWith((ref) => Stream.value(true)),
+        unreadNotificationsProvider.overrideWith((ref) => Future.value(0)),
+        socketServiceProvider.overrideWithValue(FakeSocketService()),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const HopprApp()),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Get started'), findsNothing);
+
+    // Simulate the user being a couple of screens deep, not sitting at Home.
+    final homeContext = tester.element(find.byType(Scaffold).first);
+    Navigator.of(homeContext).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(body: Text('Deep screen marker')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Deep screen marker'), findsOneWidget);
+
+    // App backgrounds with biometric unlock on, comes back, and this time the
+    // stored session is still perfectly valid (repo.failMe stays false) — a
+    // routine, successful unlock.
+    biometrics.enabled = true;
+    await container.read(authControllerProvider.notifier).relockIfBiometricEnabled();
+    await tester.pumpAndSettle();
+
+    // Must land back on the exact screen the person was on — not get bounced
+    // to the navigation stack's root the instant the unlock attempt starts
+    // (a bug where the cleanup fired on the transient "still checking"
+    // loading tick instead of waiting for the real outcome).
+    expect(find.text('Locked'), findsNothing);
+    expect(find.text('Deep screen marker'), findsOneWidget);
   });
 
   testWidgets('selected theme persists across launches',

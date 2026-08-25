@@ -1,5 +1,6 @@
 import 'package:escrow/core/auth/biometric_service.dart';
 import 'package:escrow/core/network/api_exception.dart';
+import 'package:escrow/core/network/socket_service.dart';
 import 'package:escrow/core/storage/token_store.dart';
 import 'package:escrow/data/dto/auth_dto.dart';
 import 'package:escrow/data/dto/user_dto.dart';
@@ -180,4 +181,24 @@ class FakeBiometricService implements BiometricService {
   Future<void> setEnabled(bool value) async => enabled = value;
   @override
   Future<bool> authenticate(String reason) async => true;
+}
+
+/// A no-op socket — avoids opening a real socket_io_client connection (which
+/// schedules real reconnection-backoff Timers) in widget tests that only
+/// care about auth/navigation state, not realtime delivery. HopprApp calls
+/// connect()/disconnect() on every auth-state transition, so any test that
+/// crosses the authenticated boundary more than once (e.g. login, then
+/// relock, then unlock again) needs this override or it leaks a pending
+/// Timer that fails the test on teardown.
+class FakeSocketService extends SocketService {
+  FakeSocketService() : super(FakeTokenStore());
+
+  @override
+  void connect() {}
+
+  @override
+  void disconnect() {}
+
+  @override
+  void ensureConnected() {}
 }

@@ -41,6 +41,14 @@ class _HopprAppState extends ConsumerState<HopprApp>
   /// screen-owned [BuildContext] at hand (background/terminated launch).
   final _navigatorKey = GlobalKey<NavigatorState>();
 
+  /// True from the moment the re-lock listener below pushes [LockScreen],
+  /// false from the moment it pops it — the source of truth for "do we
+  /// currently own a pushed overlay that needs cleaning up", tracked
+  /// directly rather than re-derived from AuthState transitions each time
+  /// (see the listener's own comment for why that re-derivation doesn't
+  /// work across `unlock()`'s loading hop).
+  bool _lockScreenPushed = false;
+
   /// App-wide (not per-screen) — refreshes Home/History the moment ANY
   /// transaction event arrives for the signed-in user, whether or not they
   /// currently have that transaction's Details screen open. Per-transaction
@@ -221,31 +229,46 @@ class _HopprAppState extends ConsumerState<HopprApp>
       // after unlocking, not to Home). Cold-start-locked (no prior screen to
       // preserve) still goes through AuthGate's own SignInScreen branch, not
       // this push.
-      final wasLocked = previous?.valueOrNull?.isLocked ?? false;
+      //
+      // Whether that pushed overlay should come back down is deliberately
+      // NOT decided by diffing `previous`/`next` here: unlock() always goes
+      // locked -> AsyncLoading() -> resolved, and a bare AsyncLoading carries
+      // no value, so `next.valueOrNull?.isLocked` reads false the instant
+      // the loading tick fires — well before the actual outcome (unlocked,
+      // still dead, or rejected) is known. Comparing adjacent pairs across
+      // that hop used to either act on "still waiting on the network" as if
+      // it were a decided outcome, or (once `previous` was itself the
+      // loading tick) never fire at all. `_lockScreenPushed` sidesteps the
+      // whole problem — it just tracks whether *we* currently own a pushed
+      // overlay, independent of how many loading ticks land in between.
       final isNowLocked = next.valueOrNull?.isLocked ?? false;
       final navigator = _navigatorKey.currentState;
-      if (was && !wasLocked && isNowLocked && navigator != null) {
+      if (was && !_lockScreenPushed && isNowLocked && navigator != null) {
+        _lockScreenPushed = true;
         navigator.push(AppNav.route<void>(const LockScreen()));
-      } else if (wasLocked &&
-          isNow &&
-          navigator != null &&
-          navigator.canPop()) {
-        // Unlocked from the pushed overlay — pop it to reveal the exact
-        // screen underneath, untouched, rather than navigating anywhere.
-        navigator.pop();
-      } else if (wasLocked && !isNowLocked && !isNow && navigator != null) {
-        // The locked session turned out to be dead — biometrics succeeded
-        // locally but the stored token was rejected server-side (session
-        // expired / revoked), or "Sign in with PIN instead" was tapped
-        // (forceLogout). AuthGate's own listener deliberately skips its
-        // session-ended cleanup for any transition through `locked` (see
-        // its comment) and leaves this to us — so do that cleanup here:
-        // clear the whole stack, not just pop the LockScreen, so the person
-        // lands on sign-in fresh instead of the stale authenticated screen
-        // that was underneath it.
-        navigator.popUntil((r) => r.isFirst);
-        final navigatorContext = _navigatorKey.currentContext;
-        if (navigatorContext != null) AppScope.read(navigatorContext).signOut();
+      } else if (_lockScreenPushed && !next.isLoading) {
+        // The pending unlock attempt has settled — pop the overlay exactly
+        // once, now that the actual outcome is known.
+        _lockScreenPushed = false;
+        if (isNow) {
+          // Unlocked — reveal the exact screen that was underneath, untouched.
+          if (navigator != null && navigator.canPop()) navigator.pop();
+        } else {
+          // The locked session turned out to be dead — biometrics succeeded
+          // locally but the stored token was rejected server-side (session
+          // expired / revoked), or "Sign in with PIN instead" was tapped
+          // (forceLogout). AuthGate's own listener deliberately skips its
+          // session-ended cleanup for any transition through `locked` (see
+          // its comment) and leaves this to us — so do that cleanup here:
+          // clear the whole stack, not just pop the LockScreen, so the
+          // person lands on sign-in fresh instead of the stale authenticated
+          // screen that was underneath it.
+          navigator?.popUntil((r) => r.isFirst);
+          final navigatorContext = _navigatorKey.currentContext;
+          if (navigatorContext != null) {
+            AppScope.read(navigatorContext).signOut();
+          }
+        }
       }
     });
 

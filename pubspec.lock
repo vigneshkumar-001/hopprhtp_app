@@ -178,7 +178,7 @@ packages:
     source: hosted
     version: "2.1.2"
   fake_async:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: fake_async
       sha256: "5368f224a74523e8d2e7399ea1638b37aecfca824a3cc4dfdf77bf1fa905ac44"
@@ -793,7 +793,7 @@ packages:
     source: hosted
     version: "2.3.0"
   local_auth_android:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: local_auth_android
       sha256: a0bdfcc0607050a26ef5b31d6b4b254581c3d3ce3c1816ab4d4f4a9173e84467
@@ -801,7 +801,7 @@ packages:
     source: hosted
     version: "1.0.56"
   local_auth_darwin:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: local_auth_darwin
       sha256: "699873970067a40ef2f2c09b4c72eb1cfef64224ef041b3df9fdc5c4c1f91f49"
@@ -817,7 +817,7 @@ packages:
     source: hosted
     version: "1.1.0"
   local_auth_windows:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: local_auth_windows
       sha256: bc4e66a29b0fdf751aafbec923b5bed7ad6ed3614875d8151afe2578520b2ab5
