@@ -13,6 +13,7 @@ import 'data/app_state.dart';
 import 'data/models/models.dart';
 import 'features/auth/application/auth_controller.dart';
 import 'features/auth/auth_gate.dart';
+import 'features/auth/lock_screen.dart';
 import 'features/update/update_gate.dart';
 import 'features/profile/support_ticket_form_screen.dart';
 import 'features/transaction/application/transactions_provider.dart';
@@ -84,9 +85,7 @@ class _HopprAppState extends ConsumerState<HopprApp>
     final push = ref.read(pushNotificationServiceProvider);
     push.init();
     _pushTapSub = push.transactionTaps.listen(_onPushTransactionTap);
-    _pushWithdrawalTapSub = push.withdrawalTaps.listen(
-      _onPushWithdrawalTap,
-    );
+    _pushWithdrawalTapSub = push.withdrawalTaps.listen(_onPushWithdrawalTap);
     _pushSupportTicketTapSub = push.supportTicketTaps.listen(
       _onPushSupportTicketTap,
     );
@@ -211,6 +210,29 @@ class _HopprAppState extends ConsumerState<HopprApp>
         ref.read(pushNotificationServiceProvider).registerToken();
       } else if (!isNow && was) {
         ref.read(socketServiceProvider).disconnect();
+      }
+
+      // Warm re-lock (app was already open, mid-navigation, then backgrounded
+      // — see AuthController.relockIfBiometricEnabled): push LockScreen ON
+      // TOP of wherever the user currently is, instead of letting AuthGate's
+      // own root-content swap handle it (that would only be reachable by
+      // popping back to the root, which used to also destroy whatever screen
+      // the user was on — real apps return you to the exact same screen
+      // after unlocking, not to Home). Cold-start-locked (no prior screen to
+      // preserve) still goes through AuthGate's own SignInScreen branch, not
+      // this push.
+      final wasLocked = previous?.valueOrNull?.isLocked ?? false;
+      final isNowLocked = next.valueOrNull?.isLocked ?? false;
+      final navigator = _navigatorKey.currentState;
+      if (was && !wasLocked && isNowLocked && navigator != null) {
+        navigator.push(AppNav.route<void>(const LockScreen()));
+      } else if (wasLocked &&
+          isNow &&
+          navigator != null &&
+          navigator.canPop()) {
+        // Unlocked from the pushed overlay — pop it to reveal the exact
+        // screen underneath, untouched, rather than navigating anywhere.
+        navigator.pop();
       }
     });
 

@@ -34,8 +34,14 @@ class AuthGate extends ConsumerWidget {
       // Keep the legacy dashboard state in sync with the live session.
       if (user != null) AppScope.read(context).hydrateFromApi(user);
 
-      // Session ended → clear the stack and reset local state to onboarding.
-      if (wasAuthed && !isAuthed) {
+      // Session genuinely ended (explicit sign-out, forced logout, account
+      // blocked) → clear the stack and reset local state to onboarding.
+      // Deliberately excludes a transition to `locked`: that's a biometric
+      // re-lock on an otherwise still-valid session (see HopprApp's own
+      // listener, which pushes/pops LockScreen for that case instead) — the
+      // user's place in the app must survive it, not get wiped back to Home.
+      final isNowLocked = next.valueOrNull?.isLocked ?? false;
+      if (wasAuthed && !isAuthed && !isNowLocked) {
         Navigator.of(context).popUntil((r) => r.isFirst);
         AppScope.read(context).signOut();
       }
@@ -99,7 +105,9 @@ class _SplashView extends ConsumerWidget {
               child: Center(
                 child: Text(
                   version,
-                  style: AppText.caption.copyWith(color: AppColors.textTertiary),
+                  style: AppText.caption.copyWith(
+                    color: AppColors.textTertiary,
+                  ),
                 ),
               ),
             ),
