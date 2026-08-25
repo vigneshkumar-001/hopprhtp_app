@@ -272,12 +272,65 @@ class AuthController extends AsyncNotifier<AuthState> {
 
   // ── Biometric unlock + PIN ────────────────────────────────────────────────
 
+  /// Snapshotted by [relockIfBiometricEnabled] right before it clears [state]
+  /// down to [AuthState.locked] (whose `user` is always null) — [unlock]
+  /// uses this to reveal the app instantly on the (overwhelmingly common)
+  /// case that the token is still fine, instead of always waiting on a
+  /// network round-trip first. Null for a cold-boot-locked session, since
+  /// there's nothing to have cached yet.
+  ApiUser? _cachedUser;
+
   /// Prompt for biometrics and, on success, restore the locked session.
-  Future<void> unlock() async {
+  /// Returns whether the biometric check itself succeeded — not whether the
+  /// session behind it later turns out to still be valid (see
+  /// [_revalidateAfterUnlock]) — so callers can show clear feedback on a
+  /// failed/cancelled scan instead of leaving the person guessing why
+  /// nothing happened.
+  Future<bool> unlock() async {
     final ok = await _biometrics.authenticate('Unlock Hoppr');
-    if (!ok) return; // stay locked — user can retry or sign in with their PIN
-    state = const AsyncLoading();
-    state = AsyncData(await _loadSession());
+    if (!ok) return false; // stay locked — user can retry or sign in with their PIN
+
+    final cached = _cachedUser;
+    if (cached != null) {
+      // A warm re-lock: reveal the app immediately using the session
+      // already held — nothing about it changed while locked, and the
+      // person just proved it's them. Waiting on a network round-trip here
+      // only makes the unlock feel slow for no visible benefit in the
+      // common case where the token is still perfectly fine.
+      state = AsyncData(AuthState.authenticated(cached));
+      unawaited(_revalidateAfterUnlock());
+    } else {
+      // Cold-boot-locked — nothing cached to fall back on yet, so this is
+      // the one case that has to wait on the network regardless.
+      state = const AsyncLoading();
+      state = AsyncData(await _loadSession());
+    }
+    return true;
+  }
+
+  /// Confirms the token [unlock] just trusted optimistically is genuinely
+  /// still good, in the background — the person is already back in the app
+  /// by the time this runs. A revoked/expired/frozen-account token drops
+  /// them back to sign-in the normal way (AuthGate's own session-ended
+  /// listener reacts to the state change); a transient network hiccup is
+  /// left as "still fine" rather than signing someone out over a blip — the
+  /// auth interceptor's own 401 handling on the next real API call is the
+  /// backstop regardless.
+  Future<void> _revalidateAfterUnlock() async {
+    try {
+      final user = await _repo.me();
+      if (state.valueOrNull?.isAuthenticated == true) {
+        state = AsyncData(AuthState.authenticated(user));
+      }
+    } on ApiException catch (e) {
+      if (state.valueOrNull?.isAuthenticated != true) return;
+      await _tokens.clear();
+      state = isAccountBlockedCode(e.code)
+          ? AsyncData(AuthState.blocked(code: e.code, message: e.userMessage))
+          : const AsyncData(AuthState.unauthenticated());
+    } catch (_) {
+      // Offline/timeout — leave the optimistic authenticated state as-is.
+    }
   }
 
   /// Re-locks an already-authenticated session the moment biometric unlock
@@ -287,8 +340,10 @@ class AuthController extends AsyncNotifier<AuthState> {
   /// to the dashboard. A no-op when biometric is off (the default: the
   /// session just resumes normally) or when there's no live session to lock.
   Future<void> relockIfBiometricEnabled() async {
-    if (state.valueOrNull?.isAuthenticated != true) return;
+    final current = state.valueOrNull;
+    if (current?.isAuthenticated != true) return;
     if (!await _biometrics.isEnabled()) return;
+    _cachedUser = current!.user;
     state = const AsyncData(AuthState.locked());
   }
 

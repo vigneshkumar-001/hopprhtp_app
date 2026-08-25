@@ -68,8 +68,14 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
     final remembered = tokens.hasSession && await notifier.isBiometricEnabled();
     if (!mounted || !remembered) return;
     setState(() => _biometricSession = true);
-    await notifier.unlock(); // auto-prompt the OS biometric sheet
+    final matched = await notifier.unlock(); // auto-prompt the OS biometric sheet
+    if (mounted && !matched) _showBiometricFailed();
   }
+
+  void _showBiometricFailed() => AppSnackbar.error(
+    context,
+    'Biometric authentication failed. Try again or sign in with your PIN below.',
+  );
 
   void _refresh() => setState(() {});
 
@@ -107,7 +113,8 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
     await tokens.ensureLoaded();
     final notifier = ref.read(authControllerProvider.notifier);
     if (tokens.hasSession && await notifier.isBiometricEnabled()) {
-      await notifier.unlock();
+      final matched = await notifier.unlock();
+      if (mounted && !matched) _showBiometricFailed();
     } else if (mounted) {
       AppSnackbar.info(context,
           'Sign in with your PIN, then turn on biometrics in More → Security.');

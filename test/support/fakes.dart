@@ -61,6 +61,10 @@ class FakeAuthRepository implements AuthRepository {
   bool failLogin = false;
   bool failMe = false;
 
+  /// When set, me() waits on this before resolving/throwing — lets a test
+  /// prove something did (or deliberately didn't) block on it finishing.
+  Completer<void>? meGate;
+
   @override
   Future<AuthSession> login({
     required String identifier,
@@ -82,6 +86,8 @@ class FakeAuthRepository implements AuthRepository {
 
   @override
   Future<ApiUser> me() async {
+    final gate = meGate;
+    if (gate != null) await gate.future;
     if (failMe) {
       throw ApiException(
         code: 'UNAUTHORIZED',
