@@ -63,7 +63,7 @@ FaceFit classifyFaceFit({
 }
 
 class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   CameraController? _controller;
   CameraDescription? _frontCamera;
   late final FaceDetector _faceDetector;
