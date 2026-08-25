@@ -813,18 +813,23 @@ class _HoldRingPainter extends CustomPainter {
     // instead of one. Deflating by half the stroke width lines the two
     // outer edges up.
     const strokeWidth = 4.0;
+    final inset = oval.deflate(strokeWidth / 2);
     final paint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
-    canvas.drawArc(
-      oval.deflate(strokeWidth / 2),
-      -pi / 2,
-      2 * pi * progress,
-      false,
-      paint,
-    );
+      ..strokeWidth = strokeWidth;
+
+    if (progress >= 1) {
+      // A full 2π arc with round caps leaves a visible seam right where the
+      // start and end caps land on the exact same point and stack — draw a
+      // genuine closed ellipse instead the instant it completes, which has
+      // no start/end seam to begin with.
+      canvas.drawOval(inset, paint);
+      return;
+    }
+
+    paint.strokeCap = StrokeCap.round;
+    canvas.drawArc(inset, -pi / 2, 2 * pi * progress, false, paint);
   }
 
   @override
