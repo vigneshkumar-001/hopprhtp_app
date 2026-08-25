@@ -5,6 +5,12 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <!-- Biometric (fingerprint / face) unlock — used by local_auth. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <!-- Live in-app camera preview for KYC selfie capture (camera package) —
+         separate from image_picker's camera intent above, which never
+         needed this declared explicitly. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
     <!-- Android 13+ (API 33) requires this runtime permission to show any
          notification, including push — requested via
          FirebaseMessaging.requestPermission() in push_notification_service.dart. -->

@@ -20,6 +20,7 @@ import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
 import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/app_snackbar.dart';
+import 'live_selfie_camera_screen.dart';
 
 /// One government ID document within a KYC submission — which ID type, plus
 /// its captured front (+ back unless a passport).
@@ -854,8 +855,7 @@ class CaptureDocumentsScreen extends StatefulWidget {
   final KycDraft draft;
 
   @override
-  State<CaptureDocumentsScreen> createState() =>
-      _CaptureDocumentsScreenState();
+  State<CaptureDocumentsScreen> createState() => _CaptureDocumentsScreenState();
 }
 
 class _CaptureDocumentsScreenState extends State<CaptureDocumentsScreen> {
@@ -904,7 +904,11 @@ class _CaptureDocumentsScreenState extends State<CaptureDocumentsScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(
-                  AppSizes.md, AppSizes.sm, AppSizes.screenPad, AppSizes.sm),
+                AppSizes.md,
+                AppSizes.sm,
+                AppSizes.screenPad,
+                AppSizes.sm,
+              ),
               child: SizedBox(
                 height: 44,
                 child: Stack(
@@ -920,9 +924,12 @@ class _CaptureDocumentsScreenState extends State<CaptureDocumentsScreen> {
                     ),
                     Align(
                       alignment: Alignment.centerRight,
-                      child: Text('2 / 4',
-                          style: AppText.label
-                              .copyWith(color: AppColors.textTertiary)),
+                      child: Text(
+                        '2 / 4',
+                        style: AppText.label.copyWith(
+                          color: AppColors.textTertiary,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -930,7 +937,9 @@ class _CaptureDocumentsScreenState extends State<CaptureDocumentsScreen> {
             ),
             Padding(
               padding: const EdgeInsets.symmetric(
-                  horizontal: AppSizes.screenPad, vertical: AppSizes.md),
+                horizontal: AppSizes.screenPad,
+                vertical: AppSizes.md,
+              ),
               child: StepProgress(step: _docStep + 1, total: 2),
             ),
             Expanded(
@@ -941,8 +950,9 @@ class _CaptureDocumentsScreenState extends State<CaptureDocumentsScreen> {
                   opacity: anim,
                   child: SlideTransition(
                     position: Tween(
-                            begin: const Offset(0.06, 0), end: Offset.zero)
-                        .animate(anim),
+                      begin: const Offset(0.06, 0),
+                      end: Offset.zero,
+                    ).animate(anim),
                     child: child,
                   ),
                 ),
@@ -994,13 +1004,16 @@ class _DocCaptureStep extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(
-          AppSizes.screenPad, AppSizes.sm, AppSizes.screenPad, AppSizes.xxl),
+        AppSizes.screenPad,
+        AppSizes.sm,
+        AppSizes.screenPad,
+        AppSizes.xxl,
+      ),
       children: [
         Align(
           alignment: Alignment.centerLeft,
           child: Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
               color: AppColors.surfaceMuted,
               borderRadius: AppRadii.pill,
@@ -1044,15 +1057,13 @@ class TakeSelfieScreen extends StatefulWidget {
 }
 
 class _TakeSelfieScreenState extends State<TakeSelfieScreen> {
-  final _picker = ImagePicker();
-
+  /// Live in-app camera with on-device face detection — replaces the old
+  /// stock-camera-app picker, which happily accepted a photo with no face in
+  /// it at all. See LiveSelfieCameraScreen: the capture button there stays
+  /// disabled until a single, centered, properly-sized face is actually
+  /// being seen.
   Future<void> _pickSelfie() async {
-    final f = await _picker.pickImage(
-      source: ImageSource.camera,
-      preferredCameraDevice: CameraDevice.front,
-      imageQuality: 80,
-      maxWidth: 1200,
-    );
+    final f = await AppNav.push<XFile>(context, const LiveSelfieCameraScreen());
     if (f != null && mounted) setState(() => widget.draft.selfie = f);
   }
 
@@ -1278,11 +1289,13 @@ class _ReviewSubmitScreenState extends ConsumerState<ReviewSubmitScreen> {
         final backUrl = slot.back != null
             ? await upload.uploadImage(slot.back!.path)
             : null;
-        documents.add(KycDocumentPayload(
-          docType: slot.docType,
-          documentFrontUrl: frontUrl,
-          documentBackUrl: backUrl,
-        ));
+        documents.add(
+          KycDocumentPayload(
+            docType: slot.docType,
+            documentFrontUrl: frontUrl,
+            documentBackUrl: backUrl,
+          ),
+        );
       }
       final selfieUrl = await upload.uploadImage(d.selfie!.path);
       await ref
