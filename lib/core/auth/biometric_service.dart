@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 
@@ -54,8 +55,9 @@ class BiometricService {
   /// and the person always has a way forward (retry, or "Sign in with PIN
   /// instead").
   Future<bool> authenticate(String reason) async {
+    bool ok;
     try {
-      return await _auth
+      ok = await _auth
           .authenticate(
             localizedReason: reason,
             options: const AuthenticationOptions(
@@ -65,7 +67,20 @@ class BiometricService {
           )
           .timeout(const Duration(seconds: 25), onTimeout: () => false);
     } catch (_) {
-      return false;
+      ok = false;
     }
+    // The OS prompt's own animation ends the instant the sensor reads a
+    // scan; this fires once the *result* is actually back with the app —
+    // matching the mediumImpact/heavyImpact split every other
+    // success/failure moment in the app already uses (AppButton's primary
+    // tap, AppSnackbar's error toast) — so a match feels confirmed and a
+    // miss/cancel/timeout feels distinctly like "try again", every time
+    // biometrics are used (LockScreen, sign-in, enabling biometrics).
+    if (ok) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    return ok;
   }
 }
