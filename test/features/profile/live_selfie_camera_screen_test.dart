@@ -118,6 +118,30 @@ void main() {
       expect(fit, FaceFit.eyesClosed);
     });
 
+    test(
+      'one eye clearly closed but the other skewed up (e.g. glasses glare) '
+      'still reports eyesClosed — averaged, not required individually',
+      () {
+        final fit = classifyFaceFit(
+          faceCount: 1,
+          boundingBox: centeredBox(widthFraction: 0.3),
+          imageWidth: imageWidth,
+          imageHeight: imageHeight,
+          leftEyeOpenProbability: 0.02,
+          rightEyeOpenProbability: 0.55,
+        );
+        expect(
+          fit,
+          FaceFit.eyesClosed,
+          reason:
+              'requiring each eye to individually clear the threshold let a '
+              'real closed-eyes shot through whenever one lens read high — '
+              'the average of a clean 0.02 and a skewed 0.55 is still below '
+              'the closed threshold',
+        );
+      },
+    );
+
     test('only one eye reading as closed is not enough — still good', () {
       final fit = classifyFaceFit(
         faceCount: 1,

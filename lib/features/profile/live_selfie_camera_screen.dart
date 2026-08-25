@@ -75,13 +75,18 @@ FaceFit classifyFaceFit({
   // closed eyes on a face that's still too far/off-center anyway. Null
   // probabilities (classification unavailable for this frame) are treated
   // as "can't tell, don't block" rather than assumed closed.
+  //
+  // Averaged, not "both individually below threshold": glasses commonly
+  // catch glare on one lens, which skews just that eye's reading upward
+  // even when both eyes are actually shut — requiring each eye to
+  // independently clear the bar let a genuinely closed-eyes shot through
+  // whenever one side got skewed. Averaging keeps a real reading from
+  // one clean eye from being cancelled out by a distorted one.
   final left = leftEyeOpenProbability;
   final right = rightEyeOpenProbability;
-  if (left != null &&
-      right != null &&
-      left < _eyeClosedThreshold &&
-      right < _eyeClosedThreshold) {
-    return FaceFit.eyesClosed;
+  if (left != null && right != null) {
+    final averageOpen = (left + right) / 2;
+    if (averageOpen < _eyeClosedThreshold) return FaceFit.eyesClosed;
   }
 
   return FaceFit.good;
