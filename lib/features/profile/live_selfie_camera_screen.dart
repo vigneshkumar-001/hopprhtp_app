@@ -420,17 +420,26 @@ class _LiveSelfieCameraScreenState extends State<LiveSelfieCameraScreen>
         ),
         // Fills in around the ring the moment a good frame locks in — both
         // the "hold still" feedback and the auto-capture countdown, so the
-        // user can see exactly how long they need to stay still.
+        // user can see exactly how long they need to stay still. Tracks the
+        // same pulse-inflated rect as the green ring above (also merging in
+        // _pulseController, not just _holdController) — drawing it at the
+        // bare, un-inflated `oval` instead left it visibly inset from the
+        // breathing green ring rather than sitting right on top of it.
         Positioned.fill(
           child: IgnorePointer(
             child: AnimatedBuilder(
-              animation: _holdController,
-              builder: (context, _) => CustomPaint(
-                painter: _HoldRingPainter(
-                  oval: oval,
-                  progress: _holdController.value,
-                ),
-              ),
+              animation: Listenable.merge([_pulseController, _holdController]),
+              builder: (context, _) {
+                final pulse = isGood
+                    ? Curves.easeInOut.transform(_pulseController.value)
+                    : 0.0;
+                return CustomPaint(
+                  painter: _HoldRingPainter(
+                    oval: oval.inflate(pulse * 6),
+                    progress: _holdController.value,
+                  ),
+                );
+              },
             ),
           ),
         ),
