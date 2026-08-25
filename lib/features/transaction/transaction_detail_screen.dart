@@ -1044,7 +1044,7 @@ class _TransactionDetailScreenState
                           const SizedBox(height: AppSizes.md),
                           const _ReleaseBanner(),
                           const SizedBox(height: AppSizes.md),
-                          _PaidCard(total: tx.amount),
+                          _PaidCard(total: tx.amount, transactionId: tx.id),
                         ],
                         const SizedBox(height: 24),
                       ],
@@ -2562,31 +2562,76 @@ class _ReleaseBanner extends StatelessWidget {
   }
 }
 
-class _PaidCard extends StatelessWidget {
-  const _PaidCard({required this.total});
+class _PaidCard extends ConsumerStatefulWidget {
+  const _PaidCard({required this.total, required this.transactionId});
   final double total;
+  final String transactionId;
+
+  @override
+  ConsumerState<_PaidCard> createState() => _PaidCardState();
+}
+
+class _PaidCardState extends ConsumerState<_PaidCard> {
+  bool _downloading = false;
+
+  Future<void> _downloadReceipt() async {
+    if (_downloading) return;
+    setState(() => _downloading = true);
+    try {
+      final url = await ref
+          .read(transactionRepositoryProvider)
+          .getReceiptUrl(widget.transactionId);
+      if (!mounted) return;
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.userMessage);
+    } catch (_) {
+      if (mounted) {
+        AppSnackbar.error(
+          context,
+          'Could not generate the receipt. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return AppCard(
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.lock_outline_rounded, color: AppColors.success),
-          const SizedBox(width: AppSizes.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Paid into escrow', style: AppText.bodyStrong),
-                const SizedBox(height: 2),
-                Text(
-                  'Funds are protected until delivery is confirmed.',
-                  style: AppText.caption,
+          Row(
+            children: [
+              const Icon(Icons.lock_outline_rounded, color: AppColors.success),
+              const SizedBox(width: AppSizes.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Paid into escrow', style: AppText.bodyStrong),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Funds are protected until delivery is confirmed.',
+                      style: AppText.caption,
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              Text(Money.format(widget.total), style: AppText.bodyStrong),
+            ],
           ),
-          Text(Money.format(total), style: AppText.bodyStrong),
+          const SizedBox(height: AppSizes.md),
+          AppButton(
+            label: 'Download Receipt',
+            icon: Icons.receipt_long_rounded,
+            variant: AppButtonVariant.outline,
+            loading: _downloading,
+            enabled: !_downloading,
+            onPressed: _downloadReceipt,
+          ),
         ],
       ),
     );

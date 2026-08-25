@@ -85,6 +85,42 @@ class _CreateTransactionScreenState
     (f) => f.uploadingProduct || f.uploadingDispatch || f.uploadingWaybill,
   );
 
+  /// Live fee-breakdown inputs — pure getters, not async state: every value
+  /// they read (consignment amounts, PaymentDraft.trustRate,
+  /// DeliveryFeeEstimator's rates) is already in memory, so the card below
+  /// just re-evaluates on the next rebuild the same way the rest of this
+  /// form already does (see the `onChanged: () => setState(() {})` already
+  /// wired to every field) — no debounce, no network round-trip, no
+  /// loading/error state to get wrong.
+  double get _totalItemAmountNaira =>
+      _forms.fold(0.0, (sum, f) => sum + f._amountValue);
+
+  /// null = Hoppr Dispatcher is selected but there isn't yet enough
+  /// information (both addresses geocoded + a weight) to estimate — shown as
+  /// "add address/weight to estimate" rather than a fabricated number, same
+  /// "never guess" rule the backend itself enforces for this exact fee.
+  double? get _deliveryFeeEstimateNaira {
+    if (_deliveryMethod != DeliveryMethod.requestDispatcher) return 0;
+    final form = _forms.first;
+    final dLat = form.dispatcherLat;
+    final dLng = form.dispatcherLng;
+    final aLat = form.deliveryLat;
+    final aLng = form.deliveryLng;
+    final weightKg = DeliveryFeeEstimator.parseWeightKg(form.weight.text);
+    if (dLat == null ||
+        dLng == null ||
+        aLat == null ||
+        aLng == null ||
+        weightKg == null) {
+      return null;
+    }
+    final distanceKm = DeliveryFeeEstimator.distanceKm(dLat, dLng, aLat, aLng);
+    return DeliveryFeeEstimator.computeFee(
+      distanceKm: distanceKm,
+      weightKg: weightKg,
+    );
+  }
+
   // New consignment appears stacked below the existing ones.
   void _addConsignment() {
     setState(() => _forms.add(_ConsignmentForm()));
@@ -529,6 +565,14 @@ class _CreateTransactionScreenState
               ],
             ),
           ),
+          const SizedBox(height: AppSizes.md),
+          _FeeBreakdownCard(
+            itemAmountNaira: _totalItemAmountNaira,
+            deliveryFeeNaira: _deliveryFeeEstimateNaira,
+            feePayer: _platformFeePayer,
+            isDispatcherMode:
+                _deliveryMethod == DeliveryMethod.requestDispatcher,
+          ),
           if (_deliveryMethod == DeliveryMethod.requestDispatcher) ...[
             const SizedBox(height: AppSizes.md),
             _DispatcherSection(
@@ -540,6 +584,144 @@ class _CreateTransactionScreenState
             ),
           ],
           const SizedBox(height: AppSizes.sm),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+/// Live, receipt-style breakdown of what the buyer pays and what the seller
+/// receives — computed instantly from [PaymentDraft]'s own getters (the
+/// exact same formula the backend uses, see money.ts's computeFees), so this
+/// can never disagree with what the transaction actually gets charged later.
+/// Hidden entirely until there's an amount and a fee-payer choice — never
+/// shows a breakdown for ₦0 or an unmade decision.
+class _FeeBreakdownCard extends StatelessWidget {
+  const _FeeBreakdownCard({
+    required this.itemAmountNaira,
+    required this.deliveryFeeNaira,
+    required this.feePayer,
+    required this.isDispatcherMode,
+  });
+
+  final double itemAmountNaira;
+
+  /// null = Hoppr Dispatcher selected but not yet estimable (see
+  /// _deliveryFeeEstimateNaira) — rendered as a prompt, never a fabricated ₦0.
+  final double? deliveryFeeNaira;
+  final PlatformFeePayer? feePayer;
+  final bool isDispatcherMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final payer = feePayer;
+    if (itemAmountNaira <= 0 || payer == null) return const SizedBox.shrink();
+
+    final draft = PaymentDraft(
+      productName: '',
+      sellerName: '',
+      sellerCode: '',
+      itemSubtotal: itemAmountNaira,
+      platformFeePayer: payer,
+      deliveryFee: deliveryFeeNaira ?? 0,
+    );
+
+    return AppCard(
+      key: const ValueKey('fee_breakdown_card'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.receipt_long_rounded, size: 18),
+              const SizedBox(width: AppSizes.sm),
+              Text('Fee breakdown', style: AppText.h3),
+            ],
+          ),
+          const SizedBox(height: AppSizes.md),
+          _FeeRow('Item amount', Money.format(draft.itemSubtotal)),
+          _FeeRow(
+            'Hoppr platform fee',
+            Money.format(draft.trustFull),
+            caption: switch (payer) {
+              PlatformFeePayer.buyer => 'Charged to the buyer',
+              PlatformFeePayer.seller => 'Deducted from your payout',
+              PlatformFeePayer.split50 => 'Split between you and the buyer',
+            },
+          ),
+          if (isDispatcherMode)
+            _FeeRow(
+              'Delivery fee',
+              deliveryFeeNaira == null ? '—' : Money.format(deliveryFeeNaira!),
+              caption: deliveryFeeNaira == null
+                  ? 'Add pickup & delivery address and weight to estimate'
+                  : 'Estimate — the confirmed fee is set once you submit',
+            ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: AppSizes.sm),
+            child: Divider(height: 1),
+          ),
+          _FeeRow(
+            'Buyer pays',
+            Money.format(draft.grandTotal),
+            emphasize: true,
+          ),
+          _FeeRow(
+            'You receive',
+            Money.format(draft.sellerReceivable),
+            emphasize: true,
+            valueColor: AppColors.success,
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: AppDurations.fast);
+  }
+}
+
+class _FeeRow extends StatelessWidget {
+  const _FeeRow(
+    this.label,
+    this.value, {
+    this.caption,
+    this.emphasize = false,
+    this.valueColor,
+  });
+
+  final String label;
+  final String value;
+  final String? caption;
+  final bool emphasize;
+  final Color? valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: emphasize ? AppText.bodyStrong : AppText.body,
+                ),
+                if (caption != null) ...[
+                  const SizedBox(height: 2),
+                  Text(caption!, style: AppText.caption),
+                ],
+              ],
+            ),
+          ),
+          Text(
+            value,
+            style: (emphasize ? AppText.h3 : AppText.bodyStrong).copyWith(
+              color: valueColor,
+            ),
+          ),
         ],
       ),
     );

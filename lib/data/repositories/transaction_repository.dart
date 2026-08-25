@@ -4,6 +4,7 @@ import '../../core/network/json.dart';
 import '../dto/delivery_code_dto.dart';
 import '../dto/delivery_verification_status_dto.dart';
 import '../dto/dispute_dto.dart';
+import '../dto/fee_preview_dto.dart';
 import '../dto/scan_dto.dart';
 import '../dto/tracking_dto.dart';
 import '../dto/transaction_dto.dart';
@@ -63,6 +64,14 @@ class TransactionRepository {
   Future<ApiTransaction> getById(String id) => apiCall(
     () => _dio.get('/transactions/$id'),
     (d) => ApiTransaction.fromJson(asMap(d)),
+  );
+
+  /// Generates (fresh, every call — never cached) the downloadable payment
+  /// receipt PDF and returns its URL. Buyer or seller only; the backend
+  /// refuses before any payment has landed.
+  Future<String> getReceiptUrl(String id) => apiCall(
+    () => _dio.get('/transactions/$id/receipt'),
+    (d) => asString(asMap(d)['url']),
   );
 
   /// Lookup by public code (e.g. scanned from a QR / shared link).
@@ -202,6 +211,30 @@ class TransactionRepository {
     (d) => ApiTransaction.fromJson(asMap(d)),
   );
 
+  /// Live fee breakdown while filling in Create Transaction — pre-creation,
+  /// no PIN/side effects. [deliveryMethod] is 'deliver_myself' |
+  /// 'hoppr_dispatcher'; [distanceKm]/[weightKg] are required only for the
+  /// latter (the backend refuses to guess a delivery fee otherwise).
+  Future<FeePreview> feePreview({
+    required int productAmountKobo,
+    required String deliveryMethod,
+    double? distanceKm,
+    double? weightKg,
+    required String feePayer,
+  }) => apiCall(
+    () => _dio.post(
+      '/transactions/fee-preview',
+      data: {
+        'productAmountKobo': productAmountKobo,
+        'deliveryMethod': deliveryMethod,
+        'distanceKm': ?distanceKm,
+        'weightKg': ?weightKg,
+        'feePayer': feePayer,
+      },
+    ),
+    (d) => FeePreview.fromJson(asMap(d)),
+  );
+
   Future<ApiTransaction> _action(String id, String path) => apiCall(
     () => _dio.post('/transactions/$id/$path'),
     (d) => ApiTransaction.fromJson(asMap(d)),
@@ -232,48 +265,57 @@ class TransactionRepository {
   // no scan is ever attempted. Both funnel into the same
   // updateWaybill/confirmWaybill.
 
-  Future<WaybillDto?> getWaybill(String transactionId, int consignmentIndex) => apiCall(
-        () => _dio.get('/transactions/$transactionId/consignments/$consignmentIndex/waybill'),
+  Future<WaybillDto?> getWaybill(String transactionId, int consignmentIndex) =>
+      apiCall(
+        () => _dio.get(
+          '/transactions/$transactionId/consignments/$consignmentIndex/waybill',
+        ),
         (d) => d == null ? null : WaybillDto.fromJson(asMap(d)),
       );
 
-  Future<WaybillDto> initHopprWaybill(String transactionId, int consignmentIndex) => apiCall(
-        () => _dio.post(
-          '/transactions/$transactionId/consignments/$consignmentIndex/waybill/init-hoppr',
-        ),
-        (d) => WaybillDto.fromJson(asMap(d)),
-      );
+  Future<WaybillDto> initHopprWaybill(
+    String transactionId,
+    int consignmentIndex,
+  ) => apiCall(
+    () => _dio.post(
+      '/transactions/$transactionId/consignments/$consignmentIndex/waybill/init-hoppr',
+    ),
+    (d) => WaybillDto.fromJson(asMap(d)),
+  );
 
   Future<WaybillDto> initExternalWaybill(
     String transactionId,
     int consignmentIndex, {
     String? sourceDocumentUrl,
   }) => apiCall(
-        () => _dio.post(
-          '/transactions/$transactionId/consignments/$consignmentIndex/waybill/init-external',
-          data: {'sourceDocumentUrl': ?sourceDocumentUrl},
-        ),
-        (d) => WaybillDto.fromJson(asMap(d)),
-      );
+    () => _dio.post(
+      '/transactions/$transactionId/consignments/$consignmentIndex/waybill/init-external',
+      data: {'sourceDocumentUrl': ?sourceDocumentUrl},
+    ),
+    (d) => WaybillDto.fromJson(asMap(d)),
+  );
 
   Future<WaybillDto> updateWaybill(
     String transactionId,
     int consignmentIndex,
     Map<String, dynamic> fields,
   ) => apiCall(
-        () => _dio.patch(
-          '/transactions/$transactionId/consignments/$consignmentIndex/waybill',
-          data: fields,
-        ),
-        (d) => WaybillDto.fromJson(asMap(d)),
-      );
+    () => _dio.patch(
+      '/transactions/$transactionId/consignments/$consignmentIndex/waybill',
+      data: fields,
+    ),
+    (d) => WaybillDto.fromJson(asMap(d)),
+  );
 
-  Future<WaybillDto> confirmWaybill(String transactionId, int consignmentIndex) => apiCall(
-        () => _dio.post(
-          '/transactions/$transactionId/consignments/$consignmentIndex/waybill/confirm',
-        ),
-        (d) => WaybillDto.fromJson(asMap(d)),
-      );
+  Future<WaybillDto> confirmWaybill(
+    String transactionId,
+    int consignmentIndex,
+  ) => apiCall(
+    () => _dio.post(
+      '/transactions/$transactionId/consignments/$consignmentIndex/waybill/confirm',
+    ),
+    (d) => WaybillDto.fromJson(asMap(d)),
+  );
 
   /// Real tracking snapshot (buyer destination, seller's last reported
   /// position, and a route only when both exist) — no client-side fallback.
