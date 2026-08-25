@@ -35,6 +35,7 @@ import 'enter_pickup_code_screen.dart';
 import 'cooling_period_screen.dart';
 import 'package_tracking_screen.dart';
 import 'settlement_ledger_screen.dart';
+import 'transaction_chat_screen.dart';
 import 'waybill_section.dart';
 import '../dispute/dispute_center_screen.dart';
 import '../dispute/dispute_status_screen.dart';
@@ -877,7 +878,27 @@ class _TransactionDetailScreenState
 
     return AppScaffold(
       title: 'Transaction',
-      trailing: const AppIconButton(icon: Icons.more_horiz_rounded),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppIconButton(
+            icon: Icons.chat_bubble_outline_rounded,
+            onTap: () => AppNav.push(
+              context,
+              TransactionChatScreen(
+                transactionId: tx.id,
+                counterpartyName: tx.myRole == 'seller'
+                    ? (tx.buyerName?.trim().isNotEmpty == true
+                          ? tx.buyerName!
+                          : 'Buyer')
+                    : tx.merchantName,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSizes.sm),
+          const AppIconButton(icon: Icons.more_horiz_rounded),
+        ],
+      ),
       // Scrolling/padding is built by hand below (RefreshIndicator needs to
       // be the ancestor of the actual Scrollable — AppScaffold's own
       // `scrollable: true` would put it the wrong way round).

@@ -5,6 +5,7 @@ import '../dto/delivery_code_dto.dart';
 import '../dto/delivery_verification_status_dto.dart';
 import '../dto/dispute_dto.dart';
 import '../dto/fee_preview_dto.dart';
+import '../dto/message_dto.dart';
 import '../dto/scan_dto.dart';
 import '../dto/tracking_dto.dart';
 import '../dto/transaction_dto.dart';
@@ -72,6 +73,20 @@ class TransactionRepository {
   Future<String> getReceiptUrl(String id) => apiCall(
     () => _dio.get('/transactions/$id/receipt'),
     (d) => asString(asMap(d)['url']),
+  );
+
+  /// Full chat history, oldest first — buyer or seller only.
+  Future<List<ChatMessage>> listMessages(String id) => apiCall(
+    () => _dio.get('/transactions/$id/messages'),
+    (d) => asList(d).map((e) => ChatMessage.fromJson(asMap(e))).toList(growable: false),
+  );
+
+  /// Sends one chat message. The realtime push (see SocketService.chatMessages)
+  /// is how the OTHER party sees it live; the sender's own screen appends
+  /// this return value directly rather than waiting on its own echo.
+  Future<ChatMessage> sendMessage(String id, String text) => apiCall(
+    () => _dio.post('/transactions/$id/messages', data: {'text': text}),
+    (d) => ChatMessage.fromJson(asMap(d)),
   );
 
   /// Lookup by public code (e.g. scanned from a QR / shared link).

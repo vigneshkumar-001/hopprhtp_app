@@ -94,6 +94,40 @@ class SupportTicketSocketEvent {
   }
 }
 
+/// One transaction chat message, pushed live. Own event name ('chat_message')
+/// and — unlike [TransactionSocketEvent] — never debounced/coalesced: every
+/// message is meaningful and must arrive individually, not merged with
+/// whatever else was sent in the same instant.
+@immutable
+class ChatMessageSocketEvent {
+  const ChatMessageSocketEvent({
+    required this.transactionId,
+    required this.messageId,
+    required this.senderId,
+    required this.senderRole,
+    required this.text,
+    required this.createdAt,
+  });
+
+  final String transactionId;
+  final String messageId;
+  final String senderId;
+  final String senderRole; // 'buyer' | 'seller'
+  final String text;
+  final DateTime? createdAt;
+
+  factory ChatMessageSocketEvent.fromJson(Map<dynamic, dynamic> json) {
+    return ChatMessageSocketEvent(
+      transactionId: (json['transactionId'] as String?) ?? '',
+      messageId: (json['messageId'] as String?) ?? '',
+      senderId: (json['senderId'] as String?) ?? '',
+      senderRole: (json['senderRole'] as String?) ?? '',
+      text: (json['text'] as String?) ?? '',
+      createdAt: DateTime.tryParse((json['createdAt'] as String?) ?? ''),
+    );
+  }
+}
+
 /// Realtime transaction updates over Socket.IO — best-effort only. If the
 /// socket never connects, or drops and can't reconnect, the app's existing
 /// fallback (pull-to-refresh + refetch on app resume — see
@@ -111,6 +145,7 @@ class SocketService {
       StreamController<WithdrawalSocketEvent>.broadcast();
   final _supportTicketController =
       StreamController<SupportTicketSocketEvent>.broadcast();
+  final _chatController = StreamController<ChatMessageSocketEvent>.broadcast();
 
   /// Coalesces rapid-fire events for the same transaction (a single lifecycle
   /// action can trigger more than one hook in quick succession) into one
@@ -145,6 +180,11 @@ class SocketService {
   /// [withdrawalEvents].
   Stream<SupportTicketSocketEvent> get supportTicketEvents =>
       _supportTicketController.stream;
+
+  /// Every chat message on a transaction this user is a party to. Never
+  /// debounced — each message is delivered individually, unlike [events]'
+  /// intentional coalescing of rapid-fire lifecycle events.
+  Stream<ChatMessageSocketEvent> get chatMessages => _chatController.stream;
 
   bool get isConnected => _socket?.connected ?? false;
 
@@ -223,6 +263,21 @@ class SocketService {
           'status=${event.status}',
         );
         _debouncedEmitSupportTicket(event);
+      } catch (_) {
+        // Malformed/unexpected payload — never let a bad frame crash the app.
+      }
+    });
+
+    _socket!.on('chat_message', (data) {
+      if (data is! Map) return;
+      try {
+        final event = ChatMessageSocketEvent.fromJson(data);
+        _log(
+          'chat message received: tx=${event.transactionId} '
+          'message=${event.messageId}',
+        );
+        // Deliberately NOT debounced — see [chatMessages]'s doc comment.
+        if (!_chatController.isClosed) _chatController.add(event);
       } catch (_) {
         // Malformed/unexpected payload — never let a bad frame crash the app.
       }
