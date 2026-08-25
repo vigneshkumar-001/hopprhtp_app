@@ -13,7 +13,7 @@ import 'data/app_state.dart';
 import 'data/models/models.dart';
 import 'features/auth/application/auth_controller.dart';
 import 'features/auth/auth_gate.dart';
-import 'features/auth/lock_screen.dart';
+import 'features/auth/signin_screen.dart';
 import 'features/update/update_gate.dart';
 import 'features/profile/support_ticket_form_screen.dart';
 import 'features/transaction/application/transactions_provider.dart';
@@ -41,12 +41,12 @@ class _HopprAppState extends ConsumerState<HopprApp>
   /// screen-owned [BuildContext] at hand (background/terminated launch).
   final _navigatorKey = GlobalKey<NavigatorState>();
 
-  /// True from the moment the re-lock listener below pushes [LockScreen],
-  /// false from the moment it pops it — the source of truth for "do we
-  /// currently own a pushed overlay that needs cleaning up", tracked
-  /// directly rather than re-derived from AuthState transitions each time
-  /// (see the listener's own comment for why that re-derivation doesn't
-  /// work across `unlock()`'s loading hop).
+  /// True from the moment the re-lock listener below pushes the overlay
+  /// [SignInScreen], false from the moment it pops it — the source of truth
+  /// for "do we currently own a pushed overlay that needs cleaning up",
+  /// tracked directly rather than re-derived from AuthState transitions
+  /// each time (see the listener's own comment for why that re-derivation
+  /// doesn't work across `unlock()`'s loading hop).
   bool _lockScreenPushed = false;
 
   /// App-wide (not per-screen) — refreshes Home/History the moment ANY
@@ -221,14 +221,17 @@ class _HopprAppState extends ConsumerState<HopprApp>
       }
 
       // Warm re-lock (app was already open, mid-navigation, then backgrounded
-      // — see AuthController.relockIfBiometricEnabled): push LockScreen ON
-      // TOP of wherever the user currently is, instead of letting AuthGate's
-      // own root-content swap handle it (that would only be reachable by
-      // popping back to the root, which used to also destroy whatever screen
-      // the user was on — real apps return you to the exact same screen
-      // after unlocking, not to Home). Cold-start-locked (no prior screen to
-      // preserve) still goes through AuthGate's own SignInScreen branch, not
-      // this push.
+      // — see AuthController.relockIfBiometricEnabled): push SignInScreen
+      // (in overlay mode — see its own doc comment) ON TOP of wherever the
+      // user currently is, instead of letting AuthGate's own root-content
+      // swap handle it (that would only be reachable by popping back to the
+      // root, which used to also destroy whatever screen the user was on —
+      // real apps return you to the exact same screen after unlocking, not
+      // to Home). Cold-start-locked (no prior screen to preserve) still goes
+      // through AuthGate's own SignInScreen branch (isOverlay: false there),
+      // not this push. The same SignInScreen widget either way — one bare
+      // "Locked" placeholder screen (the old dedicated LockScreen) was
+      // exactly the extra, less-polished UI this unification removes.
       //
       // Whether that pushed overlay should come back down is deliberately
       // NOT decided by diffing `previous`/`next` here: unlock() always goes
@@ -245,10 +248,13 @@ class _HopprAppState extends ConsumerState<HopprApp>
       final navigator = _navigatorKey.currentState;
       if (was && !_lockScreenPushed && isNowLocked && navigator != null) {
         _lockScreenPushed = true;
-        navigator.push(AppNav.route<void>(const LockScreen()));
+        navigator.push(AppNav.route<void>(const SignInScreen(isOverlay: true)));
       } else if (_lockScreenPushed && !next.isLoading) {
         // The pending unlock attempt has settled — pop the overlay exactly
-        // once, now that the actual outcome is known.
+        // once, now that the actual outcome is known. A manual PIN sign-in
+        // typed directly into the overlay lands here too (see
+        // SignInScreen.isOverlay's doc comment for why it doesn't also try
+        // to pop itself).
         _lockScreenPushed = false;
         if (isNow) {
           // Unlocked — reveal the exact screen that was underneath, untouched.
@@ -256,11 +262,11 @@ class _HopprAppState extends ConsumerState<HopprApp>
         } else {
           // The locked session turned out to be dead — biometrics succeeded
           // locally but the stored token was rejected server-side (session
-          // expired / revoked), or "Sign in with PIN instead" was tapped
-          // (forceLogout). AuthGate's own listener deliberately skips its
-          // session-ended cleanup for any transition through `locked` (see
-          // its comment) and leaves this to us — so do that cleanup here:
-          // clear the whole stack, not just pop the LockScreen, so the
+          // expired / revoked), or the account was found frozen/deleted
+          // while restoring it. AuthGate's own listener deliberately skips
+          // its session-ended cleanup for any transition through `locked`
+          // (see its comment) and leaves this to us — so do that cleanup
+          // here: clear the whole stack, not just pop the overlay, so the
           // person lands on sign-in fresh instead of the stale authenticated
           // screen that was underneath it.
           navigator?.popUntil((r) => r.isFirst);

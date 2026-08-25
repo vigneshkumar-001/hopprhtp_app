@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:escrow/core/auth/biometric_service.dart';
 import 'package:escrow/core/network/api_exception.dart';
 import 'package:escrow/core/network/socket_service.dart';
@@ -181,6 +183,22 @@ class FakeBiometricService implements BiometricService {
   Future<void> setEnabled(bool value) async => enabled = value;
   @override
   Future<bool> authenticate(String reason) async => true;
+}
+
+/// Never resolves — freezes the caller mid-prompt, for asserting what's on
+/// screen while a biometric decision is still pending (the OS sheet is up).
+class HangingBiometricService implements BiometricService {
+  bool enabled = true;
+  bool available = true;
+
+  @override
+  Future<bool> isAvailable() async => available;
+  @override
+  Future<bool> isEnabled() async => enabled;
+  @override
+  Future<void> setEnabled(bool value) async => enabled = value;
+  @override
+  Future<bool> authenticate(String reason) => Completer<bool>().future;
 }
 
 /// A no-op socket — avoids opening a real socket_io_client connection (which

@@ -38,8 +38,9 @@ class AuthGate extends ConsumerWidget {
       // blocked) → clear the stack and reset local state to onboarding.
       // Deliberately excludes a transition to `locked`: that's a biometric
       // re-lock on an otherwise still-valid session (see HopprApp's own
-      // listener, which pushes/pops LockScreen for that case instead) — the
-      // user's place in the app must survive it, not get wiped back to Home.
+      // listener, which pushes/pops an overlay SignInScreen for that case
+      // instead) — the user's place in the app must survive it, not get
+      // wiped back to Home.
       final isNowLocked = next.valueOrNull?.isLocked ?? false;
       if (wasAuthed && !isAuthed && !isNowLocked) {
         Navigator.of(context).popUntil((r) => r.isFirst);

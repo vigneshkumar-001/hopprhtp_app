@@ -152,6 +152,48 @@ void main() {
     expect(find.text('Deep screen marker'), findsOneWidget);
   });
 
+  testWidgets(
+      're-lock overlay looks like the sign-in screen, not a bare "Locked" placeholder',
+      (WidgetTester tester) async {
+    final tokens = FakeTokenStore(access: 'a', refresh: 'r');
+    final repo = FakeAuthRepository();
+    // Never resolves — freezes the overlay in the "still waiting on the OS
+    // biometric sheet" state so it can be inspected.
+    final biometrics = HangingBiometricService();
+
+    final container = ProviderContainer(
+      overrides: [
+        tokenStoreProvider.overrideWithValue(tokens),
+        authRepositoryProvider.overrideWithValue(repo),
+        biometricServiceProvider.overrideWithValue(biometrics),
+        connectivityProvider.overrideWith((ref) => Stream.value(true)),
+        unreadNotificationsProvider.overrideWith((ref) => Future.value(0)),
+        socketServiceProvider.overrideWithValue(FakeSocketService()),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const HopprApp()),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Get started'), findsNothing);
+
+    await container.read(authControllerProvider.notifier).relockIfBiometricEnabled();
+    await tester.pumpAndSettle();
+
+    // The old dedicated lock screen showed only a bare "Locked" placeholder
+    // with an icon and two buttons. It's gone — the same branded sign-in
+    // screen used for a cold-boot session now covers this too, complete
+    // with its own phone/PIN fields as a fallback, not just a lone button.
+    expect(find.text('Locked'), findsNothing);
+    expect(find.text('Welcome back'), findsOneWidget);
+    expect(find.text('Unlock with biometrics'), findsOneWidget);
+    // Label + hint both read "Phone number" by design (see AppTextField) —
+    // findsWidgets just confirms the field itself is there, not a count.
+    expect(find.text('Phone number'), findsWidgets);
+  });
+
   testWidgets('selected theme persists across launches',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({'hoppr.limeTheme': true});

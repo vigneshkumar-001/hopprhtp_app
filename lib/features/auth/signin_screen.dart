@@ -24,7 +24,18 @@ import 'application/auth_controller.dart';
 import 'signup_screen.dart';
 
 class SignInScreen extends ConsumerStatefulWidget {
-  const SignInScreen({super.key});
+  const SignInScreen({super.key, this.isOverlay = false});
+
+  /// True when this is pushed as a warm re-lock overlay on top of wherever
+  /// the user already was (see HopprApp's re-lock listener) rather than
+  /// being AuthGate's own root content for a genuinely signed-out/cold-boot
+  /// session. Changes two things:
+  ///  - the back gesture/button is blocked — nothing should be able to
+  ///    reveal the screen underneath without authenticating;
+  ///  - a successful sign-in doesn't navigate itself — HopprApp's listener
+  ///    already pops this exact overlay once the session is authenticated
+  ///    again, so doing it here too would be a second, conflicting pop.
+  final bool isOverlay;
 
   @override
   ConsumerState<SignInScreen> createState() => _SignInScreenState();
@@ -123,9 +134,14 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
       await ref
           .read(authControllerProvider.notifier)
           .login(identifier: identifier, pin: _pin.text);
-      // Success: AuthGate has swapped the root to HomeShell — clear this pushed
-      // route to reveal it (no manual navigation to a screen).
-      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+      // Success: as an overlay, HopprApp's own listener already pops this
+      // exact route the moment the session turns authenticated — doing it
+      // here too would race it. As the root (cold-boot sign-in), AuthGate
+      // has swapped its content to HomeShell — clear this pushed route to
+      // reveal it (no manual navigation to a screen).
+      if (mounted && !widget.isOverlay) {
+        Navigator.of(context).popUntil((r) => r.isFirst);
+      }
     } on ApiException catch (e) {
       if (!mounted) return;
       if (isAccountBlockedCode(e.code)) {
@@ -169,12 +185,14 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return AnnotatedRegion<SystemUiOverlayStyle>(
+    final content = AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.dark,
       child: AppScaffold(
         title: 'Sign in',
-        // No back button when this is the biometric lock entry (it's the root).
-        showBack: !_biometricSession,
+        // No back button for the biometric lock entry (root) or the re-lock
+        // overlay (blocked outright below via PopScope) — only a fresh,
+        // fully signed-out sign-in shows one.
+        showBack: !_biometricSession && !widget.isOverlay,
         bottomAction: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -200,8 +218,13 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                 loading: _busy,
                 onPressed: _enter,
               ),
-            const SizedBox(height: AppSizes.md),
-            _CreateAccountPrompt(),
+            // Signing up while an existing session is merely re-lock-gated
+            // (not actually signed out) doesn't make sense — this account
+            // already exists.
+            if (!widget.isOverlay) ...[
+              const SizedBox(height: AppSizes.md),
+              _CreateAccountPrompt(),
+            ],
             const SizedBox(height: AppSizes.sm),
             Center(
               child: Text(
@@ -267,6 +290,11 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
         ),
       ),
     );
+    // Pushed as a re-lock overlay on top of wherever the user already was —
+    // the back gesture/hardware button must never be able to dismiss it and
+    // reveal that screen without actually authenticating (same reasoning
+    // the old dedicated LockScreen had its own PopScope for).
+    return widget.isOverlay ? PopScope(canPop: false, child: content) : content;
   }
 
   void _showForgotPin(BuildContext context) {

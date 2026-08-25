@@ -49,11 +49,11 @@ class BiometricService {
   /// failure mode on some Android versions/OEMs where the underlying native
   /// call then never completes at all after certain interruptions (no
   /// result, no error). Without a bound, that leaves this `await` — and
-  /// whatever screen is waiting on it (see [LockScreen]) — stuck forever
-  /// with nothing to show for it in the logs. The timeout treats a hang the
-  /// same as a failed/cancelled attempt so the caller always gets an answer
-  /// and the person always has a way forward (retry, or "Sign in with PIN
-  /// instead").
+  /// whatever screen is waiting on it (the sign-in screen's re-lock overlay
+  /// mode) — stuck forever with nothing to show for it in the logs. The
+  /// timeout treats a hang the same as a failed/cancelled attempt so the
+  /// caller always gets an answer and the person always has a way forward
+  /// (retry, or typing their PIN directly).
   Future<bool> authenticate(String reason) async {
     bool ok;
     try {
@@ -75,7 +75,7 @@ class BiometricService {
     // success/failure moment in the app already uses (AppButton's primary
     // tap, AppSnackbar's error toast) — so a match feels confirmed and a
     // miss/cancel/timeout feels distinctly like "try again", every time
-    // biometrics are used (LockScreen, sign-in, enabling biometrics).
+    // biometrics are used (the re-lock overlay, sign-in, enabling biometrics).
     if (ok) {
       HapticFeedback.mediumImpact();
     } else {
