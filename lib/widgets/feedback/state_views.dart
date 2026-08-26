@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
 import '../../core/network/error_messages.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
@@ -193,7 +194,12 @@ class _AsyncValueViewState<T> extends State<AsyncValueView<T>> {
     _lastNotifiedError = error;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      AppSnackbar.error(context, friendlyError(error), onRetry: widget.onRetry);
+      AppSnackbar.error(
+        context,
+        friendlyError(error),
+        onRetry: widget.onRetry,
+        autoRetryOnReconnect: error is ApiException && error.isConnectionIssue,
+      );
     });
   }
 

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
 import '../../core/network/error_messages.dart';
 import '../../core/network/socket_service.dart';
 import '../../core/providers.dart';
@@ -146,6 +147,7 @@ class _WithdrawalHistoryScreenState
           context,
           friendlyError(err),
           onRetry: () => ref.invalidate(walletWithdrawalsProvider),
+          autoRetryOnReconnect: err is ApiException && err.isConnectionIssue,
         );
       }
       final data = next.valueOrNull;

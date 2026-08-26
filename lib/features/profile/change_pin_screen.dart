@@ -70,7 +70,14 @@ class _ChangePinScreenState extends ConsumerState<ChangePinScreen> {
               .verifyAccountPin(_current.text);
           if (mounted) _goTo(1);
         } on ApiException catch (e) {
-          if (mounted) AppSnackbar.error(context, e.userMessage);
+          if (mounted) {
+            AppSnackbar.error(
+              context,
+              e.userMessage,
+              onRetry: _continue,
+              autoRetryOnReconnect: e.isConnectionIssue,
+            );
+          }
         } finally {
           if (mounted) setState(() => _busy = false);
         }
@@ -107,15 +114,24 @@ class _ChangePinScreenState extends ConsumerState<ChangePinScreen> {
             _current.clear();
             _goTo(0);
           }
-          AppSnackbar.error(context, e.userMessage);
+          AppSnackbar.error(
+            context,
+            e.userMessage,
+            onRetry: _continue,
+            autoRetryOnReconnect: e.isConnectionIssue,
+          );
         } finally {
           if (mounted) setState(() => _busy = false);
         }
     }
   }
 
-  void _offline() => AppSnackbar.error(context,
-      'No internet connection. Please check your network and try again.');
+  void _offline() => AppSnackbar.error(
+        context,
+        'No internet connection. Please check your network and try again.',
+        onRetry: _continue,
+        autoRetryOnReconnect: true,
+      );
 
   @override
   Widget build(BuildContext context) {

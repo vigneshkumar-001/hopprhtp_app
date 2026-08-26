@@ -132,6 +132,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
         context,
         'No internet connection. Please check your network and try again.',
         onRetry: _enter,
+        autoRetryOnReconnect: true,
       );
       return;
     }
@@ -154,7 +155,12 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
       if (isAccountBlockedCode(e.code)) {
         unawaited(_showBlockedDialog(code: e.code, message: e.userMessage));
       } else {
-        AppSnackbar.error(context, e.userMessage, onRetry: _enter);
+        AppSnackbar.error(
+          context,
+          e.userMessage,
+          onRetry: _enter,
+          autoRetryOnReconnect: e.isConnectionIssue,
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -416,6 +422,8 @@ class _ForgotPinSheetState extends ConsumerState<_ForgotPinSheet> {
       AppSnackbar.error(
         context,
         'No internet connection. Please check your network and try again.',
+        onRetry: _sendCode,
+        autoRetryOnReconnect: true,
       );
       return;
     }
@@ -458,6 +466,8 @@ class _ForgotPinSheetState extends ConsumerState<_ForgotPinSheet> {
       AppSnackbar.error(
         context,
         'No internet connection. Please check your network and try again.',
+        onRetry: _resendCode,
+        autoRetryOnReconnect: true,
       );
       return;
     }

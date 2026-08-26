@@ -202,6 +202,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
           AppSnackbar.error(
             context,
             'No internet connection. Please check your network and try again.',
+            onRetry: _next,
+            autoRetryOnReconnect: true,
           );
           return;
         }
@@ -300,6 +302,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
           AppSnackbar.error(
             context,
             'No internet connection. Please check your network and try again.',
+            onRetry: _next,
+            autoRetryOnReconnect: true,
           );
           return;
         }
@@ -330,6 +334,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
           AppSnackbar.error(
             context,
             'No internet connection. Please check your network and try again.',
+            onRetry: _next,
+            autoRetryOnReconnect: true,
           );
           return;
         }
@@ -373,6 +379,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
       AppSnackbar.error(
         context,
         'No internet connection. Please check your network and try again.',
+        onRetry: _resendOtp,
+        autoRetryOnReconnect: true,
       );
       return;
     }

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../core/network/api_exception.dart';
 import '../../core/network/error_messages.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_accent.dart';
@@ -91,7 +92,12 @@ class _ScanVisionScreenState extends ConsumerState<ScanVisionScreen>
       // Back to "photo ready" (not extracted) so the same photo can be
       // retried without re-picking it.
       setState(() => _phase = _Phase.ready);
-      AppSnackbar.error(context, friendlyError(e), onRetry: _startScan);
+      AppSnackbar.error(
+        context,
+        friendlyError(e),
+        onRetry: _startScan,
+        autoRetryOnReconnect: e is ApiException && e.isConnectionIssue,
+      );
     }
   }
 

@@ -20,6 +20,7 @@ import 'features/transaction/application/transactions_provider.dart';
 import 'features/transaction/package_tracking_screen.dart';
 import 'features/transaction/transaction_detail_screen.dart';
 import 'features/wallet/withdrawal_history_screen.dart';
+import 'widgets/feedback/connectivity_banner.dart';
 import 'widgets/theme_reveal.dart';
 
 /// Root widget. Owns the single [AppState] and shares it through [AppScope].
@@ -314,7 +315,20 @@ class _HopprAppState extends ConsumerState<HopprApp>
                     maxScaleFactor: 1.15,
                   ),
                 ),
-                child: ThemeReveal(child: child ?? const SizedBox.shrink()),
+                // Stacked once, above whatever screen is showing, so the
+                // offline banner appears/disappears app-wide with no
+                // per-screen wiring — see ConnectivityBanner's own doc.
+                child: Stack(
+                  children: [
+                    ThemeReveal(child: child ?? const SizedBox.shrink()),
+                    const Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: ConnectivityBanner(),
+                    ),
+                  ],
+                ),
               ),
             );
           },

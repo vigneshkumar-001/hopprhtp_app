@@ -121,8 +121,12 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
       return;
     }
     if (!ref.isOnline) {
-      AppSnackbar.error(context,
-          'No internet connection. Please check your network and try again.');
+      AppSnackbar.error(
+        context,
+        'No internet connection. Please check your network and try again.',
+        onRetry: _save,
+        autoRetryOnReconnect: true,
+      );
       return;
     }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
 import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_accent.dart';
@@ -70,11 +71,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     try {
       await ref.read(transactionsProvider.notifier).refresh();
       if (!mounted) return;
-      if (ref.read(transactionsProvider).hasError) {
+      final refreshError = ref.read(transactionsProvider).error;
+      if (refreshError != null) {
         AppSnackbar.error(
           context,
           'Could not refresh transactions. Please try again.',
           onRetry: _onRefresh,
+          autoRetryOnReconnect:
+              refreshError is ApiException && refreshError.isConnectionIssue,
         );
       } else {
         // Best-effort: these are auto-dispose and safe to invalidate even when

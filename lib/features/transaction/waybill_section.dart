@@ -90,7 +90,14 @@ class _WaybillSectionState extends ConsumerState<WaybillSection> {
       setState(() => _waybill = wb);
       _openReviewSheet();
     } on ApiException catch (e) {
-      if (mounted) AppSnackbar.error(context, friendlyError(e));
+      if (mounted) {
+        AppSnackbar.error(
+          context,
+          friendlyError(e),
+          onRetry: _startHopprFlow,
+          autoRetryOnReconnect: e.isConnectionIssue,
+        );
+      }
     }
   }
 
@@ -183,7 +190,13 @@ class _WaybillSectionState extends ConsumerState<WaybillSection> {
       setState(() => _waybill = wb);
       _openReviewSheet();
     } on ApiException catch (e) {
-      if (mounted) AppSnackbar.error(context, friendlyError(e));
+      // Deliberately no autoRetryOnReconnect — retrying this one re-runs
+      // the confirm dialog + image picker from the top (see the start of
+      // this method), not just the network call. Auto-firing that the
+      // instant WiFi reconnects would pop a native picker sheet on someone
+      // who isn't even looking at the screen anymore; a manual Retry tap
+      // is the right call here.
+      if (mounted) AppSnackbar.error(context, friendlyError(e), onRetry: _startExternalScanFlow);
     }
   }
 
@@ -199,7 +212,14 @@ class _WaybillSectionState extends ConsumerState<WaybillSection> {
       setState(() => _waybill = wb);
       _openReviewSheet();
     } on ApiException catch (e) {
-      if (mounted) AppSnackbar.error(context, friendlyError(e));
+      if (mounted) {
+        AppSnackbar.error(
+          context,
+          friendlyError(e),
+          onRetry: _startExternalManualFlow,
+          autoRetryOnReconnect: e.isConnectionIssue,
+        );
+      }
     }
   }
 
@@ -577,7 +597,14 @@ class _WaybillReviewSheetState extends ConsumerState<_WaybillReviewSheet> {
         'Waybill ${confirmed.waybillNumber ?? ''} generated.',
       );
     } on ApiException catch (e) {
-      if (mounted) AppSnackbar.error(context, friendlyError(e));
+      if (mounted) {
+        AppSnackbar.error(
+          context,
+          friendlyError(e),
+          onRetry: _saveAndConfirm,
+          autoRetryOnReconnect: e.isConnectionIssue,
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

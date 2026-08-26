@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
 import '../../core/network/error_messages.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
@@ -59,7 +60,12 @@ class TransactionsTab extends ConsumerWidget {
       if (!context.mounted) return;
       final err = ref.read(transactionsProvider).error;
       if (err != null) {
-        AppSnackbar.error(context, friendlyError(err), onRetry: onRefresh);
+        AppSnackbar.error(
+          context,
+          friendlyError(err),
+          onRetry: onRefresh,
+          autoRetryOnReconnect: err is ApiException && err.isConnectionIssue,
+        );
       }
     }
 

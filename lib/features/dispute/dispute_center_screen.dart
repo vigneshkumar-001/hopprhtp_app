@@ -153,13 +153,23 @@ class _DisputeCenterScreenState extends ConsumerState<DisputeCenterScreen> {
     ref.listen(trackingProvider(id), (previous, next) {
       final err = next.error;
       if (err != null) {
-        AppSnackbar.error(context, friendlyError(err), onRetry: retry);
+        AppSnackbar.error(
+          context,
+          friendlyError(err),
+          onRetry: retry,
+          autoRetryOnReconnect: err is ApiException && err.isConnectionIssue,
+        );
       }
     });
     ref.listen(transactionDisputesProvider(id), (previous, next) {
       final err = next.error;
       if (err != null) {
-        AppSnackbar.error(context, friendlyError(err), onRetry: retry);
+        AppSnackbar.error(
+          context,
+          friendlyError(err),
+          onRetry: retry,
+          autoRetryOnReconnect: err is ApiException && err.isConnectionIssue,
+        );
       }
     });
 

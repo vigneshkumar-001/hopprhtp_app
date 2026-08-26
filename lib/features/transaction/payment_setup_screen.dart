@@ -238,6 +238,8 @@ class _PaymentSetupScreenState extends ConsumerState<PaymentSetupScreen> {
       AppSnackbar.error(
         context,
         'No internet connection. Please check your network and try again.',
+        onRetry: _generate,
+        autoRetryOnReconnect: true,
       );
       return;
     }

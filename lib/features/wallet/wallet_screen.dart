@@ -115,6 +115,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen>
           context,
           friendlyError(err),
           onRetry: () => ref.invalidate(walletBalanceProvider),
+          autoRetryOnReconnect: err is ApiException && err.isConnectionIssue,
         );
       }
     });
@@ -392,6 +393,7 @@ class _LedgerSection extends ConsumerWidget {
           context,
           friendlyError(err),
           onRetry: () => ref.invalidate(walletLedgerProvider(filter)),
+          autoRetryOnReconnect: err is ApiException && err.isConnectionIssue,
         );
       }
     });
@@ -1212,6 +1214,7 @@ class _WithdrawalHistorySection extends ConsumerWidget {
           context,
           friendlyError(err),
           onRetry: () => ref.invalidate(walletWithdrawalsProvider),
+          autoRetryOnReconnect: err is ApiException && err.isConnectionIssue,
         );
       }
     });

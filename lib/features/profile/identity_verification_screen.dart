@@ -101,7 +101,12 @@ class _IdentityVerificationScreenState
     } catch (e) {
       if (mounted) {
         setState(() => _loading = false);
-        AppSnackbar.error(context, friendlyError(e), onRetry: _load);
+        AppSnackbar.error(
+          context,
+          friendlyError(e),
+          onRetry: _load,
+          autoRetryOnReconnect: e is ApiException && e.isConnectionIssue,
+        );
       }
     }
   }

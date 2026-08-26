@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
 import '../../core/network/error_messages.dart';
 import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
@@ -90,6 +91,8 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
                     context,
                     friendlyError(error),
                     onRetry: _reload,
+                    autoRetryOnReconnect:
+                        error is ApiException && error.isConnectionIssue,
                   );
                 }
               });

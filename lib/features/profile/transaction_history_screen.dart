@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
 import '../../core/network/error_messages.dart';
 import '../../core/network/socket_service.dart';
 import '../../core/providers.dart';
@@ -157,7 +158,12 @@ class _TransactionHistoryScreenState
     } catch (e) {
       if (mounted) {
         setState(() => _error = e);
-        AppSnackbar.error(context, friendlyError(e), onRetry: _loadFirst);
+        AppSnackbar.error(
+          context,
+          friendlyError(e),
+          onRetry: _loadFirst,
+          autoRetryOnReconnect: e is ApiException && e.isConnectionIssue,
+        );
       }
     } finally {
       if (mounted) {

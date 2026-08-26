@@ -93,7 +93,12 @@ class _JoinTransactionScreenState extends ConsumerState<JoinTransactionScreen> {
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
-      AppSnackbar.error(context, _messageFor(e));
+      AppSnackbar.error(
+        context,
+        _messageFor(e),
+        onRetry: _submit,
+        autoRetryOnReconnect: e.isConnectionIssue,
+      );
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);

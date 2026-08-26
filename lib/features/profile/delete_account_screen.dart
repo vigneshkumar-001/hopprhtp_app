@@ -49,9 +49,15 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
   Future<void> _confirmDelete() async {
     if (_busy || _pin.text.length != 6) return;
     if (!ref.isOnline) {
+      // Deliberately no autoRetryOnReconnect here — this is account
+      // deletion. Silently re-firing it the instant WiFi returns (possibly
+      // while the person isn't even looking at the screen anymore) is
+      // exactly the kind of irreversible action that must always wait for
+      // an explicit tap, never fire on its own.
       AppSnackbar.error(
         context,
         'No internet connection. Please check your network and try again.',
+        onRetry: _confirmDelete,
       );
       return;
     }

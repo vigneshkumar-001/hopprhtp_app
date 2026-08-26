@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_exception.dart';
 import '../../core/network/error_messages.dart';
 import '../../core/providers.dart';
 import '../../core/routing/app_transitions.dart';
@@ -134,7 +135,12 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _error = e);
-        AppSnackbar.error(context, friendlyError(e), onRetry: _loadFirst);
+        AppSnackbar.error(
+          context,
+          friendlyError(e),
+          onRetry: _loadFirst,
+          autoRetryOnReconnect: e is ApiException && e.isConnectionIssue,
+        );
       }
     } finally {
       if (mounted) {
