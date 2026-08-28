@@ -152,20 +152,42 @@ class _SpotlightTourOverlayState extends State<SpotlightTourOverlay>
                 onTap: () {},
               ),
             ),
-            // Dim + light blur, everywhere EXCEPT the spotlight hole — the
-            // hole itself stays perfectly sharp so the real button reads
-            // clearly, not just "less dark".
+            // Dim + light blur, everywhere EXCEPT the spotlight hole — a
+            // touch darker than before so the lit-up hole pops harder by
+            // contrast, not just on its own brightness.
             Positioned.fill(
               child: ClipPath(
                 clipper: _OutsideHoleClipper(hole),
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: 3, sigmaY: 3),
-                  child: Container(color: Colors.black.withValues(alpha: 0.6)),
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.72),
+                  ),
                 ),
               ),
             ),
-            // The glowing focus ring — pulses to draw the eye, matches the
-            // app's accent so it reads as "this is the thing to look at".
+            // A soft white wash directly over the spotlighted area itself —
+            // the real button doesn't just sit in a hole in the dark, it
+            // actually looks lit, like a stage spotlight rather than a cutout.
+            Positioned.fromRect(
+              rect: hole,
+              child: IgnorePointer(
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(18),
+                    gradient: RadialGradient(
+                      colors: [
+                        Colors.white.withValues(alpha: 0.22),
+                        Colors.white.withValues(alpha: 0.0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // The glowing focus ring — pulses to draw the eye, brighter and
+            // thicker than a subtle outline so it reads as unmistakably "the
+            // thing to look at", matching the app's accent colour.
             Positioned.fromRect(
               rect: hole,
               child:
@@ -175,15 +197,22 @@ class _SpotlightTourOverlayState extends State<SpotlightTourOverlay>
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
                           color: AppAccent.of(context).accent,
-                          width: 2.5,
+                          width: 3.5,
                         ),
                         boxShadow: [
                           BoxShadow(
                             color: AppAccent.of(
                               context,
-                            ).accent.withValues(alpha: 0.55),
-                            blurRadius: 18,
-                            spreadRadius: 1,
+                            ).accent.withValues(alpha: 0.85),
+                            blurRadius: 30,
+                            spreadRadius: 4,
+                          ),
+                          BoxShadow(
+                            color: AppAccent.of(
+                              context,
+                            ).accent.withValues(alpha: 0.5),
+                            blurRadius: 50,
+                            spreadRadius: 10,
                           ),
                         ],
                       ),
