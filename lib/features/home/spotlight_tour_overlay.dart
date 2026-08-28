@@ -187,13 +187,13 @@ class _SpotlightTourOverlayState extends State<SpotlightTourOverlay>
             ),
             // The glowing focus ring — pulses to draw the eye, brighter and
             // thicker than a subtle outline so it reads as unmistakably "the
-            // thing to look at". Uses `highlight`, not `accent`: `accent` is
-            // ink (near-black) in the Mono theme — great for a button on a
-            // light surface, but an invisible glow against both the dark
-            // dimmed scrim AND dark targets like the balance card. `highlight`
-            // is the token already defined for "accent colour on DARK
-            // backgrounds" (white in Mono, lime in Lime) — exactly the
-            // surface every spotlighted hole sits on.
+            // thing to look at". Always lime, regardless of the active
+            // theme (Mono/Lime) — the theme's own `accent` token is ink
+            // (near-black) in Mono, which is an invisible glow against both
+            // the dark scrim AND dark targets like the balance card. The
+            // tour is a special, always-colourful moment on top of
+            // everything else, so it deliberately doesn't follow Mono's B/W
+            // palette here.
             Positioned.fromRect(
               rect: hole,
               child:
@@ -202,21 +202,17 @@ class _SpotlightTourOverlayState extends State<SpotlightTourOverlay>
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
-                          color: AppAccent.of(context).highlight,
+                          color: AppColors.lime,
                           width: 3.5,
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: AppAccent.of(
-                              context,
-                            ).highlight.withValues(alpha: 0.85),
+                            color: AppColors.lime.withValues(alpha: 0.85),
                             blurRadius: 30,
                             spreadRadius: 4,
                           ),
                           BoxShadow(
-                            color: AppAccent.of(
-                              context,
-                            ).highlight.withValues(alpha: 0.5),
+                            color: AppColors.lime.withValues(alpha: 0.5),
                             blurRadius: 50,
                             spreadRadius: 10,
                           ),
