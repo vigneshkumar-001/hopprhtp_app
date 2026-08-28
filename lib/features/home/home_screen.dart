@@ -32,10 +32,22 @@ import 'dashboard_stats.dart';
 
 /// The Home dashboard (mockup 5).
 class HomeScreen extends ConsumerStatefulWidget {
-  const HomeScreen({super.key, this.onOpenProfile});
+  const HomeScreen({
+    super.key,
+    this.onOpenProfile,
+    this.notificationBellKey,
+    this.createButtonKey,
+    this.enterCodeButtonKey,
+  });
 
   /// Lets the bottom-nav switch to the profile tab instead of pushing a route.
   final VoidCallback? onOpenProfile;
+
+  /// Real-widget targets for [SpotlightTourOverlay] (see `HomeShell`) — null
+  /// outside the tour, so these never affect this screen's own behaviour.
+  final GlobalKey? notificationBellKey;
+  final GlobalKey? createButtonKey;
+  final GlobalKey? enterCodeButtonKey;
 
   @override
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
@@ -182,6 +194,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 firstName: user?.displayFirstName,
                 onScan: _joinTransaction,
                 onNotifications: _openAlerts,
+                notificationBellKey: widget.notificationBellKey,
               ),
               const SizedBox(height: AppSizes.lg),
               _BalanceCard(
@@ -196,12 +209,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
               const SizedBox(height: AppSizes.lg),
               AppButton(
+                key: widget.createButtonKey,
                 label: 'Create Protected Transaction',
                 icon: Icons.shield_outlined,
                 onPressed: _createTransaction,
               ),
               const SizedBox(height: AppSizes.md),
               AppButton(
+                key: widget.enterCodeButtonKey,
                 label: 'Enter Transaction Code',
                 icon: Icons.qr_code_scanner_rounded,
                 variant: AppButtonVariant.soft,
@@ -418,6 +433,7 @@ class _TopBar extends StatelessWidget {
     required this.firstName,
     required this.onScan,
     required this.onNotifications,
+    this.notificationBellKey,
   });
 
   /// Null while the profile hasn't loaded yet — shows the bare time-of-day
@@ -425,6 +441,7 @@ class _TopBar extends StatelessWidget {
   final String? firstName;
   final VoidCallback onScan;
   final VoidCallback onNotifications;
+  final GlobalKey? notificationBellKey;
 
   @override
   Widget build(BuildContext context) {
@@ -447,7 +464,7 @@ class _TopBar extends StatelessWidget {
         ),
         AppIconButton(icon: FeatherIcons.maximize, onTap: onScan),
         const SizedBox(width: AppSizes.sm),
-        NotificationBell(onTap: onNotifications),
+        NotificationBell(key: notificationBellKey, onTap: onNotifications),
       ],
     );
   }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart' show SystemNavigator;
@@ -22,6 +23,15 @@ import 'transactions_tab.dart';
 
 /// How long a second back-press has to land in to actually exit.
 const _exitPressWindow = Duration(seconds: 2);
+
+/// TESTING ONLY. true = the onboarding tour shows on every app open,
+/// regardless of the account's real `tutorialSeenAt` — set this while
+/// you're actively testing the tour itself. false = the real behavior
+/// (shows exactly once per account, per the backend's own record).
+/// Guarded by `kDebugMode` below so this can NEVER show repeatedly for a
+/// real user even if someone forgets to flip it back to false before a
+/// release build — `flutter build` strips it to false automatically.
+const bool kForceShowTourForTesting = false;
 
 /// The post-auth container with the bottom navigation bar (mockup 5).
 class HomeShell extends ConsumerStatefulWidget {
@@ -51,6 +61,14 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   /// own `_items` — the spotlight tour measures and highlights the ACTUAL
   /// rendered button through these, never a drawn stand-in for it.
   final _navItemKeys = List.generate(5, (_) => GlobalKey());
+
+  /// Same idea, for the main buttons that live on the Home tab's content
+  /// (not the always-visible bottom nav) — the tour spotlights these too,
+  /// not just the nav bar.
+  final _notificationBellKey = GlobalKey();
+  final _createButtonKey = GlobalKey();
+  final _enterCodeButtonKey = GlobalKey();
+
   bool _touring = false;
 
   @override
@@ -84,7 +102,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   Future<void> _runPostAuthChecks() async {
     if (!mounted) return;
     final user = ref.read(authControllerProvider).valueOrNull?.user;
-    if (user != null && !user.hasSeenTutorial) {
+    final forceForTesting = kDebugMode && kForceShowTourForTesting;
+    if (user != null && (!user.hasSeenTutorial || forceForTesting)) {
       setState(() => _touring = true);
       return;
     }
@@ -167,7 +186,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final pages = [
-      HomeScreen(onOpenProfile: () => setState(() => _index = 4)),
+      HomeScreen(
+        onOpenProfile: () => setState(() => _index = 4),
+        notificationBellKey: _notificationBellKey,
+        createButtonKey: _createButtonKey,
+        enterCodeButtonKey: _enterCodeButtonKey,
+      ),
       // Created/payment stage, delivery not started yet.
       const TransactionsTab(
         title: 'Initiation',
@@ -240,12 +264,30 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             ),
             if (_touring)
               SpotlightTourOverlay(
+                // Mixes the main Home-screen action buttons with the
+                // always-visible bottom-nav essentials — not bottom-nav-only.
+                // "Home" and "Send" are deliberately skipped: Home is where
+                // the tour already is (spotlighting it teaches nothing new),
+                // and Send opens the exact same screen "Create Protected
+                // Transaction" below already covers, front and center.
                 steps: [
                   TourStep(
-                    targetKey: _navItemKeys[0],
-                    title: 'Home',
+                    targetKey: _notificationBellKey,
+                    title: 'Notifications',
                     description:
-                        'Your dashboard — active deals and quick actions at a glance.',
+                        'Stay updated — tap here anytime to see every alert on your deals.',
+                  ),
+                  TourStep(
+                    targetKey: _createButtonKey,
+                    title: 'Create Protected Transaction',
+                    description:
+                        'Start a new escrow deal and send a payment link to your buyer.',
+                  ),
+                  TourStep(
+                    targetKey: _enterCodeButtonKey,
+                    title: 'Enter Transaction Code',
+                    description:
+                        'Joining as a buyer? Enter the code your seller shared here.',
                   ),
                   TourStep(
                     targetKey: _navItemKeys[1],
@@ -258,12 +300,6 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                     title: 'Transit',
                     description:
                         'Track live deliveries and see what\'s in the cooling/review period.',
-                  ),
-                  TourStep(
-                    targetKey: _navItemKeys[3],
-                    title: 'Send',
-                    description:
-                        'Tap here to create a transaction and send a payment link to a buyer.',
                   ),
                   TourStep(
                     targetKey: _navItemKeys[4],

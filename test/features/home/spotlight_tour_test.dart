@@ -67,10 +67,10 @@ void main() {
     (WidgetTester tester) async {
       await _pumpNewUserToTour(tester);
 
-      expect(find.text('Home'), findsWidgets); // tour card title + nav label
+      expect(find.text('Notifications'), findsOneWidget); // tour card title
       expect(find.text('Skip'), findsOneWidget);
       expect(
-        find.textContaining('active deals and quick actions'),
+        find.textContaining('every alert on your deals'),
         findsOneWidget,
       );
 
@@ -88,11 +88,30 @@ void main() {
     (WidgetTester tester) async {
       await _pumpNewUserToTour(tester);
 
-      // Home -> Initiation -> Transit -> Send -> More -> "Got it" (5 taps).
-      for (final label in ['Next', 'Next', 'Next', 'Next', 'Got it']) {
-        await tester.tap(find.text(label));
+      // Notifications -> Create -> Enter Code -> Initiation -> Transit ->
+      // More -> "Got it" (6 taps; some steps live inside Home's scrollable
+      // content, so each pump also has to carry a real scroll-into-view
+      // animation, not just the spotlight's own rect travel).
+      for (final label in [
+        'Next',
+        'Next',
+        'Next',
+        'Next',
+        'Next',
+        'Got it',
+      ]) {
+        // find.text(...).first — the outgoing and incoming tour cards are
+        // BOTH briefly mounted during the crossfade (AnimatedSwitcher), so
+        // right after a tap there can legitimately be two "Next" widgets on
+        // screen at once; a real single touch just hits whichever is on
+        // top, but the test API needs an unambiguous target.
+        await tester.tap(find.text(label).first);
         await tester.pump(); // step change
-        await tester.pump(const Duration(milliseconds: 400)); // travel + fade
+        // Comfortably covers the slowest step: scroll-into-view (~280ms) +
+        // the card's own crossfade (~260ms), which run one after the other,
+        // not simultaneously (the crossfade only starts once the async
+        // measure/scroll resolves and setState runs).
+        await tester.pump(const Duration(milliseconds: 700));
       }
 
       expect(find.text('Skip'), findsNothing);

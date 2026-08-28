@@ -67,16 +67,35 @@ class _SpotlightTourOverlayState extends State<SpotlightTourOverlay>
     super.dispose();
   }
 
-  Rect? _measure(GlobalKey key) {
-    final box = key.currentContext?.findRenderObject() as RenderBox?;
+  /// Scrolls the target into view first (several steps live inside Home's
+  /// scrollable content, not just the always-visible bottom nav — a target
+  /// currently off-screen must never be "spotlighted" somewhere invisible)
+  /// and only then measures its real, on-screen position.
+  Future<Rect?> _measure(GlobalKey key) async {
+    final beforeScroll = key.currentContext;
+    if (beforeScroll == null) return null;
+    if (Scrollable.maybeOf(beforeScroll) != null) {
+      await Scrollable.ensureVisible(
+        beforeScroll,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOut,
+        alignment: 0.25,
+      );
+    }
+    // Re-read the context after the await rather than reusing the one
+    // captured before it — the scroll animation is real elapsed time, so
+    // this key's element could in principle have been unmounted mid-flight.
+    final afterScroll = key.currentContext;
+    if (afterScroll == null) return null;
+    final box = afterScroll.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return null;
     return box.localToGlobal(Offset.zero) & box.size;
   }
 
   /// First paint only — shows the very first spotlight with no travel
   /// animation (nothing to travel FROM yet), just the entrance fade below.
-  void _jumpToStep(int index) {
-    final rect = _measure(widget.steps[index].targetKey);
+  Future<void> _jumpToStep(int index) async {
+    final rect = await _measure(widget.steps[index].targetKey);
     if (!mounted) return;
     setState(() {
       _index = index;
@@ -86,16 +105,18 @@ class _SpotlightTourOverlayState extends State<SpotlightTourOverlay>
     _rectController.value = 1;
   }
 
-  void _advance() {
+  Future<void> _advance() async {
     HapticFeedback.selectionClick();
     final next = _index + 1;
     if (next >= widget.steps.length) {
       widget.onFinish();
       return;
     }
-    final newRect = _measure(widget.steps[next].targetKey);
+    final fromRect = _currentRect();
+    final newRect = await _measure(widget.steps[next].targetKey);
+    if (!mounted) return;
     setState(() {
-      _fromRect = _currentRect();
+      _fromRect = fromRect;
       _toRect = newRect;
       _index = next;
     });
