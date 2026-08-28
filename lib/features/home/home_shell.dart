@@ -280,7 +280,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                     targetKey: _balanceCardKey,
                     title: 'Protected in Escrow',
                     description:
-                        'Your total secured balance. Active = deals in progress, Cooling = delivered and awaiting release, plus your trust score right there too.',
+                        'Your protected balance. Active = deals still in progress. Cooling = delivered, waiting out the review period before release. The last number is your trust score — rated with a word like Fair or Good.',
                     // Matches the card's own "escrow" highlight text.
                     ringColor: accent.highlight,
                   ),

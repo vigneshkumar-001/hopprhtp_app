@@ -73,7 +73,7 @@ void main() {
       ); // tour card title
       expect(find.text('Skip'), findsOneWidget);
       expect(
-        find.textContaining('trust score right there too'),
+        find.textContaining('rated with a word like Fair or Good'),
         findsOneWidget,
       );
 
