@@ -187,7 +187,13 @@ class _SpotlightTourOverlayState extends State<SpotlightTourOverlay>
             ),
             // The glowing focus ring — pulses to draw the eye, brighter and
             // thicker than a subtle outline so it reads as unmistakably "the
-            // thing to look at", matching the app's accent colour.
+            // thing to look at". Uses `highlight`, not `accent`: `accent` is
+            // ink (near-black) in the Mono theme — great for a button on a
+            // light surface, but an invisible glow against both the dark
+            // dimmed scrim AND dark targets like the balance card. `highlight`
+            // is the token already defined for "accent colour on DARK
+            // backgrounds" (white in Mono, lime in Lime) — exactly the
+            // surface every spotlighted hole sits on.
             Positioned.fromRect(
               rect: hole,
               child:
@@ -196,21 +202,21 @@ class _SpotlightTourOverlayState extends State<SpotlightTourOverlay>
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
-                          color: AppAccent.of(context).accent,
+                          color: AppAccent.of(context).highlight,
                           width: 3.5,
                         ),
                         boxShadow: [
                           BoxShadow(
                             color: AppAccent.of(
                               context,
-                            ).accent.withValues(alpha: 0.85),
+                            ).highlight.withValues(alpha: 0.85),
                             blurRadius: 30,
                             spreadRadius: 4,
                           ),
                           BoxShadow(
                             color: AppAccent.of(
                               context,
-                            ).accent.withValues(alpha: 0.5),
+                            ).highlight.withValues(alpha: 0.5),
                             blurRadius: 50,
                             spreadRadius: 10,
                           ),
