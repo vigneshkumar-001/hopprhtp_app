@@ -65,6 +65,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   /// Same idea, for the main buttons that live on the Home tab's content
   /// (not the always-visible bottom nav) — the tour spotlights these too,
   /// not just the nav bar.
+  final _balanceCardKey = GlobalKey();
   final _notificationBellKey = GlobalKey();
   final _createButtonKey = GlobalKey();
   final _enterCodeButtonKey = GlobalKey();
@@ -188,6 +189,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     final pages = [
       HomeScreen(
         onOpenProfile: () => setState(() => _index = 4),
+        balanceCardKey: _balanceCardKey,
         notificationBellKey: _notificationBellKey,
         createButtonKey: _createButtonKey,
         enterCodeButtonKey: _enterCodeButtonKey,
@@ -264,13 +266,20 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             ),
             if (_touring)
               SpotlightTourOverlay(
-                // Mixes the main Home-screen action buttons with the
-                // always-visible bottom-nav essentials — not bottom-nav-only.
-                // "Home" and "Send" are deliberately skipped: Home is where
-                // the tour already is (spotlighting it teaches nothing new),
-                // and Send opens the exact same screen "Create Protected
-                // Transaction" below already covers, front and center.
+                // Mixes the top balance summary, the main Home-screen action
+                // buttons, and the always-visible bottom-nav essentials — not
+                // bottom-nav-only. "Home" and "Send" are deliberately
+                // skipped: Home is where the tour already is (spotlighting it
+                // teaches nothing new), and Send opens the exact same screen
+                // "Create Protected Transaction" below already covers, front
+                // and center.
                 steps: [
+                  TourStep(
+                    targetKey: _balanceCardKey,
+                    title: 'Protected in Escrow',
+                    description:
+                        'Your total secured balance. Active = deals in progress, Cooling = delivered and awaiting release, plus your trust score right there too.',
+                  ),
                   TourStep(
                     targetKey: _notificationBellKey,
                     title: 'Notifications',

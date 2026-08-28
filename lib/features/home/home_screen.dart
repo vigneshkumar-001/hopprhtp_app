@@ -35,6 +35,7 @@ class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({
     super.key,
     this.onOpenProfile,
+    this.balanceCardKey,
     this.notificationBellKey,
     this.createButtonKey,
     this.enterCodeButtonKey,
@@ -45,6 +46,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 
   /// Real-widget targets for [SpotlightTourOverlay] (see `HomeShell`) — null
   /// outside the tour, so these never affect this screen's own behaviour.
+  final GlobalKey? balanceCardKey;
   final GlobalKey? notificationBellKey;
   final GlobalKey? createButtonKey;
   final GlobalKey? enterCodeButtonKey;
@@ -198,6 +200,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
               const SizedBox(height: AppSizes.lg),
               _BalanceCard(
+                key: widget.balanceCardKey,
                 balance: stats.protectedNaira,
                 active: stats.active,
                 cooling: stats.cooling,
@@ -478,6 +481,7 @@ const Color _darkBoneHighlight = Color(0x59FFFFFF); // white @ 35%
 
 class _BalanceCard extends StatelessWidget {
   const _BalanceCard({
+    super.key,
     required this.balance,
     required this.active,
     required this.cooling,

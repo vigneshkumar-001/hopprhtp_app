@@ -67,10 +67,13 @@ void main() {
     (WidgetTester tester) async {
       await _pumpNewUserToTour(tester);
 
-      expect(find.text('Notifications'), findsOneWidget); // tour card title
+      expect(
+        find.text('Protected in Escrow'),
+        findsOneWidget,
+      ); // tour card title
       expect(find.text('Skip'), findsOneWidget);
       expect(
-        find.textContaining('every alert on your deals'),
+        find.textContaining('trust score right there too'),
         findsOneWidget,
       );
 
@@ -88,11 +91,13 @@ void main() {
     (WidgetTester tester) async {
       await _pumpNewUserToTour(tester);
 
-      // Notifications -> Create -> Enter Code -> Initiation -> Transit ->
-      // More -> "Got it" (6 taps; some steps live inside Home's scrollable
-      // content, so each pump also has to carry a real scroll-into-view
-      // animation, not just the spotlight's own rect travel).
+      // Balance card -> Notifications -> Create -> Enter Code -> Initiation
+      // -> Transit -> More -> "Got it" (7 taps; some steps live inside
+      // Home's scrollable content, so each pump also has to carry a real
+      // scroll-into-view animation, not just the spotlight's own rect
+      // travel).
       for (final label in [
+        'Next',
         'Next',
         'Next',
         'Next',
