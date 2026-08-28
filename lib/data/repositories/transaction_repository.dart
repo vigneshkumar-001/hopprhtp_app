@@ -6,6 +6,7 @@ import '../dto/delivery_verification_status_dto.dart';
 import '../dto/dispute_dto.dart';
 import '../dto/fee_preview_dto.dart';
 import '../dto/message_dto.dart';
+import '../dto/rating_dto.dart';
 import '../dto/scan_dto.dart';
 import '../dto/tracking_dto.dart';
 import '../dto/transaction_dto.dart';
@@ -40,12 +41,15 @@ class TransactionRepository {
   }
 
   /// One page of the user's transactions for infinite-scroll history.
+  /// [search] matches transaction code, item name, buyer name, or an exact
+  /// amount — see backend transaction.service.ts buildSearchOr().
   Future<TxPage> listPage({
     required int page,
     int limit = 15,
     String? stage,
     String? status,
     String? role,
+    String? search,
   }) {
     return apiCall(
       () => _dio.get(
@@ -56,6 +60,7 @@ class TransactionRepository {
           'stage': ?stage,
           'status': ?status,
           'role': ?role,
+          'search': ?search,
         },
       ),
       (d) => TxPage.fromJson(asMap(d)),
@@ -381,5 +386,28 @@ class TransactionRepository {
     (d) => asList(
       d,
     ).map((e) => Dispute.fromJson(asMap(e))).toList(growable: false),
+  );
+
+  /// The caller's own rating of the counterparty on this transaction, or
+  /// null if they haven't rated it yet.
+  Future<TransactionRating?> getMyRating(String id) => apiCall(
+    () => _dio.get('/transactions/$id/rating'),
+    (d) => d == null ? null : TransactionRating.fromJson(asMap(d)),
+  );
+
+  /// Buyer/seller rate each other once released/completed — the backend
+  /// derives who's being rated from the transaction itself (never a
+  /// client-supplied id) and rejects a second rating for the same
+  /// transaction/rater pair.
+  Future<TransactionRating> submitRating(
+    String id, {
+    required int stars,
+    String? comment,
+  }) => apiCall(
+    () => _dio.post(
+      '/transactions/$id/rating',
+      data: {'stars': stars, 'comment': ?comment},
+    ),
+    (d) => TransactionRating.fromJson(asMap(d)),
   );
 }

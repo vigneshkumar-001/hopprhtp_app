@@ -3,6 +3,7 @@ import '../../../core/providers.dart';
 import '../../../data/dto/delivery_code_dto.dart';
 import '../../../data/dto/delivery_verification_status_dto.dart';
 import '../../../data/dto/dispute_dto.dart';
+import '../../../data/dto/rating_dto.dart';
 import '../../../data/dto/tracking_dto.dart';
 import '../../../data/dto/transaction_dto.dart';
 import '../../../data/dto/transaction_ledger_dto.dart';
@@ -49,6 +50,19 @@ final transactionsByStageProvider =
 final transactionDetailProvider = FutureProvider.autoDispose
     .family<ApiTransaction, String>((ref, id) {
       return ref.watch(transactionRepositoryProvider).getById(id);
+    });
+
+/// The caller's own rating for one transaction (null = not rated yet) — only
+/// meaningful once the transaction has actually released/completed; the
+/// backend itself is the source of truth for eligibility, this just reflects
+/// whatever it returns. Invalidated manually right after a successful
+/// submission (see rating_sheet.dart) rather than on every generic
+/// transaction refresh, since nothing else changes it.
+final myRatingProvider = FutureProvider.autoDispose
+    .family<TransactionRating?, String>((ref, transactionId) {
+      return ref
+          .watch(transactionRepositoryProvider)
+          .getMyRating(transactionId);
     });
 
 /// Tracking snapshot for one transaction. Manual refresh only — the Track

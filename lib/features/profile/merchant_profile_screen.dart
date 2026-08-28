@@ -6,10 +6,12 @@ import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/dto/merchant_dto.dart';
+import '../../data/dto/rating_dto.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
 import '../../widgets/feedback/state_views.dart';
+import '../../widgets/star_rating.dart';
 import '../../widgets/trust_gauge.dart';
 import '../transaction/widgets/transaction_widgets.dart';
 
@@ -131,6 +133,8 @@ class _MerchantProfileBody extends StatelessWidget {
             ],
           ),
         ),
+        const SizedBox(height: AppSizes.md),
+        _RatingsCard(ratings: profile.ratings),
         if (profile.isOwner) ...[
           const SizedBox(height: AppSizes.md),
           const _ImproveScoreCard(),
@@ -197,6 +201,90 @@ class _MerchantProfileBody extends StatelessWidget {
             ],
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// Real buyer/seller-submitted ratings — a separate signal from the
+/// algorithmic Trust Score above it, not a restatement of it. Shows an
+/// honest empty state when nobody has rated this person yet, same
+/// discipline as [_ScoreHistoryCard] below.
+class _RatingsCard extends StatelessWidget {
+  const _RatingsCard({required this.ratings});
+  final RatingSummary ratings;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const CardSectionLabel('Ratings & reviews'),
+          const SizedBox(height: AppSizes.md),
+          if (ratings.average == null)
+            const EmptyStateView(
+              icon: Icons.star_border_rounded,
+              title: 'No ratings yet',
+              subtitle: 'Reviews appear here after a completed transaction.',
+            )
+          else ...[
+            Row(
+              children: [
+                Text(
+                  ratings.average!.toStringAsFixed(1),
+                  style: AppText.h2,
+                ),
+                const SizedBox(width: AppSizes.sm),
+                StarRating(value: ratings.average!, size: 18),
+                const SizedBox(width: AppSizes.sm),
+                Text(
+                  '(${ratings.count})',
+                  style: AppText.caption.copyWith(
+                    color: AppColors.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+            for (final r in ratings.items) ...[
+              const Divider(height: AppSizes.xl),
+              _ReviewRow(item: r),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewRow extends StatelessWidget {
+  const _ReviewRow({required this.item});
+  final RatingItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(item.raterName, style: AppText.bodyStrong),
+            ),
+            StarRating(value: item.stars.toDouble(), size: 14),
+          ],
+        ),
+        if ((item.comment ?? '').trim().isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(item.comment!.trim(), style: AppText.caption),
+        ],
+        if (item.createdAt != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            Dates.medium(item.createdAt!),
+            style: AppText.caption.copyWith(color: AppColors.textTertiary),
+          ),
+        ],
       ],
     );
   }

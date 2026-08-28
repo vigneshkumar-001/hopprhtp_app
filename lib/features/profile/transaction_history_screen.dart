@@ -14,6 +14,7 @@ import '../../core/utils/app_logger.dart';
 import '../../data/dto/transaction_dto.dart';
 import '../../data/models/models.dart';
 import '../../widgets/app_scaffold.dart';
+import '../../widgets/app_text_field.dart';
 import '../../widgets/feedback/app_loaders.dart';
 import '../../widgets/feedback/app_snackbar.dart';
 import '../../widgets/feedback/state_views.dart';
@@ -54,6 +55,7 @@ class _TransactionHistoryScreenState
   ];
 
   final _scroll = ScrollController();
+  final _searchController = TextEditingController();
   final List<ApiTransaction> _items = [];
   int _tab = 0;
   int _page = 1;
@@ -61,6 +63,8 @@ class _TransactionHistoryScreenState
   bool _hasMore = true;
   bool _firstLoad = true;
   Object? _error;
+  String _search = '';
+  Timer? _searchDebounce;
 
   // This screen keeps its own paginated `_items` list rather than watching
   // `transactionsProvider` (infinite-scroll pagination doesn't map cleanly
@@ -101,7 +105,9 @@ class _TransactionHistoryScreenState
     WidgetsBinding.instance.removeObserver(this);
     _socketSub?.cancel();
     _reloadDebounce?.cancel();
+    _searchDebounce?.cancel();
     _scroll.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -147,7 +153,13 @@ class _TransactionHistoryScreenState
     try {
       final page = await ref
           .read(transactionRepositoryProvider)
-          .listPage(page: _page, limit: 15, stage: f.stage, status: f.status);
+          .listPage(
+            page: _page,
+            limit: 15,
+            stage: f.stage,
+            status: f.status,
+            search: _search.isEmpty ? null : _search,
+          );
       if (!mounted) return;
       setState(() {
         _items.addAll(page.items);
@@ -182,6 +194,27 @@ class _TransactionHistoryScreenState
     _loadFirst();
   }
 
+  /// Rebuilds immediately (so the clear button appears/disappears without
+  /// lag) but only actually re-queries the server 400ms after typing stops —
+  /// searching on every keystroke would fire a request per letter.
+  void _onSearchChanged(String value) {
+    setState(() {});
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () {
+      final next = value.trim();
+      if (next == _search) return;
+      setState(() => _search = next);
+      _loadFirst();
+    });
+  }
+
+  void _clearSearch() {
+    _searchDebounce?.cancel();
+    _searchController.clear();
+    setState(() => _search = '');
+    _loadFirst();
+  }
+
   @override
   Widget build(BuildContext context) {
     return AppScaffold(
@@ -191,11 +224,34 @@ class _TransactionHistoryScreenState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: AppSizes.md),
+          _searchField(),
+          const SizedBox(height: AppSizes.md),
           _tabs(),
           const SizedBox(height: AppSizes.lg),
           Expanded(child: _list()),
         ],
       ),
+    );
+  }
+
+  Widget _searchField() {
+    return AppTextField(
+      controller: _searchController,
+      icon: Icons.search_rounded,
+      hint: 'Search by code, item, or amount',
+      textInputAction: TextInputAction.search,
+      onChanged: _onSearchChanged,
+      onSubmitted: _onSearchChanged,
+      trailing: _searchController.text.isEmpty
+          ? null
+          : GestureDetector(
+              onTap: _clearSearch,
+              child: const Icon(
+                Icons.close_rounded,
+                size: 18,
+                color: AppColors.textTertiary,
+              ),
+            ),
     );
   }
 
@@ -242,11 +298,17 @@ class _TransactionHistoryScreenState
       return const Center(child: AppCircularLoader());
     }
     if (_items.isEmpty) {
-      return const EmptyStateView(
-        icon: Icons.receipt_long_rounded,
-        title: 'No transactions yet',
-        subtitle: 'Your protected deals will show up here.',
-      );
+      return _search.isEmpty
+          ? const EmptyStateView(
+              icon: Icons.receipt_long_rounded,
+              title: 'No transactions yet',
+              subtitle: 'Your protected deals will show up here.',
+            )
+          : EmptyStateView(
+              icon: Icons.search_off_rounded,
+              title: 'No matches for "$_search"',
+              subtitle: 'Try a different code, item name, or amount.',
+            );
     }
     return RefreshIndicator(
       onRefresh: _loadFirst,

@@ -27,7 +27,9 @@ import '../../widgets/app_card.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/common.dart';
 import '../../widgets/feedback/app_snackbar.dart';
+import '../../widgets/feedback/rating_sheet.dart';
 import '../../widgets/feedback/state_views.dart';
+import '../../widgets/star_rating.dart';
 import 'application/transactions_provider.dart';
 import 'widgets/transaction_widgets.dart';
 import 'confirm_delivery_screen.dart';
@@ -717,6 +719,51 @@ class _TransactionDetailScreenState
     );
   }
 
+  /// "Rate your experience" prompt once a transaction has actually
+  /// released/completed — hidden for every other status, and replaced with
+  /// the caller's own rating once they've submitted one (never asks twice).
+  Widget _buildRatingSlot(BuildContext context) {
+    final detail = ref.watch(transactionDetailProvider(tx.id)).valueOrNull;
+    final status = detail?.status ?? tx.apiStatus;
+    if (status != ApiTxStatus.released && status != ApiTxStatus.completed) {
+      return const SizedBox.shrink();
+    }
+
+    final myRoleForRating = detail?.isSeller == true
+        ? 'seller'
+        : detail?.isBuyer == true
+        ? 'buyer'
+        : tx.myRole;
+    if (myRoleForRating == null) return const SizedBox.shrink();
+
+    final counterpartyLabel = myRoleForRating == 'seller'
+        ? (tx.buyerName?.trim().isNotEmpty == true
+              ? tx.buyerName!
+              : 'the buyer')
+        : tx.merchantName;
+
+    final ratingAsync = ref.watch(myRatingProvider(tx.id));
+    return ratingAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (mine) => Padding(
+        padding: const EdgeInsets.only(bottom: AppSizes.md),
+        child: mine == null
+            ? _RateExperienceCard(
+                onTap: () async {
+                  final submitted = await showRatingSheet(
+                    context,
+                    transactionId: tx.id,
+                    counterpartyLabel: counterpartyLabel,
+                  );
+                  if (submitted) ref.invalidate(myRatingProvider(tx.id));
+                },
+              )
+            : _MyRatingCard(stars: mine.stars, comment: mine.comment),
+      ),
+    );
+  }
+
   // EscrowTransaction (this screen's snapshot model) doesn't carry
   // platformFeePayer — it's only a display convenience for
   // ConfirmDeliveryScreen, which doesn't render a fee breakdown, so the
@@ -982,6 +1029,7 @@ class _TransactionDetailScreenState
                         const SizedBox(height: AppSizes.md),
                         // Prominent dispute banner (either party) when one is active.
                         _buildDisputeSlot(context),
+                        _buildRatingSlot(context),
                         _BuyerInfoCard(
                           buyerName: buyerDisplayName,
                           buyerPhone: buyerContact,
@@ -3213,6 +3261,84 @@ class _DisputeCard extends StatelessWidget {
               variant: AppButtonVariant.outline,
               onPressed: openDispute,
             ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RateExperienceCard extends StatelessWidget {
+  const _RateExperienceCard({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      onTap: onTap,
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: const BoxDecoration(
+              color: AppColors.lilacTile,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.star_rounded,
+              color: AppColors.onLilacTile,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: AppSizes.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Rate your experience', style: AppText.bodyStrong),
+                const SizedBox(height: 2),
+                Text(
+                  'Deal complete — let the other party know how it went.',
+                  style: AppText.caption,
+                ),
+              ],
+            ),
+          ),
+          const Icon(
+            Icons.chevron_right_rounded,
+            color: AppColors.textTertiary,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MyRatingCard extends StatelessWidget {
+  const _MyRatingCard({required this.stars, this.comment});
+  final int stars;
+  final String? comment;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          StarRating(value: stars.toDouble(), size: 18),
+          const SizedBox(width: AppSizes.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('You rated this deal', style: AppText.bodyStrong),
+                if ((comment ?? '').trim().isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(comment!.trim(), style: AppText.caption),
+                ],
+              ],
+            ),
+          ),
         ],
       ),
     );

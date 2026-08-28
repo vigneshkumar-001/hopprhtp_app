@@ -1,4 +1,5 @@
 import '../../core/network/json.dart';
+import 'rating_dto.dart';
 
 /// One row in a merchant's redacted recent-activity feed — never carries
 /// buyer contact/address (this is shown to any viewer, not just the
@@ -85,6 +86,7 @@ class MerchantProfile {
     required this.isOwner,
     required this.stats,
     this.recentTransactions = const [],
+    this.ratings = RatingSummary.empty,
   });
 
   final String id;
@@ -94,6 +96,11 @@ class MerchantProfile {
   final bool isOwner;
   final MerchantStats stats;
   final List<MerchantRecentTransaction> recentTransactions;
+
+  /// First page of real ratings/reviews (a separate signal from the
+  /// algorithmic [MerchantStats.trustScore] above) — "See all reviews"
+  /// pages further via `MerchantRepository.getRatings`.
+  final RatingSummary ratings;
 
   bool get isVerified => verificationStatus == 'verified';
 
@@ -112,6 +119,9 @@ class MerchantProfile {
       recentTransactions: asList(j['recentTransactions'])
           .map((e) => MerchantRecentTransaction.fromJson(asMap(e)))
           .toList(growable: false),
+      ratings: j['ratings'] == null
+          ? RatingSummary.empty
+          : RatingSummary.fromJson(asMap(j['ratings'])),
     );
   }
 }

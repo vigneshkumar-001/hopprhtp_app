@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart' show SystemNavigator;
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/notifications/notification_permission_prompt.dart';
 import '../../core/routing/app_transitions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
@@ -10,6 +12,7 @@ import '../../core/theme/app_typography.dart';
 import '../../core/utils/app_logger.dart';
 import '../../data/dto/transaction_dto.dart';
 import '../../widgets/feedback/app_snackbar.dart';
+import '../../widgets/feedback/notification_permission_sheet.dart';
 import '../profile/profile_screen.dart';
 import '../transaction/create_transaction_screen.dart';
 import 'home_screen.dart';
@@ -34,6 +37,41 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   /// landing within [_exitPressWindow] exits the app instead of showing the
   /// warning again.
   DateTime? _lastBackPressAt;
+
+  /// A real, cancellable [Timer] rather than `Future.delayed` — a bare
+  /// delayed Future has nothing to cancel, so a widget test that disposes
+  /// this screen before the delay elapses trips flutter_test's "Timer still
+  /// pending after dispose" assertion. Cancelling in [dispose] avoids that
+  /// (and is simply correct: nothing should fire after this screen is gone).
+  Timer? _notifPromptTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // HomeShell is the permanent post-auth root (see AuthGate) — mounted
+    // once per session, so this runs at most once per app open, never once
+    // per tab switch. The delay lets the shell's own entrance settle first.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _notifPromptTimer = Timer(
+        const Duration(milliseconds: 1200),
+        _maybePromptNotifications,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _notifPromptTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _maybePromptNotifications() async {
+    if (!mounted) return;
+    if (!await NotificationPermissionPrompt.shouldShow()) return;
+    if (!mounted) return;
+    await showNotificationPermissionSheet(context);
+  }
 
   /// This screen is the app's permanent root route (see `AuthGate`) — Android
   /// back here would otherwise close the app immediately. Deeper screens are
