@@ -14,10 +14,10 @@ import '../../data/dto/transaction_dto.dart';
 import '../../widgets/feedback/app_snackbar.dart';
 import '../../widgets/feedback/notification_permission_sheet.dart';
 import '../auth/application/auth_controller.dart';
-import '../onboarding/app_tutorial_screen.dart';
 import '../profile/profile_screen.dart';
 import '../transaction/create_transaction_screen.dart';
 import 'home_screen.dart';
+import 'spotlight_tour_overlay.dart';
 import 'transactions_tab.dart';
 
 /// How long a second back-press has to land in to actually exit.
@@ -47,6 +47,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   /// (and is simply correct: nothing should fire after this screen is gone).
   Timer? _notifPromptTimer;
 
+  /// One real key per bottom-nav item, in the same order as [_BottomNav]'s
+  /// own `_items` — the spotlight tour measures and highlights the ACTUAL
+  /// rendered button through these, never a drawn stand-in for it.
+  final _navItemKeys = List.generate(5, (_) => GlobalKey());
+  bool _touring = false;
+
   @override
   void initState() {
     super.initState();
@@ -69,17 +75,32 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   }
 
   /// Runs, in order, the one-time-per-session prompts that shouldn't ever
-  /// overlap: the onboarding tutorial (brand-new accounts only) first, then
-  /// — only once that's dismissed — the notification re-ask. Sequential on
+  /// overlap: the onboarding tour (brand-new accounts only) first, then —
+  /// only once that's dismissed — the notification re-ask. Sequential on
   /// purpose: stacking two full-screen/modal prompts on top of each other
-  /// right after login would feel chaotic, not "world-class".
+  /// right after login would feel chaotic, not "world-class". The tour
+  /// itself isn't awaited here (it's not a pushed route) — [_finishTour]
+  /// picks up where this leaves off once the user actually dismisses it.
   Future<void> _runPostAuthChecks() async {
     if (!mounted) return;
     final user = ref.read(authControllerProvider).valueOrNull?.user;
     if (user != null && !user.hasSeenTutorial) {
-      await Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => const AppTutorialScreen()));
+      setState(() => _touring = true);
+      return;
+    }
+    await _maybePromptNotifications();
+  }
+
+  /// Called once the tour finishes OR is skipped — both count as "seen".
+  /// Marks it server-side, closes the overlay, then chains straight into
+  /// the notification prompt so the two never race each other.
+  Future<void> _finishTour() async {
+    setState(() => _touring = false);
+    try {
+      await ref.read(authControllerProvider.notifier).markTutorialSeen();
+    } catch (_) {
+      // Best-effort — see the same reasoning on markTutorialSeen elsewhere;
+      // never trap the user behind a failed network call here either.
     }
     await _maybePromptNotifications();
   }
@@ -210,9 +231,50 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                 offset: _navVisible ? Offset.zero : const Offset(0, 1.6),
                 duration: AppDurations.normal,
                 curve: AppDurations.easeOut,
-                child: _BottomNav(index: _index, onSelect: _select),
+                child: _BottomNav(
+                  index: _index,
+                  onSelect: _select,
+                  itemKeys: _navItemKeys,
+                ),
               ),
             ),
+            if (_touring)
+              SpotlightTourOverlay(
+                steps: [
+                  TourStep(
+                    targetKey: _navItemKeys[0],
+                    title: 'Home',
+                    description:
+                        'Your dashboard — active deals and quick actions at a glance.',
+                  ),
+                  TourStep(
+                    targetKey: _navItemKeys[1],
+                    title: 'Initiation',
+                    description:
+                        'Deals with payment and agreement still in progress live here.',
+                  ),
+                  TourStep(
+                    targetKey: _navItemKeys[2],
+                    title: 'Transit',
+                    description:
+                        'Track live deliveries and see what\'s in the cooling/review period.',
+                  ),
+                  TourStep(
+                    targetKey: _navItemKeys[3],
+                    title: 'Send',
+                    description:
+                        'Tap here to create a transaction and send a payment link to a buyer.',
+                  ),
+                  TourStep(
+                    targetKey: _navItemKeys[4],
+                    title: 'More',
+                    description:
+                        'Your profile, wallet, verification, and support — all in one place.',
+                  ),
+                ],
+                onFinish: _finishTour,
+                onSkip: _finishTour,
+              ),
           ],
         ),
       ),
@@ -221,9 +283,17 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 }
 
 class _BottomNav extends StatelessWidget {
-  const _BottomNav({required this.index, required this.onSelect});
+  const _BottomNav({
+    required this.index,
+    required this.onSelect,
+    required this.itemKeys,
+  });
   final int index;
   final ValueChanged<int> onSelect;
+
+  /// One [GlobalKey] per item, same order as [_items] — lets
+  /// [SpotlightTourOverlay] measure and highlight the real rendered button.
+  final List<GlobalKey> itemKeys;
 
   // Order & icons mirror the mockup exactly. Thin Feather line icons; the
   // active item is distinguished by colour + label weight (not a filled icon).
@@ -268,6 +338,7 @@ class _BottomNav extends StatelessWidget {
             for (int i = 0; i < _items.length; i++)
               Expanded(
                 child: _NavItem(
+                  key: itemKeys[i],
                   icon: _items[i].$1,
                   label: _items[i].$2,
                   selected:
@@ -284,6 +355,7 @@ class _BottomNav extends StatelessWidget {
 
 class _NavItem extends StatelessWidget {
   const _NavItem({
+    super.key,
     required this.icon,
     required this.label,
     required this.selected,

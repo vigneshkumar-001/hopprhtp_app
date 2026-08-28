@@ -72,6 +72,13 @@ class FakeAuthRepository implements AuthRepository {
   /// prove something did (or deliberately didn't) block on it finishing.
   Completer<void>? meGate;
 
+  /// Overrides what `me()` returns — defaults to [kTestUser] (an
+  /// already-onboarded existing user). Set this to a user with
+  /// `tutorialSeenAt: null` to test the brand-new-signup path (the
+  /// onboarding tour) without changing the shared default fixture every
+  /// other test relies on staying "already seen".
+  ApiUser? meOverride;
+
   @override
   Future<AuthSession> login({
     required String identifier,
@@ -98,7 +105,7 @@ class FakeAuthRepository implements AuthRepository {
         statusCode: 401,
       );
     }
-    return kTestUser;
+    return meOverride ?? kTestUser;
   }
 
   @override
