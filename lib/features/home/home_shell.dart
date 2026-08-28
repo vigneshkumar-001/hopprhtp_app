@@ -67,6 +67,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   /// (not the always-visible bottom nav) — the tour spotlights these too,
   /// not just the nav bar.
   final _balanceCardKey = GlobalKey();
+  final _activeStatKey = GlobalKey();
+  final _coolingStatKey = GlobalKey();
+  final _trustStatKey = GlobalKey();
   final _notificationBellKey = GlobalKey();
   final _createButtonKey = GlobalKey();
   final _enterCodeButtonKey = GlobalKey();
@@ -192,6 +195,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       HomeScreen(
         onOpenProfile: () => setState(() => _index = 4),
         balanceCardKey: _balanceCardKey,
+        activeStatKey: _activeStatKey,
+        coolingStatKey: _coolingStatKey,
+        trustStatKey: _trustStatKey,
         notificationBellKey: _notificationBellKey,
         createButtonKey: _createButtonKey,
         enterCodeButtonKey: _enterCodeButtonKey,
@@ -276,12 +282,38 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                 // "Create Protected Transaction" below already covers, front
                 // and center.
                 steps: [
+                  // The balance card's own numbers are explained one at a
+                  // time (own step each) rather than all three crammed into
+                  // one paragraph on the whole-card step below — easier to
+                  // actually read while it's up for just a few seconds.
                   TourStep(
                     targetKey: _balanceCardKey,
                     title: 'Protected in Escrow',
                     description:
-                        'Your protected balance. Active = deals still in progress. Cooling = delivered, waiting out the review period before release. The last number is your trust score — rated with a word like Fair or Good.',
+                        'This is your protected balance — money kept safe until each deal is complete.',
                     // Matches the card's own "escrow" highlight text.
+                    ringColor: accent.highlight,
+                  ),
+                  TourStep(
+                    targetKey: _activeStatKey,
+                    title: 'Active',
+                    description: 'Deals that are paid and on their way to delivery.',
+                    // Matches this number's own white value colour on the card.
+                    ringColor: AppColors.textOnDark,
+                  ),
+                  TourStep(
+                    targetKey: _coolingStatKey,
+                    title: 'Cooling',
+                    description:
+                        'Delivered, and waiting a short review period before the money is released.',
+                    ringColor: AppColors.textOnDark,
+                  ),
+                  TourStep(
+                    targetKey: _trustStatKey,
+                    title: 'Trust Score',
+                    description:
+                        'Your rating from past deals — shown as a word like Fair or Good.',
+                    // Matches this number's own highlight colour on the card.
                     ringColor: accent.highlight,
                   ),
                   TourStep(

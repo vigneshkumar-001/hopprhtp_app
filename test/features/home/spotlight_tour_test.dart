@@ -73,7 +73,7 @@ void main() {
       ); // tour card title
       expect(find.text('Skip'), findsOneWidget);
       expect(
-        find.textContaining('rated with a word like Fair or Good'),
+        find.textContaining('money kept safe until each deal is complete'),
         findsOneWidget,
       );
 
@@ -91,12 +91,15 @@ void main() {
     (WidgetTester tester) async {
       await _pumpNewUserToTour(tester);
 
-      // Balance card -> Notifications -> Create -> Enter Code -> Initiation
-      // -> Transit -> More -> "Got it" (7 taps; some steps live inside
-      // Home's scrollable content, so each pump also has to carry a real
-      // scroll-into-view animation, not just the spotlight's own rect
-      // travel).
+      // Balance card -> Active -> Cooling -> Trust Score -> Notifications ->
+      // Create -> Enter Code -> Initiation -> Transit -> More -> "Got it"
+      // (10 taps; some steps live inside Home's scrollable content, so each
+      // pump also has to carry a real scroll-into-view animation, not just
+      // the spotlight's own rect travel).
       for (final label in [
+        'Next',
+        'Next',
+        'Next',
         'Next',
         'Next',
         'Next',

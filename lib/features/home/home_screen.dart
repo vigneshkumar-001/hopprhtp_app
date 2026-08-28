@@ -36,6 +36,9 @@ class HomeScreen extends ConsumerStatefulWidget {
     super.key,
     this.onOpenProfile,
     this.balanceCardKey,
+    this.activeStatKey,
+    this.coolingStatKey,
+    this.trustStatKey,
     this.notificationBellKey,
     this.createButtonKey,
     this.enterCodeButtonKey,
@@ -47,6 +50,13 @@ class HomeScreen extends ConsumerStatefulWidget {
   /// Real-widget targets for [SpotlightTourOverlay] (see `HomeShell`) — null
   /// outside the tour, so these never affect this screen's own behaviour.
   final GlobalKey? balanceCardKey;
+
+  /// The three individual stat slots on the balance card (Active / Cooling /
+  /// trust score) — spotlighted one at a time, each with its own short
+  /// explanation, rather than all three crammed into the whole-card step.
+  final GlobalKey? activeStatKey;
+  final GlobalKey? coolingStatKey;
+  final GlobalKey? trustStatKey;
   final GlobalKey? notificationBellKey;
   final GlobalKey? createButtonKey;
   final GlobalKey? enterCodeButtonKey;
@@ -209,6 +219,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 hasError: txs.hasError,
                 refreshing: txs.isLoading,
                 onRetry: () => ref.invalidate(transactionsProvider),
+                activeStatKey: widget.activeStatKey,
+                coolingStatKey: widget.coolingStatKey,
+                trustStatKey: widget.trustStatKey,
               ),
               const SizedBox(height: AppSizes.lg),
               AppButton(
@@ -490,6 +503,9 @@ class _BalanceCard extends StatelessWidget {
     this.hasError = false,
     this.refreshing = false,
     this.onRetry,
+    this.activeStatKey,
+    this.coolingStatKey,
+    this.trustStatKey,
   });
 
   final double balance;
@@ -498,6 +514,16 @@ class _BalanceCard extends StatelessWidget {
 
   /// (score, category) — null while nothing's loaded yet (see `_HomeScreenState`).
   final (int, String)? trust;
+
+  /// Real-widget targets for [SpotlightTourOverlay] — one per stat slot, so
+  /// each can be spotlighted on its own. Kept on the [Expanded] wrapper
+  /// (present in both the loading-skeleton and loaded states) rather than on
+  /// the [CardStat] itself, which only exists once real data has landed —
+  /// a tour step reached while this card is still loading must still find
+  /// something to measure, at the same position the real stat will occupy.
+  final GlobalKey? activeStatKey;
+  final GlobalKey? coolingStatKey;
+  final GlobalKey? trustStatKey;
 
   /// First-load only (see `statsLoading` in `HomeScreen.build`). The card's
   /// premium chrome — dark gradient, glossy orb, "Protected in escrow" label
@@ -611,12 +637,14 @@ class _BalanceCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
+                key: activeStatKey,
                 child: loading
                     ? const _CardStatSkeleton()
                     : CardStat(value: '$active', label: 'Active'),
               ),
               const CardStatDivider(),
               Expanded(
+                key: coolingStatKey,
                 child: loading
                     ? const _CardStatSkeleton()
                     : CardStat(value: '$cooling', label: 'Cooling'),
@@ -628,6 +656,7 @@ class _BalanceCard extends StatelessWidget {
               // long category name ("Needs Improvement") would force to
               // shrink to near-illegibility.
               Expanded(
+                key: trustStatKey,
                 child: loading
                     ? const _CardStatSkeleton()
                     : CardStat(
