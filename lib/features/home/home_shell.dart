@@ -7,6 +7,7 @@ import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/notifications/notification_permission_prompt.dart';
 import '../../core/routing/app_transitions.dart';
+import '../../core/theme/app_accent.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_sizes.dart';
 import '../../core/theme/app_typography.dart';
@@ -186,6 +187,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
+    final accent = AppAccent.of(context);
     final pages = [
       HomeScreen(
         onOpenProfile: () => setState(() => _index = 4),
@@ -279,42 +281,56 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                     title: 'Protected in Escrow',
                     description:
                         'Your total secured balance. Active = deals in progress, Cooling = delivered and awaiting release, plus your trust score right there too.',
+                    // Matches the card's own "escrow" highlight text.
+                    ringColor: accent.highlight,
                   ),
                   TourStep(
                     targetKey: _notificationBellKey,
                     title: 'Notifications',
                     description:
                         'Stay updated — tap here anytime to see every alert on your deals.',
+                    // Matches the bell glyph's own icon colour.
+                    ringColor: accent.onAccentSoft,
                   ),
                   TourStep(
                     targetKey: _createButtonKey,
                     title: 'Create Protected Transaction',
                     description:
                         'Start a new escrow deal and send a payment link to your buyer.',
+                    // Matches the button's own icon/label colour (white on
+                    // its ink fill).
+                    ringColor: AppColors.textOnDark,
                   ),
                   TourStep(
                     targetKey: _enterCodeButtonKey,
                     title: 'Enter Transaction Code',
                     description:
                         'Joining as a buyer? Enter the code your seller shared here.',
+                    // Matches the button's own icon/label colour (dark on
+                    // its soft fill).
+                    ringColor: AppColors.textPrimary,
                   ),
                   TourStep(
                     targetKey: _navItemKeys[1],
                     title: 'Initiation',
                     description:
                         'Deals with payment and agreement still in progress live here.',
+                    // Matches the nav item's own (unselected) icon colour.
+                    ringColor: AppColors.textTertiary,
                   ),
                   TourStep(
                     targetKey: _navItemKeys[2],
                     title: 'Transit',
                     description:
                         'Track live deliveries and see what\'s in the cooling/review period.',
+                    ringColor: AppColors.textTertiary,
                   ),
                   TourStep(
                     targetKey: _navItemKeys[4],
                     title: 'More',
                     description:
                         'Your profile, wallet, verification, and support — all in one place.',
+                    ringColor: AppColors.textTertiary,
                   ),
                 ],
                 onFinish: _finishTour,

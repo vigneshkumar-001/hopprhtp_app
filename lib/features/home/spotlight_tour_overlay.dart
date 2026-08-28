@@ -15,10 +15,17 @@ class TourStep {
     required this.targetKey,
     required this.title,
     required this.description,
+    this.ringColor,
   });
   final GlobalKey targetKey;
   final String title;
   final String description;
+
+  /// The glow ring's colour for this step — pass the SAME colour that
+  /// widget already renders with elsewhere (its icon/label/accent colour),
+  /// so the highlight reads as "this thing, brighter", not an unrelated
+  /// colour dropped on top of it. Null falls back to the app's lime accent.
+  final Color? ringColor;
 }
 
 /// A real-UI "coach mark" tour: dims and lightly blurs the actual screen
@@ -187,13 +194,15 @@ class _SpotlightTourOverlayState extends State<SpotlightTourOverlay>
             ),
             // The glowing focus ring — pulses to draw the eye, brighter and
             // thicker than a subtle outline so it reads as unmistakably "the
-            // thing to look at". Always lime, regardless of the active
-            // theme (Mono/Lime) — the theme's own `accent` token is ink
-            // (near-black) in Mono, which is an invisible glow against both
-            // the dark scrim AND dark targets like the balance card. The
-            // tour is a special, always-colourful moment on top of
-            // everything else, so it deliberately doesn't follow Mono's B/W
-            // palette here.
+            // thing to look at". Tinted with THIS step's own colour (see
+            // [TourStep.ringColor] — set per step in HomeShell to match what
+            // that exact widget already renders with: the "escrow" highlight
+            // on the balance card, a button's own icon/label colour, etc.)
+            // rather than one fixed hue for every step. A wide white bloom
+            // sits behind the tinted border so a dark ringColor (e.g. the
+            // near-black icon colour on a light button) still reads as a
+            // bright glow instead of vanishing into the dark scrim — the
+            // exact failure this replaced (a black ring on a black card).
             Positioned.fromRect(
               rect: hole,
               child:
@@ -202,19 +211,20 @@ class _SpotlightTourOverlayState extends State<SpotlightTourOverlay>
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
-                          color: AppColors.lime,
+                          color: step.ringColor ?? AppColors.lime,
                           width: 3.5,
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.lime.withValues(alpha: 0.85),
-                            blurRadius: 30,
-                            spreadRadius: 4,
+                            color: Colors.white.withValues(alpha: 0.55),
+                            blurRadius: 40,
+                            spreadRadius: 6,
                           ),
                           BoxShadow(
-                            color: AppColors.lime.withValues(alpha: 0.5),
-                            blurRadius: 50,
-                            spreadRadius: 10,
+                            color: (step.ringColor ?? AppColors.lime)
+                                .withValues(alpha: 0.85),
+                            blurRadius: 24,
+                            spreadRadius: 2,
                           ),
                         ],
                       ),
