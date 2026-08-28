@@ -670,7 +670,7 @@ class _WaybillReviewSheetState extends ConsumerState<_WaybillReviewSheet> {
               ),
             ],
             const SizedBox(height: AppSizes.lg),
-            Text('Shipper (From)', style: AppText.title),
+            Text('Sender/Merchant (From)', style: AppText.title),
             const SizedBox(height: AppSizes.sm),
             AppTextField(
               label: 'Name',

@@ -837,15 +837,21 @@ class _TransactionDetailScreenState
     final buyerProfileAsync = buyerId == null
         ? null
         : ref.watch(merchantProfileProvider(buyerId));
-    final buyerDisplayName = buyerId == null
-        ? 'Buyer not registered yet'
-        : (buyerProfileAsync?.valueOrNull?.name ?? buyerName);
+    // The consignee's NAME (e.g. "Grace Adamu", entered by the seller at
+    // creation) and whether that name is backed by a real Hoppr ACCOUNT are
+    // two separate facts — conflating them into one "Buyer not registered
+    // yet" string hid a name we already had. Prefer the linked account's
+    // name once one exists, then the transaction's own buyerName, and only
+    // fall back to a genuine "no name at all" empty string (the card below
+    // renders that as "Not provided") — never invent a name, never hide one
+    // we actually have.
+    final buyerDisplayName = buyerProfileAsync?.valueOrNull?.name ?? buyerName;
+    final buyerHopprRegistered = buyerId != null;
     final dispatcherAccountId = detailAsync.valueOrNull?.dispatcherAccountId;
     final dispatcherAccountPhone =
         (detailAsync.valueOrNull?.dispatcherAccountPhone ?? '').trim();
     final dispatcherAccountName =
         (detailAsync.valueOrNull?.dispatcherAccountName ?? '').trim();
-    final isSelfDelivery = detailAsync.valueOrNull?.isSelfDelivery ?? true;
     final dispatcherProfileAsync = dispatcherAccountId == null
         ? null
         : ref.watch(merchantProfileProvider(dispatcherAccountId));
@@ -1032,6 +1038,7 @@ class _TransactionDetailScreenState
                         _buildRatingSlot(context),
                         _BuyerInfoCard(
                           buyerName: buyerDisplayName,
+                          hopprRegistered: buyerHopprRegistered,
                           buyerPhone: buyerContact,
                           deliveryAddress: deliveryAddress,
                           eta: deliveryEta,
@@ -1054,7 +1061,7 @@ class _TransactionDetailScreenState
                         ),
                         const SizedBox(height: AppSizes.md),
                         _DispatcherDetailsCard(
-                          isSelfDelivery: isSelfDelivery,
+                          dispatcherMode: detailAsync.valueOrNull?.dispatcherMode,
                           name: dispatcherCardName,
                           phone: dispatcherAccountPhone,
                           registrationState: dispatcherRegistrationState,
@@ -1973,6 +1980,7 @@ class _ViewItemButton extends StatelessWidget {
 class _BuyerInfoCard extends StatelessWidget {
   const _BuyerInfoCard({
     required this.buyerName,
+    required this.hopprRegistered,
     required this.buyerPhone,
     required this.deliveryAddress,
     required this.eta,
@@ -1983,6 +1991,12 @@ class _BuyerInfoCard extends StatelessWidget {
   });
 
   final String buyerName;
+
+  /// Whether [buyerName] is backed by a real, linked Hoppr account (vs. just
+  /// the name the seller typed in at creation) — a separate fact from the
+  /// name itself, shown as its own status row rather than ever substituting
+  /// for the name.
+  final bool hopprRegistered;
   final String buyerPhone;
   final String deliveryAddress;
   final String eta;
@@ -2008,11 +2022,19 @@ class _BuyerInfoCard extends StatelessWidget {
           const SizedBox(height: AppSizes.md),
           _ContactInfoRow(
             icon: Icons.person_outline_rounded,
-            label: 'Buyer',
+            label: 'Buyer/Recipient',
             name: buyerName.isEmpty ? 'Not provided' : buyerName,
             phone: buyerPhone,
             onTap: onCopyName,
           ),
+          if (!hopprRegistered) ...[
+            const SizedBox(height: AppSizes.sm),
+            const _InfoRow(
+              icon: Icons.verified_outlined,
+              label: 'Hoppr status',
+              value: 'Not registered',
+            ),
+          ],
           if (email != null && email.isNotEmpty) ...[
             const SizedBox(height: AppSizes.sm),
             _InfoRow(
@@ -2051,7 +2073,7 @@ class _BuyerInfoCard extends StatelessWidget {
 /// a dispatcher card that doesn't apply to this transaction.
 class _DispatcherDetailsCard extends StatelessWidget {
   const _DispatcherDetailsCard({
-    required this.isSelfDelivery,
+    required this.dispatcherMode,
     required this.name,
     required this.phone,
     required this.registrationState,
@@ -2059,7 +2081,14 @@ class _DispatcherDetailsCard extends StatelessWidget {
     required this.statusLabel,
   });
 
-  final bool isSelfDelivery;
+  /// 'seller_self_delivery' | 'request_hoppr_dispatcher' | 'external_logistics'
+  /// (null treated as self-delivery) — kept as the raw mode rather than a
+  /// collapsed `isSelfDelivery` bool specifically so self-delivery and
+  /// external-courier delivery get distinct copy below: they share the same
+  /// *workflow* (no Hoppr-tracked pickup leg — see [ApiTransaction.isSelfDelivery]
+  /// docs) but the seller is NOT the one actually carrying an external-courier
+  /// package, and must never be presented as if they were.
+  final String? dispatcherMode;
   final String name;
   final String phone;
 
@@ -2079,7 +2108,29 @@ class _DispatcherDetailsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (isSelfDelivery) {
+    if (dispatcherMode == 'external_logistics') {
+      return AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CardSectionLabel('Delivery details'),
+            const SizedBox(height: AppSizes.md),
+            Text(
+              'Handled by an external courier',
+              style: AppText.bodyStrong,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'The seller arranged delivery outside Hoppr — see the uploaded '
+              'waybill for courier details.',
+              style: AppText.caption.copyWith(color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (dispatcherMode != 'request_hoppr_dispatcher') {
       return AppCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2356,10 +2407,23 @@ class _EscrowStatusCard extends StatelessWidget {
     // status. So the first `false` in order is the ONE step genuinely in
     // progress right now; every flag after it is also false and hasn't
     // started yet (pending) — never "current" just because it isn't done.
+    //
+    // "Awaiting Pickup" and "Picked Up / In Transit" are deliberately two
+    // separate steps now (client feedback: the old single "Picked Up / In
+    // Transit" node showed as current — implying pickup already happened —
+    // for the entire window BEFORE the courier had actually collected
+    // anything). "Delivery Confirmed" still shares its `deliveryConfirmed`
+    // flag with "Out for delivery"'s completion, and "Cooling
+    // Period"/"Settlement Released" still share `settled` — both pairs
+    // genuinely complete at the same instant in this system (see the
+    // comment on `settled` above), same simplification the timeline already
+    // made before this change, just not stretched to a step that has a real
+    // distinct signal of its own.
     final reached = [
       paid,
       inTransit,
       outForDelivery,
+      deliveryConfirmed,
       deliveryConfirmed,
       settled,
       settled,
@@ -2384,31 +2448,44 @@ class _EscrowStatusCard extends StatelessWidget {
       ),
       _StepData(
         state: stateFor(1),
-        icon: Icons.local_shipping_outlined,
-        title: 'Picked Up / In Transit',
-        lines: inTransit ? ['Package is moving'] : ['Waiting for dispatch'],
+        icon: Icons.inventory_outlined,
+        title: 'Awaiting Pickup',
+        lines: inTransit
+            ? ['Package picked up']
+            : ['Waiting for the courier to collect the package'],
         stopped: terminated && activeIndex == 1,
       ),
       _StepData(
         state: stateFor(2),
         icon: Icons.local_shipping_outlined,
-        title: 'Out for delivery',
-        lines: outForDelivery
-            ? [dispatcherLabel, if (eta.isNotEmpty) eta]
-            : ['Near destination'],
+        title: 'Picked Up / In Transit',
+        lines: !inTransit
+            ? ['Not yet picked up']
+            : outForDelivery
+            ? ['Picked up and on its way']
+            : ['Package is moving'],
         stopped: terminated && activeIndex == 2,
       ),
       _StepData(
         state: stateFor(3),
+        icon: Icons.local_shipping_outlined,
+        title: 'Out for delivery',
+        lines: outForDelivery
+            ? [dispatcherLabel, if (eta.isNotEmpty) eta]
+            : ['Near destination'],
+        stopped: terminated && activeIndex == 3,
+      ),
+      _StepData(
+        state: stateFor(4),
         icon: Icons.verified_user_outlined,
         title: 'Delivery Confirmed',
         lines: deliveryConfirmed
             ? ['Verified with OTP + location']
             : ['Confirm delivery to start the review period'],
-        stopped: terminated && activeIndex == 3,
+        stopped: terminated && activeIndex == 4,
       ),
       _StepData(
-        state: stateFor(4),
+        state: stateFor(5),
         icon: Icons.hourglass_top_rounded,
         title: 'Cooling Period',
         lines: settled
@@ -2416,16 +2493,16 @@ class _EscrowStatusCard extends StatelessWidget {
             : deliveryConfirmed
             ? ['Buyer can raise a dispute during this window']
             : ['Starts once delivery is confirmed'],
-        stopped: terminated && activeIndex == 4,
+        stopped: terminated && activeIndex == 5,
       ),
       _StepData(
-        state: stateFor(5),
+        state: stateFor(6),
         icon: Icons.inventory_2_outlined,
         title: 'Settlement Released',
         lines: settled
             ? ['Funds released to seller']
-            : ['Released after the review period, if no dispute'],
-        stopped: terminated && activeIndex == 5,
+            : ['Released after the cooling period, if no dispute'],
+        stopped: terminated && activeIndex == 6,
       ),
     ];
 
@@ -2611,7 +2688,7 @@ class _ReleaseBanner extends StatelessWidget {
                 children: const [
                   TextSpan(
                     text:
-                        'Payment will be released once delivery is verified.\n',
+                        'Payment is released after the cooling period, if no dispute is raised.\n',
                     style: TextStyle(
                       fontWeight: FontWeight.w700,
                       color: AppColors.textPrimary,
@@ -2619,7 +2696,8 @@ class _ReleaseBanner extends StatelessWidget {
                   ),
                   TextSpan(
                     text:
-                        'Your funds are held securely in escrow until delivery is verified.',
+                        'Your funds are held securely in escrow until delivery is verified, then '
+                        'stay protected through a review window before the seller is paid out.',
                   ),
                 ],
               ),
