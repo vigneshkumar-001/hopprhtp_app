@@ -124,6 +124,7 @@ class ApiUser {
     required this.walletCoolingKobo,
     this.payoutAccounts = const [],
     this.status = 'active',
+    this.tutorialSeenAt,
   });
 
   final String id;
@@ -176,6 +177,15 @@ class ApiUser {
   /// display use.
   final String status;
 
+  /// Null means "hasn't seen the in-app onboarding tutorial yet" — the
+  /// backend is the sole source of truth for this (see
+  /// userService.migrateTutorialSeenForExistingUsers), including correctly
+  /// backfilling accounts that already existed before this feature shipped,
+  /// so the app never needs its own "is this a new user" heuristic.
+  final DateTime? tutorialSeenAt;
+
+  bool get hasSeenTutorial => tutorialSeenAt != null;
+
   /// The default payout account (or the first, or null when none are saved).
   PayoutAccount? get defaultPayoutAccount {
     if (payoutAccounts.isEmpty) return null;
@@ -222,5 +232,6 @@ class ApiUser {
       j['payoutAccounts'],
     ).map((e) => PayoutAccount.fromJson(asMap(e))).toList(growable: false),
     status: asString(j['status'], 'active'),
+    tutorialSeenAt: asDateTime(j['tutorialSeenAt']),
   );
 }

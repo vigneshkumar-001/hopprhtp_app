@@ -133,6 +133,13 @@ class AuthRepository {
     (d) => ApiUser.fromJson(asMap(d)),
   );
 
+  /// Marks the in-app onboarding tutorial as seen — called once the user
+  /// finishes it or taps Skip, so it never shows again for this account.
+  Future<ApiUser> markTutorialSeen() => apiCall(
+    () => _dio.post('/users/me/tutorial-seen'),
+    (d) => ApiUser.fromJson(asMap(d)),
+  );
+
   /// Register (or refresh) this device's FCM push token. [platform] is
   /// 'android' | 'ios'; omit when unknown. Best-effort from the caller's side
   /// — [PushNotificationService] already never lets a failure here propagate.

@@ -13,6 +13,8 @@ import '../../core/utils/app_logger.dart';
 import '../../data/dto/transaction_dto.dart';
 import '../../widgets/feedback/app_snackbar.dart';
 import '../../widgets/feedback/notification_permission_sheet.dart';
+import '../auth/application/auth_controller.dart';
+import '../onboarding/app_tutorial_screen.dart';
 import '../profile/profile_screen.dart';
 import '../transaction/create_transaction_screen.dart';
 import 'home_screen.dart';
@@ -55,7 +57,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       if (!mounted) return;
       _notifPromptTimer = Timer(
         const Duration(milliseconds: 1200),
-        _maybePromptNotifications,
+        _runPostAuthChecks,
       );
     });
   }
@@ -64,6 +66,22 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   void dispose() {
     _notifPromptTimer?.cancel();
     super.dispose();
+  }
+
+  /// Runs, in order, the one-time-per-session prompts that shouldn't ever
+  /// overlap: the onboarding tutorial (brand-new accounts only) first, then
+  /// — only once that's dismissed — the notification re-ask. Sequential on
+  /// purpose: stacking two full-screen/modal prompts on top of each other
+  /// right after login would feel chaotic, not "world-class".
+  Future<void> _runPostAuthChecks() async {
+    if (!mounted) return;
+    final user = ref.read(authControllerProvider).valueOrNull?.user;
+    if (user != null && !user.hasSeenTutorial) {
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const AppTutorialScreen()));
+    }
+    await _maybePromptNotifications();
   }
 
   Future<void> _maybePromptNotifications() async {

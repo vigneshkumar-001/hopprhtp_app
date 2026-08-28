@@ -8,8 +8,14 @@ import 'package:escrow/data/dto/auth_dto.dart';
 import 'package:escrow/data/dto/user_dto.dart';
 import 'package:escrow/data/repositories/auth_repository.dart';
 
-/// A canned authenticated user used across tests.
-const kTestUser = ApiUser(
+/// A canned authenticated user used across tests. Not `const` — [DateTime]
+/// has no const constructor, and [tutorialSeenAt] needs a real one so this
+/// fixture reads as an already-onboarded existing user by default (matching
+/// what most tests actually want: reaching Home without the onboarding
+/// tutorial popping up uninvited). A test that specifically wants a
+/// brand-new, never-onboarded user should build its own `ApiUser` with
+/// `tutorialSeenAt: null` instead of reusing this one.
+final kTestUser = ApiUser(
   id: 'u1',
   fullName: 'Amara Okafor',
   phone: '+2348000000000',
@@ -23,6 +29,7 @@ const kTestUser = ApiUser(
   escrowBalanceKobo: 0,
   walletAvailableKobo: 0,
   walletCoolingKobo: 0,
+  tutorialSeenAt: DateTime.utc(2020, 1, 1),
 );
 
 /// In-memory token store — no platform secure-storage channel in tests. Pass
@@ -77,11 +84,7 @@ class FakeAuthRepository implements AuthRepository {
         statusCode: 401,
       );
     }
-    return const AuthSession(
-      user: kTestUser,
-      accessToken: 'a',
-      refreshToken: 'r',
-    );
+    return AuthSession(user: kTestUser, accessToken: 'a', refreshToken: 'r');
   }
 
   @override
@@ -100,6 +103,9 @@ class FakeAuthRepository implements AuthRepository {
 
   @override
   Future<ApiUser> updateProfile(Map<String, dynamic> body) async => kTestUser;
+
+  @override
+  Future<ApiUser> markTutorialSeen() async => kTestUser;
 
   @override
   Future<void> updateFcmToken({
@@ -153,8 +159,7 @@ class FakeAuthRepository implements AuthRepository {
     String? email,
     required String pin,
     required String firebaseIdToken,
-  }) async =>
-      const AuthSession(user: kTestUser, accessToken: 'a', refreshToken: 'r');
+  }) async => AuthSession(user: kTestUser, accessToken: 'a', refreshToken: 'r');
 
   @override
   Future<void> logoutAll() async {}

@@ -176,6 +176,14 @@ class AuthController extends AsyncNotifier<AuthState> {
     state = AsyncData(AuthState.authenticated(user));
   }
 
+  /// Marks the onboarding tutorial as seen; updates the session user so
+  /// [ApiUser.hasSeenTutorial] flips to true immediately — no separate
+  /// refetch needed for HomeShell's own check to stop firing again.
+  Future<void> markTutorialSeen() async {
+    final user = await _repo.markTutorialSeen();
+    state = AsyncData(AuthState.authenticated(user));
+  }
+
   /// Submit identity documents for review; updates the session user on success.
   Future<void> submitIdentity({
     required List<KycDocumentPayload> documents,
