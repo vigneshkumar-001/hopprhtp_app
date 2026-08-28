@@ -173,60 +173,30 @@ class _SpotlightTourOverlayState extends State<SpotlightTourOverlay>
                 ),
               ),
             ),
-            // A soft white wash directly over the spotlighted area itself —
-            // the real button doesn't just sit in a hole in the dark, it
-            // actually looks lit, like a stage spotlight rather than a cutout.
-            Positioned.fromRect(
-              rect: hole,
-              child: IgnorePointer(
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(18),
-                    gradient: RadialGradient(
-                      colors: [
-                        Colors.white.withValues(alpha: 0.22),
-                        Colors.white.withValues(alpha: 0.0),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            // No wash is painted over the hole itself — the spotlighted
+            // widget must show its own real, unmodified UI colour (a dark
+            // card stays dark, exactly as it looks outside the tour). Only
+            // the ring below adds light, and only right at the edge.
             // The glowing focus ring — pulses to draw the eye, brighter and
             // thicker than a subtle outline so it reads as unmistakably "the
             // thing to look at". Tinted with THIS step's own colour (see
             // [TourStep.ringColor] — set per step in HomeShell to match what
             // that exact widget already renders with: the "escrow" highlight
             // on the balance card, a button's own icon/label colour, etc.)
-            // rather than one fixed hue for every step. A wide white bloom
-            // sits behind the tinted border so a dark ringColor (e.g. the
-            // near-black icon colour on a light button) still reads as a
-            // bright glow instead of vanishing into the dark scrim — the
-            // exact failure this replaced (a black ring on a black card).
+            // rather than one fixed hue for every step. Painted as STROKED
+            // rings (see [_GlowRingPainter]), not a filled+blurred
+            // BoxDecoration/BoxShadow — a filled shadow on a box this large
+            // stays solid well into the interior even after blurring, which
+            // is what was washing out large dark targets like the balance
+            // card to a pale grey. A stroke has no fill to wash out: blur
+            // only feathers a thin band right at the line itself.
             Positioned.fromRect(
               rect: hole,
               child:
                   IgnorePointer(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: step.ringColor ?? AppColors.lime,
-                          width: 3.5,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.white.withValues(alpha: 0.55),
-                            blurRadius: 40,
-                            spreadRadius: 6,
-                          ),
-                          BoxShadow(
-                            color: (step.ringColor ?? AppColors.lime)
-                                .withValues(alpha: 0.85),
-                            blurRadius: 24,
-                            spreadRadius: 2,
-                          ),
-                        ],
+                    child: CustomPaint(
+                      painter: _GlowRingPainter(
+                        color: step.ringColor ?? AppColors.lime,
                       ),
                     ),
                   ).animate(
@@ -399,4 +369,48 @@ class _OutsideHoleClipper extends CustomClipper<Path> {
   @override
   bool shouldReclip(covariant _OutsideHoleClipper oldClipper) =>
       oldClipper.hole != hole;
+}
+
+/// Paints the spotlight's glow as STROKED rings, never a filled shape — a
+/// filled+blurred rounded rect (what `BoxDecoration.boxShadow` produces)
+/// stays solid well past the blur radius on a box this large, which is what
+/// washed a large dark target (the balance card) out to pale grey. A stroke
+/// has nothing to fill, so the blur only feathers a thin band right at the
+/// line, leaving the spotlighted widget's own face completely untouched.
+class _GlowRingPainter extends CustomPainter {
+  const _GlowRingPainter({required this.color});
+
+  /// This step's own colour (see [TourStep.ringColor]) — the crisp core line
+  /// and its tinted glow. A separate white glow always sits underneath it so
+  /// a dark [color] (e.g. a near-black icon colour in the Mono theme) still
+  /// reads as a bright ring instead of vanishing into the dark scrim.
+  final Color color;
+
+  static const _radius = Radius.circular(18);
+  static const _strokeWidth = 3.5;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rrect = RRect.fromRectAndRadius(Offset.zero & size, _radius);
+    void stroke(Color c, double sigma) {
+      canvas.drawRRect(
+        rrect,
+        Paint()
+          ..color = c
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = _strokeWidth
+          ..maskFilter = sigma == 0
+              ? null
+              : MaskFilter.blur(BlurStyle.normal, sigma),
+      );
+    }
+
+    stroke(Colors.white.withValues(alpha: 0.9), 18);
+    stroke(color.withValues(alpha: 0.9), 10);
+    stroke(color, 0);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GlowRingPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
